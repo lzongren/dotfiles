@@ -1,0 +1,161 @@
+" Easy version Vimrc
+
+set nocompatible
+filetype off
+
+" vim-plug configuration
+if has("win32") || has("win64")
+  call plug#begin('$VIM\vimfiles\plugged')
+else
+  call plug#begin('~/.vim/plugged')
+endif
+
+" Core plugins
+Plug 'xuhdev/SingleCompile'
+Plug 'mileszs/ack.vim'
+Plug 'jiangmiao/auto-pairs'
+Plug 'vim-scripts/bufexplorer.zip'
+Plug 'vim-scripts/c.vim'
+Plug 'c9s/colorselector.vim'
+Plug 'ctrlpvim/ctrlp.vim'
+Plug 'Raimondi/delimitMate'
+Plug 'editorconfig/editorconfig-vim'
+Plug 'mattn/emmet-vim'
+Plug 'Yggdroot/indentLine'
+Plug 'vim-scripts/matchit.zip'
+
+" Modern completion - replaced neocomplcache with coc.nvim
+Plug 'neoclide/coc.nvim', {'branch': 'release'}
+Plug 'Shougo/neosnippet'
+
+Plug 'scrooloose/nerdtree'
+Plug 'cakebaker/scss-syntax.vim'
+Plug 'AndrewRadev/splitjoin.vim'
+Plug 'ervandew/supertab'
+
+" Modern linting - replaced syntastic with ALE
+Plug 'dense-analysis/ale'
+
+" Similar to ctag, function list
+Plug 'majutsushi/tagbar'
+Plug 'tomtom/tcomment_vim'
+Plug 'tomtom/tlib_vim'
+Plug 'Shougo/unite.vim'
+Plug 'MarcWeber/vim-addon-mw-utils'
+Plug 'vim-airline/vim-airline'
+Plug 'vim-airline/vim-airline-themes'
+Plug 'kchmck/vim-coffee-script'
+Plug 'ap/vim-css-color'
+Plug 'junegunn/vim-easy-align'
+Plug 'easymotion/vim-easymotion'
+Plug 'tpope/vim-endwise'
+Plug 'tpope/vim-fugitive'
+Plug 'airblade/vim-gitgutter'
+Plug 'michaeljsmith/vim-indent-object'
+Plug 'pangloss/vim-javascript'
+Plug 'terryma/vim-multiple-cursors'
+Plug 'jistr/vim-nerdtree-tabs'
+Plug 'thinca/vim-quickrun'
+Plug 'tpope/vim-ragtag'
+Plug 'tpope/vim-rails'
+Plug 'tpope/vim-repeat'
+Plug 'vim-ruby/vim-ruby'
+Plug 'slim-template/vim-slim'
+Plug 'garbas/vim-snipmate'
+Plug 'honza/vim-snippets'
+Plug 'tpope/vim-surround'
+Plug 'tpope/vim-unimpaired'
+Plug 'Shougo/vimfiler.vim'
+
+" Color schemes
+Plug 'jnurmine/Zenburn'
+Plug 'sjl/badwolf'
+Plug 'tomasr/molokai'
+Plug 'altercation/vim-colors-solarized'
+Plug 'wesgibbs/vim-irblack'
+Plug 'jonathanfilip/vim-lucius'
+Plug 'jpo/vim-railscasts-theme'
+Plug 'ywjno/vim-tomorrow-theme'
+
+" Language support
+Plug 'derekwyatt/vim-scala'
+Plug 'rizzatti/dash.vim'
+Plug 'vim-scripts/Vim-R-plugin'
+
+call plug#end()
+filetype plugin indent on
+
+" =============
+"  custom key
+" =============
+" add a new line without entering insert mode
+noremap <CR> o<Esc>
+
+" map backspce to delete a character
+noremap <BS> X
+
+" map ctrl+c and ctrl+v
+noremap <C-c> y
+noremap <C-v> P
+
+" cancel searched highlight
+noremap ; :nohlsearch<CR>
+
+" navigating for long lines
+map j gj
+map k gk
+map <UP> gk
+map <DOWN> gj
+imap <UP> <ESC>gk<RIGHT>i
+imap <DOWN> <ESC>gj<RIGHT>i
+
+" select ALL
+map <C-A> ggVG
+
+" coc.nvim configuration
+" Use tab for trigger completion with characters ahead and navigate
+inoremap <silent><expr> <TAB>
+      \ coc#pum#visible() ? coc#pum#next(1) :
+      \ CheckBackspace() ? "\<Tab>" :
+      \ coc#refresh()
+inoremap <expr><S-TAB> coc#pum#visible() ? coc#pum#prev(1) : "\<C-h>"
+
+function! CheckBackspace() abort
+  let col = col('.') - 1
+  return !col || getline('.')[col - 1]  =~# '\s'
+endfunction
+
+" Show line number
+set number
+
+" Set tab length
+set smartindent
+set tabstop=4
+set shiftwidth=4
+set autoindent
+
+" Set tagbar show
+
+
+" Set syntax on
+syntax on
+
+" Enable using clipboard
+set clipboard=unnamed
+
+" ALE configuration for Python
+" Set line length to 88 to match Black formatter
+let g:ale_python_flake8_options = '--max-line-length=88'
+let g:ale_python_pylint_options = '--max-line-length=88'
+let g:ale_python_pycodestyle_options = '--max-line-length=88'
+
+" Set Black executable path (for pyenv)
+let g:ale_python_black_executable = '/Users/lzongren/.pyenv/shims/black'
+
+" Enable Black as fixer
+let g:ale_fixers = {
+\   'python': ['black'],
+\}
+
+" Auto-fix on save
+let g:ale_fix_on_save = 1
