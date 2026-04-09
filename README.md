@@ -11,9 +11,20 @@ MacVim/Vim configuration with modern plugins for code completion, linting, and f
 - Linting/Formatting: ALE with Black for Python
 - Multiple language support (Python, Ruby, JavaScript, Scala, etc.)
 
+### [Ghostty](ghostty/)
+Terminal emulator configuration.
+- Theme: Tomorrow Night Bright (matches MacVim)
+- Font: Hack Nerd Font 13pt
+- vim-style split navigation, tab switching, shell integration
+
+### [bin](bin/)
+Personal scripts for `~/.local/bin`.
+- `dev` — open a project workspace with claude, yazi, and lazygit in tmux
+
 ## Setup
 
 Navigate to each subdirectory for specific setup instructions.
 
 ## Quick Links
 - [MacVim Setup](vim/README.md)
+- [Ghostty Setup](ghostty/README.md)

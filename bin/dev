@@ -1,0 +1,29 @@
+#!/bin/bash
+# dev — open a project workspace with claude, yazi, and lazygit
+# Usage: dev [path]
+
+DIR=$(realpath "${1:-$PWD}")
+SESSION=$(basename "$DIR")
+
+# Attach to existing session if it already exists
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  tmux attach -t "$SESSION"
+  exit 0
+fi
+
+# Create new session, main pane: claude
+tmux new-session -d -s "$SESSION" -c "$DIR"
+tmux send-keys -t "$SESSION" "claude" Enter
+
+# Right split: yazi
+tmux split-window -h -t "$SESSION" -c "$DIR" -p 30
+tmux send-keys -t "$SESSION" "yazi" Enter
+
+# Below yazi: lazygit
+tmux split-window -v -t "$SESSION" -c "$DIR"
+tmux send-keys -t "$SESSION" "lazygit" Enter
+
+# Focus back to claude (left pane)
+tmux select-pane -t "$SESSION:0.0"
+
+tmux attach -t "$SESSION"
