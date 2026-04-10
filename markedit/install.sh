@@ -17,16 +17,10 @@ die() { echo -e "${RED}✗${RESET} $*" >&2; exit 1; }
 log "Fetching latest release info from ${BOLD}${REPO}${RESET}"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
-if command -v curl &>/dev/null; then
-  RELEASE_JSON=$(curl -fsSL "$API_URL")
-else
-  die "curl is required"
-fi
+RELEASE_JSON=$(curl -fsSL "$API_URL") || die "Failed to fetch release info"
 
-# Pick full build (not lite)
 DOWNLOAD_URL=$(echo "$RELEASE_JSON" \
-  | grep -o '"browser_download_url": *"[^"]*markedit-preview\.js"' \
-  | grep -v lite \
+  | grep -o '"browser_download_url": *"[^"]*\.zip"' \
   | head -1 \
   | sed 's/.*"\(https[^"]*\)"/\1/')
 
@@ -35,9 +29,20 @@ DOWNLOAD_URL=$(echo "$RELEASE_JSON" \
 TAG=$(echo "$RELEASE_JSON" | grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"/\1/')
 log "Latest version: ${BOLD}${TAG}${RESET}"
 
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+log "Downloading release archive"
+curl -fsSL "$DOWNLOAD_URL" -o "$TMPDIR/release.zip"
+
+unzip -qo "$TMPDIR/release.zip" -d "$TMPDIR"
+
+# Find the full (non-lite) markedit-preview.js
+SRC=$(find "$TMPDIR" -name "$FILE" -not -path "*/lite/*" | head -1)
+[[ -z "$SRC" ]] && die "Could not find ${FILE} in release archive"
+
 mkdir -p "$DEST"
-log "Downloading to ${DEST}/${FILE}"
-curl -fsSL "$DOWNLOAD_URL" -o "${DEST}/${FILE}"
+cp "$SRC" "$DEST/$FILE"
 
 ok "Installed ${BOLD}${FILE}${RESET} (${TAG})"
 echo -e "  Restart MarkEdit to apply the changes."
