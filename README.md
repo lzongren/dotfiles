@@ -21,6 +21,10 @@ Terminal emulator configuration.
 Personal scripts for `~/.local/bin`.
 - `dev` — open a project workspace with claude, yazi, and lazygit in tmux
 
+### [MarkEdit](markedit/)
+Extensions for the MarkEdit markdown editor.
+- `install.sh` — downloads and installs the latest MarkEdit-preview extension (Mermaid, KaTeX, syntax highlighting)
+
 ## Setup
 
 Navigate to each subdirectory for specific setup instructions.
@@ -28,3 +32,4 @@ Navigate to each subdirectory for specific setup instructions.
 ## Quick Links
 - [MacVim Setup](vim/README.md)
 - [Ghostty Setup](ghostty/README.md)
+- [MarkEdit Setup](markedit/README.md)
