@@ -49,6 +49,11 @@ scrollback-limit = 10000
 
 window-close-confirmation = never
 
+# Bell: highlight unfocused tab + play sound when an agent (e.g. Claude Code
+# over SSH/tmux) emits a BEL while waiting for input.
+# attention+title are on by default; border + system (macOS alert sound) added.
+bell-features = system,attention,title,border
+
 # =============================================================================
 # macOS
 # =============================================================================
@@ -94,3 +99,7 @@ keybind = cmd+minus=decrease_font_size:1
 keybind = cmd+0=reset_font_size
 
 keybind = cmd+shift+r=reload_config
+
+# Quick toggle to the previously-used tab (e.g. back to the one that bell'd).
+# Ghostty has no "jump to the attention tab" action; last_tab is the closest.
+keybind = f12=last_tab
