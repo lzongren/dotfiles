@@ -35,7 +35,7 @@ macos-titlebar-style = hidden
 # Shell Integration
 # =============================================================================
 shell-integration = detect
-shell-integration-features = cursor,sudo,title
+shell-integration-features = cursor,sudo,title,ssh-env,ssh-terminfo
 
 # =============================================================================
 # Behavior
@@ -47,7 +47,7 @@ clipboard-paste-protection = true
 
 scrollback-limit = 10000
 
-window-close-confirmation = never
+confirm-close-surface = false
 
 # Bell: highlight unfocused tab + play sound when an agent (e.g. Claude Code
 # over SSH/tmux) emits a BEL while waiting for input.
@@ -60,7 +60,7 @@ bell-features = system,attention,title,border
 # Use Option as Alt (essential for many terminal shortcuts)
 macos-option-as-alt = true
 
-macos-quit-after-last-window-closed = false
+quit-after-last-window-closed = false
 
 # =============================================================================
 # Keybindings
@@ -103,3 +103,34 @@ keybind = cmd+shift+r=reload_config
 # Quick toggle to the previously-used tab (e.g. back to the one that bell'd).
 # Ghostty has no "jump to the attention tab" action; last_tab is the closest.
 keybind = f12=last_tab
+
+# =============================================================================
+# Quick Terminal (Quake-style dropdown)
+# =============================================================================
+keybind = global:cmd+grave_accent=toggle_quick_terminal
+quick-terminal-position = top
+quick-terminal-size = 40%
+quick-terminal-animation-duration = 0.15
+quick-terminal-autohide = true
+
+# =============================================================================
+# SSH Integration (via shell-integration-features)
+# =============================================================================
+# ssh-env and ssh-terminfo are sub-features of shell-integration-features
+# (already included above in shell-integration-features line)
+
+# =============================================================================
+# Notifications (command finish alerts for background tabs)
+# =============================================================================
+notify-on-command-finish = unfocused
+notify-on-command-finish-action = notify,bell
+notify-on-command-finish-after = 10s
+
+# =============================================================================
+# Productivity
+# =============================================================================
+cursor-click-to-move = true
+window-save-state = always
+split-preserve-zoom = navigation
+split-inherit-working-directory = true
+tab-inherit-working-directory = true
