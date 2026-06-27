@@ -21,7 +21,7 @@ ADDED=$(echo "$input" | jq -r '.cost.total_lines_added // 0')
 REMOVED=$(echo "$input" | jq -r '.cost.total_lines_removed // 0')
 COST=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 RATE5=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-CWD=$(echo "$input" | jq -r '.cwd // "."' | sed "s|^$HOME|~|")
+CWD=$(echo "$input" | jq -r '.cwd // "."' | sed "s|^$HOME|~|;s|^/local/home/$USER|~|;s|~/cdd[0-9]*/Volumes/workspace/|~/ws/|;s|/src/\([^/]*\)/|/\1/|")
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
 COLS=${COLUMNS:-120}
 
@@ -48,11 +48,8 @@ if [ -n "$EFFORT" ] && [ "$EFFORT" != "high" ]; then
   MDL="${MDL}\x1b[2m/${EFFORT}\x1b[0m"
 fi
 
-# Cost (skip if zero)
-COST_STR=""
-if [ "$(printf '%s > 0\n' "$COST" | bc 2>/dev/null)" = "1" ]; then
-  COST_STR=" \x1b[33m\$$(printf '%.2f' "$COST")\x1b[0m"
-fi
+# Cost (always show)
+COST_STR=" \x1b[33m\$$(printf '%.2f' "${COST:-0}")\x1b[0m"
 
 # Rate limit (only when hot)
 RATE=""
