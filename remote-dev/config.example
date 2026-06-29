@@ -1,0 +1,16 @@
+# devbox config — copy to ~/.config/devbox/config and fill in your values.
+# Keeps host/user/paths OUT of the (public) dotfiles repo. Sourced by devbox
+# and the setup scripts. All values optional; sensible defaults apply.
+
+# SSH host (a Host entry in ~/.ssh/config, or user@hostname)
+DEVBOX_HOST="my-dev-host"
+
+# Remote home directory. Leave unset to auto-detect via `ssh $DEVBOX_HOST 'echo $HOME'`.
+# DEVBOX_REMOTE_HOME="/home/me"
+
+# Folders to two-way sync, one per line: "name|local-path|remote-path"
+# remote-path is relative to the remote home unless absolute.
+DEVBOX_SYNCS="
+work|$HOME/Documents/work|work
+notes|$HOME/Documents/notes|notes
+"
