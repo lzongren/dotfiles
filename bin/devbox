@@ -1,0 +1,31 @@
+#!/bin/bash
+# devbox — connect to a remote dev host over mosh, auto-attaching a persistent
+# tmux session. Claude Code runs THERE; local files are bridged via Mutagen
+# (see remote-dev/README.md). Host comes from ~/.config/devbox/config (copy
+# remote-dev/config.example); nothing host-specific lives in this repo.
+#
+# Pairs with `dev` (local workspace launcher): use `devbox` to reach the
+# remote, then `dev <project>` on the remote for the claude/yazi/lazygit layout.
+#
+# Usage: devbox [session-name]   (default session: main)
+#        devbox list            (show running sessions, don't connect)
+#        devbox --raw           (plain mosh, no tmux)
+
+# Load host config (gitignored, lives outside the repo). Only DEVBOX_HOST is
+# needed here; mosh-server and tmux resolve on the remote PATH (~/.local/bin
+# via .zshenv), so no host-specific paths are required.
+DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
+# shellcheck source=/dev/null
+[ -f "$DEVBOX_CONFIG" ] && . "$DEVBOX_CONFIG"
+DEVBOX_HOST="${DEVBOX_HOST:-dev}"
+
+if [[ "$1" == "list" || "$1" == "ls" ]]; then
+  exec ssh "$DEVBOX_HOST" tmux ls          # quick query, no mosh/attach
+fi
+
+if [[ "$1" == "--raw" ]]; then
+  exec mosh "$DEVBOX_HOST"
+fi
+
+SESSION="${1:-main}"
+exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION"
