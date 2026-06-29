@@ -1,0 +1,28 @@
+#!/bin/bash
+# devbox — connect to the remote cloud desktop (zongrenl-dev) over mosh,
+# auto-attaching a persistent tmux session. Claude Code runs THERE; laptop
+# files are bridged via Mutagen (see remote-dev/README.md).
+#
+# Pairs with `dev` (local workspace launcher): use `devbox` to reach the
+# remote, then `dev <project>` on the remote for the claude/yazi/lazygit layout.
+#
+# Usage: devbox [session-name]   (default session: main)
+#        devbox list            (show running sessions, don't connect)
+#        devbox --raw           (plain mosh, no tmux)
+
+HOST="${DEVBOX_HOST:-zongrenl-dev}"
+REMOTE_HOME="${DEVBOX_REMOTE_HOME:-/home/zongrenl}"
+MOSH_SERVER="$REMOTE_HOME/.local/bin/mosh-server"
+TMUX_BIN="$REMOTE_HOME/.local/bin/tmux"
+
+if [[ "$1" == "list" || "$1" == "ls" ]]; then
+  # Quick non-interactive query over plain ssh — no need for mosh/tmux attach.
+  exec ssh "$HOST" "$TMUX_BIN" ls
+fi
+
+if [[ "$1" == "--raw" ]]; then
+  exec mosh --server="$MOSH_SERVER" "$HOST"
+fi
+
+SESSION="${1:-main}"
+exec mosh --server="$MOSH_SERVER" "$HOST" -- "$TMUX_BIN" new-session -A -s "$SESSION"
