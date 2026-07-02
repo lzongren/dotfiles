@@ -20,6 +20,13 @@ Terminal emulator configuration.
 ### [bin](bin/)
 Personal scripts for `~/.local/bin`.
 - `dev` — open a project workspace with claude, yazi, and lazygit in tmux
+- `devbox` — connect to a remote dev host over mosh + tmux (see [remote-dev](remote-dev/))
+
+### [remote-dev](remote-dev/)
+Run Claude Code on a remote dev host with local files kept in sync.
+- mosh + tmux for a durable, persistent remote session
+- Mutagen for two-way file sync (no fragile network mounts)
+- Host and folders configured via a gitignored `~/.config/devbox/config`
 
 ### [MarkEdit](markedit/)
 Extensions for the MarkEdit markdown editor.
@@ -33,3 +40,4 @@ Navigate to each subdirectory for specific setup instructions.
 - [MacVim Setup](vim/README.md)
 - [Ghostty Setup](ghostty/README.md)
 - [MarkEdit Setup](markedit/README.md)
+- [Remote Dev Setup](remote-dev/README.md)
