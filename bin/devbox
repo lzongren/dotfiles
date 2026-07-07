@@ -9,6 +9,7 @@
 #
 # Usage: devbox [session-name]   (default session: main)
 #        devbox list            (show running sessions, don't connect)
+#        devbox doctor          (health-check every layer)
 #        devbox --raw           (plain mosh, no tmux)
 
 # Load host config (gitignored, lives outside the repo). Only DEVBOX_HOST is
@@ -29,6 +30,84 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     done <<< "$DEVBOX_SYNCS"
   fi
   exit 0
+fi
+
+if [[ "$1" == "doctor" || "$1" == "check" ]]; then
+  # Health-check every layer between laptop and remote. Prints one line per
+  # check; exits non-zero if any hard check FAILs (warnings don't fail).
+  g=$'\033[32m'; y=$'\033[33m'; r=$'\033[31m'; d=$'\033[2m'; z=$'\033[0m'
+  fails=0
+  pass() { printf '  %s✓%s %s\n' "$g" "$z" "$1"; }
+  warn() { printf '  %s!%s %s %s%s%s\n' "$y" "$z" "$1" "$d" "${2:-}" "$z"; }
+  fail() { printf '  %s✗%s %s %s%s%s\n' "$r" "$z" "$1" "$d" "${2:-}" "$z"; fails=$((fails+1)); }
+
+  echo "devbox doctor — host: $DEVBOX_HOST"
+
+  # --- local tools ---
+  command -v mosh    >/dev/null && pass "mosh installed (laptop)"    || fail "mosh missing (laptop)" "brew install mosh"
+  MUTAGEN="$(command -v mutagen || echo "$HOME/bin/mutagen")"
+  [ -x "$MUTAGEN" ] && pass "mutagen installed (laptop)" || fail "mutagen missing (laptop)" "run remote-dev/setup-sync.sh"
+
+  # --- remote reachability (single ssh, gather everything at once) ---
+  # Fields are newline-separated key=value; values may contain spaces, so parse
+  # line-by-line instead of eval (which would split "up 2 days" into commands).
+  probe="$(timeout 20 ssh -o ConnectTimeout=10 "$DEVBOX_HOST" '
+    echo "UP=$(uptime | grep -oE "up [^,]*" | head -1)"
+    echo "TMUX=$(command -v tmux || echo MISSING)"
+    echo "MOSH=$(command -v mosh-server || echo MISSING)"
+    echo "DISK=$(df --output=pcent "$HOME" 2>/dev/null | tail -1 | tr -dc 0-9)"
+    echo "SESSIONS=$(tmux ls 2>/dev/null | wc -l | tr -d " ")"
+    echo "ORPHANS=$(pgrep -c mosh-server 2>/dev/null || echo 0)"
+  ' 2>/dev/null)"
+  if [ -z "$probe" ]; then
+    fail "remote unreachable ($DEVBOX_HOST)" "rebooting? check VPN / ssh $DEVBOX_HOST"
+  else
+    UP=""; TMUX=""; MOSH=""; DISK=""; SESSIONS=0; ORPHANS=0
+    while IFS='=' read -r k v; do
+      case "$k" in
+        UP) UP="$v" ;; TMUX) TMUX="$v" ;; MOSH) MOSH="$v" ;;
+        DISK) DISK="$v" ;; SESSIONS) SESSIONS="$v" ;; ORPHANS) ORPHANS="$v" ;;
+      esac
+    done <<< "$probe"
+    pass "remote reachable (${UP:-up})"
+    [ "$TMUX" != MISSING ] && pass "tmux on remote PATH" || fail "tmux not on remote PATH" "run setup-remote.sh; check ~/.zshenv"
+    [ "$MOSH" != MISSING ] && pass "mosh-server on remote PATH" || fail "mosh-server not on remote PATH" "run setup-remote.sh"
+    if [ -n "${DISK:-}" ]; then
+      if [ "$DISK" -ge 95 ]; then fail "remote disk ${DISK}% full" "frees nothing until cleaned — tmux/mosh/sync will break"
+      elif [ "$DISK" -ge 85 ]; then warn "remote disk ${DISK}% full" "getting tight"
+      else pass "remote disk ${DISK}% used"; fi
+    fi
+    if [ "${SESSIONS:-0}" -gt 0 ]; then pass "$SESSIONS tmux session(s) alive" ; else warn "no tmux sessions" "devbox <name> starts one"; fi
+    [ "${ORPHANS:-0}" -gt 5 ] && warn "$ORPHANS mosh-servers running" "orphans piling up; kill stale ones"
+  fi
+
+  # --- mutagen daemon + per-session connection ---
+  if [ -x "$MUTAGEN" ]; then
+    if "$MUTAGEN" daemon status >/dev/null 2>&1 || "$MUTAGEN" sync list >/dev/null 2>&1; then
+      pass "mutagen daemon running"
+      list="$("$MUTAGEN" sync list 2>/dev/null)"
+      names="$(printf '%s\n' "$list" | grep -oE 'Name: [a-zA-Z0-9_-]+' | awk '{print $2}')"
+      if [ -z "$names" ]; then
+        warn "no sync sessions" "run remote-dev/setup-sync.sh"
+      else
+        # A healthy session shows two "Connected: Yes"; a stalled one shows No/Halted.
+        while read -r n; do
+          [ -n "$n" ] || continue
+          block="$("$MUTAGEN" sync list "$n" 2>/dev/null)"
+          conn="$(printf '%s\n' "$block" | grep -c 'Connected: Yes')"
+          status="$(printf '%s\n' "$block" | grep -m1 'Status:' | sed 's/.*Status: *//')"
+          if [ "$conn" -ge 2 ]; then pass "sync '$n' connected ${d}($status)${z}"
+          else fail "sync '$n' not connected" "status: ${status:-unknown}; mutagen sync reset $n"; fi
+        done <<< "$names"
+      fi
+    else
+      fail "mutagen daemon not running" "mutagen daemon start"
+    fi
+  fi
+
+  echo
+  if [ "$fails" -eq 0 ]; then printf '%sAll checks passed.%s\n' "$g" "$z"; exit 0
+  else printf '%s%d check(s) failed.%s\n' "$r" "$fails" "$z"; exit 1; fi
 fi
 
 if [[ "$1" == "list" || "$1" == "ls" ]]; then
