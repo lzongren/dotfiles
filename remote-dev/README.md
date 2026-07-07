@@ -55,13 +55,39 @@ Put `bin/` on your PATH, then connect:
 devbox            # mosh + auto-attach tmux session 'main'
 devbox scratch    # a differently-named session
 devbox list       # show running sessions without connecting
+devbox doctor     # health-check every layer (see below)
 devbox --raw      # plain mosh, no tmux
-devbox --help     # usage + active host
+devbox --help     # usage + active host + synced folders
 ```
 
 Each session name is independent and persists on the remote. Closing the tab
 only drops the local connection — `devbox <name>` re-attaches. Forgot what's
 running? `devbox list`.
+
+### Troubleshooting with `devbox doctor`
+
+If sync or `devbox` stops working — most often after the remote gets recycled
+(dev desktops reboot every few days) — run `devbox doctor` for a per-layer
+verdict:
+
+```
+devbox doctor — host: <your-host>
+  ✓ mosh installed (laptop)
+  ✓ mutagen installed (laptop)
+  ✓ remote reachable (up 2 days)
+  ✓ tmux on remote PATH
+  ✓ mosh-server on remote PATH
+  ✓ remote disk 44% used
+  ✓ 2 tmux session(s) alive
+  ✓ mutagen daemon running
+  ✓ sync 'work' connected (Watching for changes)
+```
+
+Each line is pass (✓) / warn (!) / fail (✗) with a fix hint; exits non-zero if
+anything failed. A **remote reboot** kills tmux sessions and pauses Mutagen —
+sessions are gone (files are safe on the laptop), and Mutagen auto-reconnects
+once the host is back. If a sync shows disconnected long after, `mutagen sync
+reset <name>`.
 
 ### What `setup-remote.sh` handles
 
