@@ -16,14 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/lib.sh"
 
 MUTAGEN_VERSION="0.18.1"
-
-# Excluded everywhere: VCS is handled by --ignore-vcs. These are heavy/derived
-# or machine-specific (e.g. build trees with absolute symlinks, media, caches).
-IGNORES=(
-  "*.mov" "*.mp4" "*.avi" "*.mkv"
-  ".DS_Store" "node_modules/" "__pycache__/" ".venv/" "*.pyc"
-  "build/" "/build" "env/"
-)
+# Ignore patterns and the per-sync create recipe live in lib.sh (DEVBOX_IGNORES,
+# devbox_sync_create) so this script and `devbox sync add` stay in lockstep.
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; BOLD='\033[1m'; RESET='\033[0m'
 log() { echo -e "${BLUE}▶${RESET} $*"; }
@@ -57,31 +51,25 @@ else
   ok "Mutagen daemon running (already registered)"
 fi
 
-# --- build the --ignore flags once ---
-IGNORE_FLAGS=()
-for ig in "${IGNORES[@]}"; do IGNORE_FLAGS+=(--ignore="$ig"); done
-
-REMOTE_HOME="$(devbox_remote_home)" || die "Could not resolve remote home on $DEVBOX_HOST"
-
 # --- create sync sessions (skip if the named session already exists) ---
+# Read entries into an array FIRST so the create loop's body doesn't share
+# stdin with ssh (which would swallow remaining lines — SC2095).
 existing="$("$MUTAGEN" sync list 2>/dev/null | grep -oE 'Name: [a-zA-Z0-9_-]+' | awk '{print $2}' || true)"
-while IFS='|' read -r name local remote; do
-  [ -n "$name" ] || continue            # skip blank lines
+entries=()
+while IFS= read -r line; do [ -n "$line" ] && entries+=("$line"); done <<< "$DEVBOX_SYNCS"
+
+for entry in "${entries[@]}"; do
+  IFS='|' read -r name local remote <<< "$entry"
+  [ -n "$name" ] || continue
   if grep -qx "$name" <<<"$existing"; then
     ok "sync '${name}' already exists — skipping"
     continue
   fi
   [ -d "$local" ] || die "local path missing: $local"
-  # relative remote path → under remote home
-  case "$remote" in /*) rpath="$remote" ;; *) rpath="$REMOTE_HOME/$remote" ;; esac
-  ssh "$DEVBOX_HOST" "mkdir -p '$rpath'"
-  log "Creating sync ${BOLD}${name}${RESET}: ${local} ⇄ ${DEVBOX_HOST}:${rpath}"
-  "$MUTAGEN" sync create \
-    --name="$name" --mode=two-way-safe --ignore-vcs \
-    "${IGNORE_FLAGS[@]}" \
-    "$local" "$DEVBOX_HOST:$rpath"
-  ok "sync '${name}' created"
-done <<< "$DEVBOX_SYNCS"
+  log "Creating sync ${BOLD}${name}${RESET}: ${local} ⇄ ${DEVBOX_HOST}:${remote}"
+  devbox_sync_create "$name" "$local" "$remote" && ok "sync '${name}' created" \
+    || die "failed to create sync '${name}'"
+done
 
 echo ""
 ok "Done. Monitor with ${BOLD}mutagen sync list${RESET} or ${BOLD}mutagen sync monitor <name>${RESET}."

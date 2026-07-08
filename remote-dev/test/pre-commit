@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint + test remote-dev scripts when any is staged.
+#
+# Self-guarding: no-op unless this repo has remote-dev/test/run.sh AND a
+# relevant file is staged — so it's safe to install into a GLOBAL core.hooksPath
+# that applies to all your repos.
+#
+# Install (honours a global core.hooksPath; creates the dir if needed):
+#   hooks="$(git config --get core.hooksPath || echo "$(git rev-parse --show-toplevel)/.git/hooks")"
+#   mkdir -p "$hooks"
+#   ln -sf "$(git rev-parse --show-toplevel)/remote-dev/test/pre-commit" "$hooks/pre-commit"
+#
+# Skip a one-off commit with:  git commit --no-verify
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+runner="$root/remote-dev/test/run.sh"
+[ -x "$runner" ] || exit 0                       # not this repo — do nothing
+
+if git diff --cached --name-only | grep -qE '^(bin/devbox|remote-dev/)'; then
+  echo "pre-commit: linting + testing remote-dev…"
+  "$runner"
+fi
