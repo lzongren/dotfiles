@@ -81,6 +81,11 @@ Each session name is independent and persists on the remote. Closing the tab
 only drops the local connection — `devbox <name>` re-attaches. Forgot what's
 running? `devbox list`.
 
+**Matching working directory:** if you run `devbox` from inside a synced folder
+(e.g. `~/Documents/ATX/abc`), the new remote session opens in the corresponding
+remote path (`~/ATX/abc`). Only applies when *creating* a session — re-attaching
+an existing one keeps its own directory.
+
 ### Troubleshooting with `devbox doctor`
 
 If sync or `devbox` stops working — most often after the remote gets recycled

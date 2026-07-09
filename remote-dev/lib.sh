@@ -67,6 +67,23 @@ devbox_syncs_list() {
 # True if a sync of this name exists in the config. Args: config-path name.
 devbox_sync_exists() { devbox_syncs_list "$1" | grep -q "^$2|"; }
 
+# Map a local path to the corresponding remote dir via the synced folders.
+# Args: cfg  local-path  remote-home. Prints the remote dir if local-path is a
+# synced root or under one, else nothing. Relative remote paths resolve under
+# remote-home; absolute ones are used as-is.
+devbox_remote_dir() {
+  local cfg="$1" pwd_path="$2" rhome="$3" n l r rel rpath
+  while IFS='|' read -r n l r; do
+    [ -n "$l" ] || continue
+    if [ "$pwd_path" = "$l" ]; then rel=""            # at the sync root
+    elif [ "${pwd_path#"$l"/}" != "$pwd_path" ]; then rel="/${pwd_path#"$l"/}"   # under it (/ boundary avoids ATX vs ATXtra)
+    else continue; fi
+    case "$r" in /*) rpath="$r" ;; *) rpath="$rhome/$r" ;; esac
+    printf '%s' "$rpath$rel"; return 0
+  done < <(devbox_syncs_list "$cfg")
+  return 0
+}
+
 # Add an entry to DEVBOX_SYNCS in the config file. Args: cfg name local remote.
 # Backup → temp edit → validate (sources cleanly AND entry present) → atomic
 # swap. On validation failure the original is left untouched. Returns non-zero
