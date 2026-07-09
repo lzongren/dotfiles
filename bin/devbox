@@ -170,4 +170,21 @@ if [[ "$1" == "--raw" ]]; then
 fi
 
 SESSION="${1:-main}"
-exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION"
+
+# If launched from within a synced folder, open the remote session in the
+# corresponding remote dir. Only affects NEW sessions (-c is ignored when -A
+# re-attaches an existing one, so reconnecting never jumps you elsewhere).
+CDIR=""
+_lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
+if [ -f "$_lib" ]; then
+  # shellcheck source=/dev/null
+  . "$_lib"
+  rhome="$(devbox_remote_home 2>/dev/null)" \
+    && CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$PWD" "$rhome")"
+fi
+
+if [ -n "$CDIR" ]; then
+  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION" -c "$CDIR"
+else
+  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION"
+fi
