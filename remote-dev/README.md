@@ -56,13 +56,35 @@ devbox            # mosh + auto-attach tmux session 'main'
 devbox scratch    # a differently-named session
 devbox list       # show running sessions without connecting
 devbox doctor     # health-check every layer (see below)
+devbox sync ls    # manage synced folders (see below)
 devbox --raw      # plain mosh, no tmux
 devbox --help     # usage + active host + synced folders
 ```
 
+### Managing synced folders with `devbox sync`
+
+Add or remove Mutagen syncs without hand-editing the config:
+
+```bash
+devbox sync ls                              # list configured folders
+devbox sync add work ~/Documents/Work       # local ~/Documents/Work ⇄ remote ~/work
+devbox sync add work ~/Documents/Work code  # …⇄ remote ~/code (explicit remote name)
+devbox sync rm work                         # stop syncing (files kept on both sides)
+```
+
+`add` updates `~/.config/devbox/config` (with a `.bak` backup and a validate-or-rollback
+guard) and creates the live Mutagen session in one step. `rm` removes the config entry and
+terminates the session — it does **not** delete files on either side. Remote path defaults to
+the sync name (under the remote home); pass a third arg for a different path, or an absolute path.
+
 Each session name is independent and persists on the remote. Closing the tab
 only drops the local connection — `devbox <name>` re-attaches. Forgot what's
 running? `devbox list`.
+
+**Matching working directory:** if you run `devbox` from inside a synced folder
+(e.g. `~/Documents/ATX/abc`), the new remote session opens in the corresponding
+remote path (`~/ATX/abc`). Only applies when *creating* a session — re-attaching
+an existing one keeps its own directory.
 
 ### Troubleshooting with `devbox doctor`
 
@@ -127,7 +149,29 @@ Typical flow: `devbox` to land on the remote, then `dev <project>` there.
 
 - **Excluded from sync:** VCS internals, `node_modules/`, `build/` (build trees
   may have machine-specific absolute symlinks), `*.mov`/`*.mp4`, and caches.
-  Adjust the `IGNORES` array in `setup-sync.sh`.
-- **Folders synced** are defined by `DEVBOX_SYNCS` in `~/.config/devbox/config`.
+  Adjust the `DEVBOX_IGNORES` array in `lib.sh`.
+- **Folders synced** are defined by `DEVBOX_SYNCS` in `~/.config/devbox/config`
+  (manage with `devbox sync add`/`rm`).
 - **mosh UDP** uses ports 60000–61000; the dev host's firewall must allow
   inbound UDP (open by default on these AL2 hosts).
+
+## Development
+
+Config-mutation logic lives in `lib.sh` (`devbox_config_add`/`rm`,
+`devbox_syncs_list`) and is covered by tests. Lint and test with:
+
+```bash
+./remote-dev/test/run.sh          # shellcheck + bats
+```
+
+Requires `brew install shellcheck bats-core` (note: `~/.toolbox/bin/bats` is a
+different tool; the runner resolves real bats-core). Install the pre-commit hook
+so checks run automatically when `bin/devbox` or `remote-dev/` files are staged.
+This honours a global `core.hooksPath` if you have one, and the hook is a no-op
+in repos without `remote-dev/test/run.sh`, so it's safe to install globally:
+
+```bash
+hooks="$(git config --get core.hooksPath || echo "$(git rev-parse --show-toplevel)/.git/hooks")"
+mkdir -p "$hooks"
+ln -sf "$(git rev-parse --show-toplevel)/remote-dev/test/pre-commit" "$hooks/pre-commit"
+```

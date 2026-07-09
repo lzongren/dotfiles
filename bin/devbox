@@ -7,10 +7,11 @@
 # Pairs with `dev` (local workspace launcher): use `devbox` to reach the
 # remote, then `dev <project>` on the remote for the claude/yazi/lazygit layout.
 #
-# Usage: devbox [session-name]   (default session: main)
-#        devbox list            (show running sessions, don't connect)
-#        devbox doctor          (health-check every layer)
-#        devbox --raw           (plain mosh, no tmux)
+# Usage: devbox [session-name]     (default session: main)
+#        devbox list              (show running sessions, don't connect)
+#        devbox doctor            (health-check every layer)
+#        devbox sync [ls|add|rm]  (manage synced folders)
+#        devbox --raw             (plain mosh, no tmux)
 
 # Load host config (gitignored, lives outside the repo). Only DEVBOX_HOST is
 # needed here; mosh-server and tmux resolve on the remote PATH (~/.local/bin
@@ -21,7 +22,7 @@ DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
 DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -35,6 +36,7 @@ fi
 if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   # Health-check every layer between laptop and remote. Prints one line per
   # check; exits non-zero if any hard check FAILs (warnings don't fail).
+  # shellcheck disable=SC2015  # `check && pass || fail` is deliberate: pass/fail are printf, never fail
   g=$'\033[32m'; y=$'\033[33m'; r=$'\033[31m'; d=$'\033[2m'; z=$'\033[0m'
   fails=0
   pass() { printf '  %s✓%s %s\n' "$g" "$z" "$1"; }
@@ -51,6 +53,7 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   # --- remote reachability (single ssh, gather everything at once) ---
   # Fields are newline-separated key=value; values may contain spaces, so parse
   # line-by-line instead of eval (which would split "up 2 days" into commands).
+  # shellcheck disable=SC2016  # the $(...) below intentionally run on the remote
   probe="$(timeout 20 ssh -o ConnectTimeout=10 "$DEVBOX_HOST" '
     echo "UP=$(uptime | grep -oE "up [^,]*" | head -1)"
     echo "TMUX=$(command -v tmux || echo MISSING)"
@@ -110,6 +113,54 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   else printf '%s%d check(s) failed.%s\n' "$r" "$fails" "$z"; exit 1; fi
 fi
 
+if [[ "$1" == "sync" ]]; then
+  # Manage synced folders. Config mutation lives in lib.sh (devbox_config_*),
+  # which is what the bats tests exercise; this wrapper adds arg parsing, ~
+  # expansion, and applying/terminating the live Mutagen session.
+  _lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
+  if [ ! -f "$_lib" ]; then echo "devbox: cannot find remote-dev/lib.sh" >&2; exit 1; fi
+  # shellcheck source=/dev/null
+  . "$_lib"
+  MUT="$(devbox_mutagen)"
+
+  case "${2:-ls}" in
+    ls|list|"")
+      if ! devbox_syncs_list "$DEVBOX_CONFIG" | grep -q .; then echo "No synced folders configured."; exit 0; fi
+      printf '%-12s %-40s %s\n' NAME LOCAL REMOTE
+      devbox_syncs_list "$DEVBOX_CONFIG" | while IFS='|' read -r n l r; do printf '%-12s %-40s %s\n' "$n" "$l" "$r"; done
+      ;;
+
+    add)
+      name="${3:-}"; local_path="${4:-}"; remote="${5:-${3:-}}"   # default remote = name
+      [ -n "$name" ] && [ -n "$local_path" ] || { echo "usage: devbox sync add <name> <local-path> [remote-path]" >&2; exit 1; }
+      local_path="${local_path/#\~/$HOME}"                        # expand leading ~
+      [ -d "$local_path" ] || { echo "devbox: local path not a directory: $local_path" >&2; exit 1; }
+      devbox_config_add "$DEVBOX_CONFIG" "$name" "$local_path" "$remote" || exit 1
+      echo "✓ added '$name' to $DEVBOX_CONFIG"
+      if [ -n "$MUT" ]; then
+        DEVBOX_SYNCS=""                                            # reload for devbox_sync_create
+        # shellcheck source=/dev/null
+        . "$DEVBOX_CONFIG"
+        devbox_sync_create "$name" "$local_path" "$remote" && echo "✓ sync '$name' created" \
+          || echo "devbox: added to config but sync create failed — run remote-dev/setup-sync.sh" >&2
+      else
+        echo "devbox: mutagen not installed; run remote-dev/setup-sync.sh to apply" >&2
+      fi
+      ;;
+
+    rm|remove|delete)
+      name="${3:-}"; [ -n "$name" ] || { echo "usage: devbox sync rm <name>" >&2; exit 1; }
+      devbox_config_rm "$DEVBOX_CONFIG" "$name" || exit 1
+      echo "✓ removed '$name' from $DEVBOX_CONFIG"
+      # Terminate the live session (leaves files in place on both sides).
+      [ -n "$MUT" ] && "$MUT" sync terminate "$name" 2>/dev/null && echo "✓ sync '$name' terminated (files kept on both sides)"
+      ;;
+
+    *) echo "usage: devbox sync [ls|add <name> <local> [remote]|rm <name>]" >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+
 if [[ "$1" == "list" || "$1" == "ls" ]]; then
   exec ssh "$DEVBOX_HOST" tmux ls          # quick query, no mosh/attach
 fi
@@ -119,4 +170,21 @@ if [[ "$1" == "--raw" ]]; then
 fi
 
 SESSION="${1:-main}"
-exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION"
+
+# If launched from within a synced folder, open the remote session in the
+# corresponding remote dir. Only affects NEW sessions (-c is ignored when -A
+# re-attaches an existing one, so reconnecting never jumps you elsewhere).
+CDIR=""
+_lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
+if [ -f "$_lib" ]; then
+  # shellcheck source=/dev/null
+  . "$_lib"
+  rhome="$(devbox_remote_home 2>/dev/null)" \
+    && CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$PWD" "$rhome")"
+fi
+
+if [ -n "$CDIR" ]; then
+  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION" -c "$CDIR"
+else
+  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION"
+fi
