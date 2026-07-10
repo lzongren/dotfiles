@@ -13,6 +13,7 @@ local widgetX = 40
 local widgetY = 60
 local widgetW = 320
 local dragTap = nil
+local currentSessions = {}
 
 -- Colors
 local bg = {red = 0.12, green = 0.12, blue = 0.14, alpha = 0.92}
@@ -65,12 +66,48 @@ local function fetchSessions()
   return sessions
 end
 
+-- Focus the Ghostty tab whose title contains "devbox:<name>". Tab titles are
+-- set by the remote tmux (set-titles-string "devbox:#S"). Returns true if a
+-- matching tab was found and pressed.
+local function focusSession(name)
+  local ghostty = hs.application.get("Ghostty")
+  if not ghostty then return false end
+  local ax = hs.axuielement.applicationElement(ghostty)
+  local needle = "devbox:" .. name
+  for _, win in ipairs(ax:attributeValue("AXWindows") or {}) do
+    for _, child in ipairs(win:attributeValue("AXChildren") or {}) do
+      if child:attributeValue("AXRole") == "AXTabGroup" then
+        for _, tab in ipairs(child:attributeValue("AXChildren") or {}) do
+          local title = tab:attributeValue("AXTitle") or ""
+          if title:find(needle, 1, true) then
+            tab:performAction("AXPress")
+            ghostty:activate()
+            return true
+          end
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- Click on a session row: focus its Ghostty tab, or open a new Ghostty tab
+-- attached to it if no tab exists yet.
+local function clickSession(name)
+  if focusSession(name) then return end
+  -- No existing tab — open a new Ghostty window running devbox <name>.
+  -- `ghostty -e` execs the command directly (no login wrapper).
+  local devbox = os.getenv("HOME") .. "/Personal/dotfiles/bin/devbox"
+  hs.task.new("/opt/homebrew/bin/ghostty", nil, {"-e", devbox, name}):start()
+end
+
 -- Dragging: on mouseDown inside the canvas, follow the mouse with an eventtap
--- until mouseUp (canvas callbacks have no mouseDragged message).
-local function startDrag()
+-- until mouseUp. If the mouse barely moved, treat it as a click on the row.
+local function startDrag(clickY)
   if dragTap then dragTap:stop() end
   local startMouse = hs.mouse.absolutePosition()
   local startTL = canvas:topLeft()
+  local moved = false
   dragTap = hs.eventtap.new(
     {hs.eventtap.event.types.leftMouseDragged, hs.eventtap.event.types.leftMouseUp},
     function(e)
@@ -79,10 +116,21 @@ local function startDrag()
         widgetX, widgetY = tl.x, tl.y
         dragTap:stop()
         dragTap = nil
+        if not moved then
+          -- Click: map y offset to a session row
+          local i = math.floor((clickY - 40) / 36) + 1 -- headerH+padY=40, lineH=36
+          local s = currentSessions[i]
+          if s then clickSession(s.name) end
+        end
         return false
       end
       local m = hs.mouse.absolutePosition()
-      canvas:topLeft({x = startTL.x + (m.x - startMouse.x), y = startTL.y + (m.y - startMouse.y)})
+      if math.abs(m.x - startMouse.x) > 4 or math.abs(m.y - startMouse.y) > 4 then
+        moved = true
+      end
+      if moved then
+        canvas:topLeft({x = startTL.x + (m.x - startMouse.x), y = startTL.y + (m.y - startMouse.y)})
+      end
       return false
     end)
   dragTap:start()
@@ -196,15 +244,16 @@ local function drawWidget(sessions)
   end
 
   canvas:mouseCallback(function(c, msg, id, x, y)
-    if msg == "mouseDown" then startDrag() end
+    if msg == "mouseDown" then startDrag(y) end
   end)
   canvas:canvasMouseEvents(true, false, false, false)
 
   if visible then canvas:show() end
 end
 
-local function refresh()
-  drawWidget(fetchSessions())
+function refresh()
+  currentSessions = fetchSessions()
+  drawWidget(currentSessions)
 end
 
 -- Toggle visibility: Ctrl+Opt+D
