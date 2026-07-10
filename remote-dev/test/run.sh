@@ -23,7 +23,7 @@ for c in /opt/homebrew/bin/bats /usr/local/bin/bats "$(command -v bats 2>/dev/nu
   }
 done
 
-SCRIPTS=(bin/devbox remote-dev/*.sh remote-dev/test/run.sh remote-dev/test/pre-commit)
+SCRIPTS=(bin/devbox bin/devbox-status.30s.sh remote-dev/*.sh remote-dev/test/run.sh remote-dev/test/pre-commit)
 
 echo "${BOLD}shellcheck${RESET}"
 if command -v shellcheck >/dev/null 2>&1; then

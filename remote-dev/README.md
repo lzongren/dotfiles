@@ -54,6 +54,8 @@ Put `bin/` on your PATH, then connect:
 devbox            # mosh + auto-attach tmux session 'main'
 devbox scratch    # a differently-named session
 devbox list       # show running sessions without connecting
+devbox status     # session table: state, idle, command, path
+devbox status --summary  # natural language summary (uses claude CLI)
 devbox doctor     # health-check every layer (see below)
 devbox sync ls    # manage synced folders (see below)
 devbox --raw      # plain mosh, no tmux
@@ -162,6 +164,23 @@ Typical flow: `devbox` to land on the remote, then `dev <project>` there.
 - **Sync status:** `mutagen sync list` (state, conflicts), `mutagen sync
   monitor <name>` (live). Conflicts (same file edited both sides) are flagged,
   never auto-resolved — fix the file, then `mutagen sync flush <name>`.
+
+## macOS menu-bar status (SwiftBar)
+
+`bin/devbox-status.30s.sh` is a [SwiftBar](https://github.com/swiftbar/SwiftBar)
+plugin that shows your remote sessions at a glance — always visible in the macOS
+menu bar without switching windows. Install, then symlink:
+
+```bash
+brew install --cask swiftbar
+ln -sf ~/Personal/dotfiles/bin/devbox-status.30s.sh \
+  ~/Library/Application\ Support/SwiftBar/Plugins/
+```
+
+The menu bar shows `⬡ 3/7` (3 attached / 7 total sessions). Click for a
+dropdown listing each session's state, idle time, running command, and path.
+The "Summarize" action calls `devbox status --summary` for a natural-language
+recap of what work is active.
 
 ## Notes
 

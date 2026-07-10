@@ -9,6 +9,7 @@
 #
 # Usage: devbox [session-name]     (default session: main)
 #        devbox list              (show running sessions, don't connect)
+#        devbox status            (session table: state, idle, cmd, path)
 #        devbox doctor            (health-check every layer)
 #        devbox sync [ls|add|rm]  (manage synced folders)
 #        devbox --raw             (plain mosh, no tmux)
@@ -22,7 +23,7 @@ DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
 DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -204,6 +205,54 @@ fi
 
 if [[ "$1" == "list" || "$1" == "ls" ]]; then
   exec ssh "$DEVBOX_HOST" tmux ls # quick query, no mosh/attach
+fi
+
+if [[ "$1" == "status" ]]; then
+  # Machine-readable status: one line per session (name|attached|ago|cmd|path).
+  # --raw: skip the pretty table, emit raw pipe-delimited lines for scripts.
+  _lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
+  # shellcheck source=/dev/null
+  [ -f "$_lib" ] && . "$_lib"
+  probe="$(timeout 10 ssh -o ConnectTimeout=5 "$DEVBOX_HOST" '
+    tmux list-sessions -F "S|#{session_name}|#{session_attached}|#{session_activity}" 2>/dev/null
+    tmux list-panes -a -F "P|#{session_name}|#{window_active}|#{pane_active}|#{pane_current_command}|#{pane_current_path}" 2>/dev/null
+  ' 2>/dev/null)" || {
+    echo "devbox: cannot reach $DEVBOX_HOST" >&2
+    exit 1
+  }
+  [ -z "$probe" ] && {
+    echo "No sessions."
+    exit 0
+  }
+  merged="$(printf '%s\n' "$probe" | devbox_status_lines)"
+  if [[ "${2:-}" == "--raw" ]]; then
+    printf '%s\n' "$merged"
+  elif [[ "${2:-}" == "--summary" ]]; then
+    # Natural language summary via claude (requires claude CLI on PATH).
+    now="$(date +%s)"
+    table=""
+    while IFS='|' read -r name att act cmd path; do
+      [ -n "$name" ] || continue
+      idle="$(devbox_ago "$now" "$act")"
+      att_str="attached"
+      [ "$att" = 0 ] && att_str="detached"
+      table+="- ${name}: ${att_str}, idle ${idle}, running ${cmd:-shell} in ${path}"$'\n'
+    done <<<"$merged"
+    printf '%s\n' "$table" | claude --model haiku -p \
+      'Summarize these tmux sessions in 1-2 sentences for a developer checking in after a break. Be specific about what work seems active. No preamble.' 2>/dev/null ||
+      printf '%s' "$table"
+  else
+    now="$(date +%s)"
+    printf '%-20s %-6s %-6s %-10s %s\n' SESSION STATE IDLE CMD PATH
+    while IFS='|' read -r name att act cmd path; do
+      [ -n "$name" ] || continue
+      state="●"
+      [ "$att" = 0 ] && state="○"
+      idle="$(devbox_ago "$now" "$act")"
+      printf '%-20s %-6s %-6s %-10s %s\n' "$name" "$state" "$idle" "$cmd" "$path"
+    done <<<"$merged"
+  fi
+  exit 0
 fi
 
 if [[ "$1" == "--raw" ]]; then
