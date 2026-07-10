@@ -119,18 +119,20 @@ devbox_ago() {
 }
 
 # Merge a tmux status probe (stdin) into one line per session:
-#   name|attached|activity|cmd|path
+#   name|attached|activity|bell|cmd|path
 # Probe format (see `devbox status`): S|name|attached|activity  for sessions,
-# P|session|win_active|pane_active|cmd|path  for panes. The "current" pane of
-# a session is the active pane of its active window.
+# P|session|win_active|pane_active|bell|cmd|path  for panes. The "current"
+# pane of a session is the active pane of its active window; bell is 1 if ANY
+# window in the session has its bell flag set (needs attention).
 devbox_status_lines() {
   awk -F'|' '
     $1 == "S" { order[++n] = $2; att[$2] = $3; act[$2] = $4 }
-    $1 == "P" && $3 == 1 && $4 == 1 { cmd[$2] = $5; path[$2] = $6 }
+    $1 == "P" && $5 == 1 { bell[$2] = 1 }
+    $1 == "P" && $3 == 1 && $4 == 1 { cmd[$2] = $6; path[$2] = $7 }
     END {
       for (i = 1; i <= n; i++) {
         s = order[i]
-        printf "%s|%s|%s|%s|%s\n", s, att[s], act[s], cmd[s], path[s]
+        printf "%s|%s|%s|%d|%s|%s\n", s, att[s], act[s], bell[s], cmd[s], path[s]
       }
     }'
 }

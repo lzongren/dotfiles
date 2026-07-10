@@ -34,38 +34,51 @@ setup() {
   [ "$output" = "0s" ]
 }
 
-# --- devbox_status_lines: S/P probe -> name|attached|activity|cmd|path -------
+# --- devbox_status_lines: S/P probe -> name|attached|activity|bell|cmd|path --
 
 probe() {
   cat <<'EOF'
 S|main|1|1751900000
 S|api|0|1751890000
-P|main|1|1|claude|/home/me/proj/abc
-P|main|1|0|zsh|/home/me
-P|api|0|1|vim|/home/me/other
-P|api|1|1|zsh|/home/me/proj/x
+P|main|1|1|0|claude|/home/me/proj/abc
+P|main|1|0|0|zsh|/home/me
+P|api|0|1|1|vim|/home/me/other
+P|api|1|1|0|zsh|/home/me/proj/x
 EOF
 }
 
 @test "status: session merged with its active pane (active window + pane)" {
   out="$(probe | devbox_status_lines)"
-  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|claude|/home/me/proj/abc" ]
+  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|0|claude|/home/me/proj/abc" ]
 }
 
 @test "status: inactive-window pane is ignored" {
   out="$(probe | devbox_status_lines)"
-  [ "$(sed -n 2p <<<"$out")" = "api|0|1751890000|zsh|/home/me/proj/x" ]
+  [ "$(sed -n 2p <<<"$out")" = "api|0|1751890000|1|zsh|/home/me/proj/x" ]
+}
+
+@test "status: bell on an inactive window still flags the session" {
+  # api's bell is on a non-active window; the session line must carry bell=1
+  out="$(probe | devbox_status_lines)"
+  bell="$(sed -n 2p <<<"$out" | cut -d'|' -f4)"
+  [ "$bell" = "1" ]
+}
+
+@test "status: no bell anywhere yields bell=0" {
+  out="$(probe | devbox_status_lines)"
+  bell="$(sed -n 1p <<<"$out" | cut -d'|' -f4)"
+  [ "$bell" = "0" ]
 }
 
 @test "status: sessions keep probe order" {
   out="$(probe | devbox_status_lines)"
   [ "$(wc -l <<<"$out" | tr -d ' ')" = "2" ]
-  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|claude|/home/me/proj/abc" ]
+  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|0|claude|/home/me/proj/abc" ]
 }
 
 @test "status: session with no pane lines still listed (empty cmd/path)" {
   out="$(printf 'S|lone|0|123\n' | devbox_status_lines)"
-  [ "$out" = "lone|0|123||" ]
+  [ "$out" = "lone|0|123|0||" ]
 }
 
 @test "status: empty probe yields empty output" {
