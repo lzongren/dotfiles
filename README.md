@@ -29,6 +29,12 @@ Work on a remote dev host from your laptop with local files kept in sync.
 - Mutagen for two-way file sync (no fragile network mounts)
 - Host and folders configured via a gitignored `~/.config/devbox/config`
 
+### [Hammerspoon](hammerspoon/)
+Always-on-top floating widget showing remote devbox session status.
+- Color-coded: green (active), orange (stale), gray (detached)
+- Draggable, toggle with Ctrl+Opt+D
+- Refreshes every 30s via `devbox status --raw`
+
 ### [MarkEdit](markedit/)
 Extensions for the MarkEdit markdown editor.
 - `install.sh` — downloads and installs the latest MarkEdit-preview extension (Mermaid, KaTeX, syntax highlighting)
