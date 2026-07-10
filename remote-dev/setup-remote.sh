@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# setup-remote.sh — provision an Amazon Linux 2 dev host for remote Claude Code
-# development: builds mosh + a modern tmux from source (the packaged versions
-# are broken/ancient on AL2) and deploys the tmux config.
+# setup-remote.sh — provision an Amazon Linux 2 dev host for remote development:
+# builds mosh + a modern tmux from source (the packaged versions are
+# broken/ancient on AL2) and deploys the tmux config.
 #
 # Run FROM your laptop:  ./remote-dev/setup-remote.sh [ssh-host]
 # Host resolves from the arg, else ~/.config/devbox/config (DEVBOX_HOST).
@@ -18,10 +18,17 @@ HOST="${1:-$DEVBOX_HOST}"
 MOSH_VERSION="1.4.0"
 TMUX_VERSION="3.5a"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; BOLD='\033[1m'; RESET='\033[0m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+RESET='\033[0m'
 log() { echo -e "${BLUE}▶${RESET} $*"; }
-ok()  { echo -e "${GREEN}✓${RESET} $*"; }
-die() { echo -e "${RED}✗${RESET} $*" >&2; exit 1; }
+ok() { echo -e "${GREEN}✓${RESET} $*"; }
+die() {
+  echo -e "${RED}✗${RESET} $*" >&2
+  exit 1
+}
 
 log "Target host: ${BOLD}${HOST}${RESET}"
 ssh "$HOST" 'true' || die "Cannot SSH to $HOST (set DEVBOX_HOST in ~/.config/devbox/config or pass as arg)"
