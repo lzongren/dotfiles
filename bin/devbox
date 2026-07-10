@@ -1,6 +1,6 @@
 #!/bin/bash
 # devbox — connect to a remote dev host over mosh, auto-attaching a persistent
-# tmux session. Claude Code runs THERE; local files are bridged via Mutagen
+# tmux session. Your work runs THERE; local files are bridged via Mutagen
 # (see remote-dev/README.md). Host comes from ~/.config/devbox/config (copy
 # remote-dev/config.example); nothing host-specific lives in this repo.
 #
@@ -28,7 +28,7 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     echo "  synced folders (Mutagen):"
     while IFS='|' read -r name local remote; do
       [[ -n "$name" ]] && printf '    %-10s %s  ⇄  %s\n' "$name" "$local" "$remote"
-    done <<< "$DEVBOX_SYNCS"
+    done <<<"$DEVBOX_SYNCS"
   fi
   exit 0
 fi
@@ -37,16 +37,23 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   # Health-check every layer between laptop and remote. Prints one line per
   # check; exits non-zero if any hard check FAILs (warnings don't fail).
   # shellcheck disable=SC2015  # `check && pass || fail` is deliberate: pass/fail are printf, never fail
-  g=$'\033[32m'; y=$'\033[33m'; r=$'\033[31m'; d=$'\033[2m'; z=$'\033[0m'
+  g=$'\033[32m'
+  y=$'\033[33m'
+  r=$'\033[31m'
+  d=$'\033[2m'
+  z=$'\033[0m'
   fails=0
   pass() { printf '  %s✓%s %s\n' "$g" "$z" "$1"; }
   warn() { printf '  %s!%s %s %s%s%s\n' "$y" "$z" "$1" "$d" "${2:-}" "$z"; }
-  fail() { printf '  %s✗%s %s %s%s%s\n' "$r" "$z" "$1" "$d" "${2:-}" "$z"; fails=$((fails+1)); }
+  fail() {
+    printf '  %s✗%s %s %s%s%s\n' "$r" "$z" "$1" "$d" "${2:-}" "$z"
+    fails=$((fails + 1))
+  }
 
   echo "devbox doctor — host: $DEVBOX_HOST"
 
   # --- local tools ---
-  command -v mosh    >/dev/null && pass "mosh installed (laptop)"    || fail "mosh missing (laptop)" "brew install mosh"
+  command -v mosh >/dev/null && pass "mosh installed (laptop)" || fail "mosh missing (laptop)" "brew install mosh"
   MUTAGEN="$(command -v mutagen || echo "$HOME/bin/mutagen")"
   [ -x "$MUTAGEN" ] && pass "mutagen installed (laptop)" || fail "mutagen missing (laptop)" "run remote-dev/setup-sync.sh"
 
@@ -65,22 +72,29 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   if [ -z "$probe" ]; then
     fail "remote unreachable ($DEVBOX_HOST)" "rebooting? check VPN / ssh $DEVBOX_HOST"
   else
-    UP=""; TMUX=""; MOSH=""; DISK=""; SESSIONS=0; ORPHANS=0
+    UP=""
+    TMUX=""
+    MOSH=""
+    DISK=""
+    SESSIONS=0
+    ORPHANS=0
     while IFS='=' read -r k v; do
       case "$k" in
         UP) UP="$v" ;; TMUX) TMUX="$v" ;; MOSH) MOSH="$v" ;;
         DISK) DISK="$v" ;; SESSIONS) SESSIONS="$v" ;; ORPHANS) ORPHANS="$v" ;;
       esac
-    done <<< "$probe"
+    done <<<"$probe"
     pass "remote reachable (${UP:-up})"
     [ "$TMUX" != MISSING ] && pass "tmux on remote PATH" || fail "tmux not on remote PATH" "run setup-remote.sh; check ~/.zshenv"
     [ "$MOSH" != MISSING ] && pass "mosh-server on remote PATH" || fail "mosh-server not on remote PATH" "run setup-remote.sh"
     if [ -n "${DISK:-}" ]; then
-      if [ "$DISK" -ge 95 ]; then fail "remote disk ${DISK}% full" "frees nothing until cleaned — tmux/mosh/sync will break"
-      elif [ "$DISK" -ge 85 ]; then warn "remote disk ${DISK}% full" "getting tight"
+      if [ "$DISK" -ge 95 ]; then
+        fail "remote disk ${DISK}% full" "frees nothing until cleaned — tmux/mosh/sync will break"
+      elif [ "$DISK" -ge 85 ]; then
+        warn "remote disk ${DISK}% full" "getting tight"
       else pass "remote disk ${DISK}% used"; fi
     fi
-    if [ "${SESSIONS:-0}" -gt 0 ]; then pass "$SESSIONS tmux session(s) alive" ; else warn "no tmux sessions" "devbox <name> starts one"; fi
+    if [ "${SESSIONS:-0}" -gt 0 ]; then pass "$SESSIONS tmux session(s) alive"; else warn "no tmux sessions" "devbox <name> starts one"; fi
     [ "${ORPHANS:-0}" -gt 5 ] && warn "$ORPHANS mosh-servers running" "orphans piling up; kill stale ones"
   fi
 
@@ -99,9 +113,10 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
           block="$("$MUTAGEN" sync list "$n" 2>/dev/null)"
           conn="$(printf '%s\n' "$block" | grep -c 'Connected: Yes')"
           status="$(printf '%s\n' "$block" | grep -m1 'Status:' | sed 's/.*Status: *//')"
-          if [ "$conn" -ge 2 ]; then pass "sync '$n' connected ${d}($status)${z}"
+          if [ "$conn" -ge 2 ]; then
+            pass "sync '$n' connected ${d}($status)${z}"
           else fail "sync '$n' not connected" "status: ${status:-unknown}; mutagen sync reset $n"; fi
-        done <<< "$names"
+        done <<<"$names"
       fi
     else
       fail "mutagen daemon not running" "mutagen daemon start"
@@ -109,8 +124,13 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   fi
 
   echo
-  if [ "$fails" -eq 0 ]; then printf '%sAll checks passed.%s\n' "$g" "$z"; exit 0
-  else printf '%s%d check(s) failed.%s\n' "$r" "$fails" "$z"; exit 1; fi
+  if [ "$fails" -eq 0 ]; then
+    printf '%sAll checks passed.%s\n' "$g" "$z"
+    exit 0
+  else
+    printf '%s%d check(s) failed.%s\n' "$r" "$fails" "$z"
+    exit 1
+  fi
 fi
 
 if [[ "$1" == "sync" ]]; then
@@ -118,51 +138,72 @@ if [[ "$1" == "sync" ]]; then
   # which is what the bats tests exercise; this wrapper adds arg parsing, ~
   # expansion, and applying/terminating the live Mutagen session.
   _lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
-  if [ ! -f "$_lib" ]; then echo "devbox: cannot find remote-dev/lib.sh" >&2; exit 1; fi
+  if [ ! -f "$_lib" ]; then
+    echo "devbox: cannot find remote-dev/lib.sh" >&2
+    exit 1
+  fi
   # shellcheck source=/dev/null
   . "$_lib"
   MUT="$(devbox_mutagen)"
 
   case "${2:-ls}" in
-    ls|list|"")
-      if ! devbox_syncs_list "$DEVBOX_CONFIG" | grep -q .; then echo "No synced folders configured."; exit 0; fi
+    ls | list | "")
+      if ! devbox_syncs_list "$DEVBOX_CONFIG" | grep -q .; then
+        echo "No synced folders configured."
+        exit 0
+      fi
       printf '%-12s %-40s %s\n' NAME LOCAL REMOTE
       devbox_syncs_list "$DEVBOX_CONFIG" | while IFS='|' read -r n l r; do printf '%-12s %-40s %s\n' "$n" "$l" "$r"; done
       ;;
 
     add)
-      name="${3:-}"; local_path="${4:-}"; remote="${5:-${3:-}}"   # default remote = name
-      [ -n "$name" ] && [ -n "$local_path" ] || { echo "usage: devbox sync add <name> <local-path> [remote-path]" >&2; exit 1; }
-      local_path="${local_path/#\~/$HOME}"                        # expand leading ~
-      [ -d "$local_path" ] || { echo "devbox: local path not a directory: $local_path" >&2; exit 1; }
+      name="${3:-}"
+      local_path="${4:-}"
+      remote="${5:-${3:-}}" # default remote = name
+      [ -n "$name" ] && [ -n "$local_path" ] || {
+        echo "usage: devbox sync add <name> <local-path> [remote-path]" >&2
+        exit 1
+      }
+      local_path="${local_path/#\~/$HOME}" # expand leading ~
+      [ -d "$local_path" ] || {
+        echo "devbox: local path not a directory: $local_path" >&2
+        exit 1
+      }
       devbox_config_add "$DEVBOX_CONFIG" "$name" "$local_path" "$remote" || exit 1
       echo "✓ added '$name' to $DEVBOX_CONFIG"
       if [ -n "$MUT" ]; then
-        DEVBOX_SYNCS=""                                            # reload for devbox_sync_create
+        DEVBOX_SYNCS="" # reload for devbox_sync_create
         # shellcheck source=/dev/null
         . "$DEVBOX_CONFIG"
-        devbox_sync_create "$name" "$local_path" "$remote" && echo "✓ sync '$name' created" \
-          || echo "devbox: added to config but sync create failed — run remote-dev/setup-sync.sh" >&2
+        devbox_sync_create "$name" "$local_path" "$remote" && echo "✓ sync '$name' created" ||
+          echo "devbox: added to config but sync create failed — run remote-dev/setup-sync.sh" >&2
       else
         echo "devbox: mutagen not installed; run remote-dev/setup-sync.sh to apply" >&2
       fi
       ;;
 
-    rm|remove|delete)
-      name="${3:-}"; [ -n "$name" ] || { echo "usage: devbox sync rm <name>" >&2; exit 1; }
+    rm | remove | delete)
+      name="${3:-}"
+      [ -n "$name" ] || {
+        echo "usage: devbox sync rm <name>" >&2
+        exit 1
+      }
       devbox_config_rm "$DEVBOX_CONFIG" "$name" || exit 1
       echo "✓ removed '$name' from $DEVBOX_CONFIG"
       # Terminate the live session (leaves files in place on both sides).
       [ -n "$MUT" ] && "$MUT" sync terminate "$name" 2>/dev/null && echo "✓ sync '$name' terminated (files kept on both sides)"
       ;;
 
-    *) echo "usage: devbox sync [ls|add <name> <local> [remote]|rm <name>]" >&2; exit 1 ;;
+    *)
+      echo "usage: devbox sync [ls|add <name> <local> [remote]|rm <name>]" >&2
+      exit 1
+      ;;
   esac
   exit 0
 fi
 
 if [[ "$1" == "list" || "$1" == "ls" ]]; then
-  exec ssh "$DEVBOX_HOST" tmux ls          # quick query, no mosh/attach
+  exec ssh "$DEVBOX_HOST" tmux ls # quick query, no mosh/attach
 fi
 
 if [[ "$1" == "--raw" ]]; then
@@ -179,8 +220,8 @@ _lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
 if [ -f "$_lib" ]; then
   # shellcheck source=/dev/null
   . "$_lib"
-  rhome="$(devbox_remote_home 2>/dev/null)" \
-    && CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$PWD" "$rhome")"
+  rhome="$(devbox_remote_home 2>/dev/null)" &&
+    CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$PWD" "$rhome")"
 fi
 
 if [ -n "$CDIR" ]; then

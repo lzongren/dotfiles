@@ -23,7 +23,7 @@ Personal scripts for `~/.local/bin`.
 - `devbox` — connect to a remote dev host over mosh + tmux (see [remote-dev](remote-dev/))
 
 ### [remote-dev](remote-dev/)
-Run Claude Code on a remote dev host with local files kept in sync.
+Work on a remote dev host from your laptop with local files kept in sync.
 - mosh + tmux for a durable, persistent remote session
 - Mutagen for two-way file sync (no fragile network mounts)
 - Host and folders configured via a gitignored `~/.config/devbox/config`

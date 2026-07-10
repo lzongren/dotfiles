@@ -15,7 +15,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 runner="$root/remote-dev/test/run.sh"
-[ -x "$runner" ] || exit 0                       # not this repo — do nothing
+[ -x "$runner" ] || exit 0 # not this repo — do nothing
 
 if git diff --cached --name-only | grep -qE '^(bin/devbox|remote-dev/)'; then
   echo "pre-commit: linting + testing remote-dev…"
