@@ -1,16 +1,15 @@
-# Remote Dev: Claude Code on a cloud desktop
+# Remote Dev: work on a cloud desktop from your laptop
 
-Run Claude Code on a remote dev host (e.g. an Amazon Linux 2 cloud desktop)
-while keeping local files in sync. **mosh** gives a durable terminal that
-survives sleep and network roaming, **tmux** keeps the session alive on the
-remote, and **Mutagen** mirrors folders both ways so CC edits files that stay
-in sync on the laptop.
+Run your dev work on a remote host (e.g. an Amazon Linux 2 cloud desktop) while
+keeping local files in sync. **mosh** gives a durable terminal that survives
+sleep and network roaming, **tmux** keeps the session alive on the remote, and
+**Mutagen** mirrors folders both ways so edits on either side stay in sync.
 
 ```
-devbox  ──mosh──►  tmux 'main'  ──►  claude   (runs on remote)
-                                       ▲
-Mutagen daemon (laptop) ───────────────┘
-  <local folder> ⇄ remote <folder>      edits flow both ways, ~1s
+devbox  ──mosh──►  tmux 'main'  ──►  your shell   (runs on remote)
+                                        ▲
+Mutagen daemon (laptop) ────────────────┘
+  <local folder> ⇄ remote <folder>       edits flow both ways, ~1s
 ```
 
 ## Why these tools
@@ -19,12 +18,12 @@ Mutagen daemon (laptop) ───────────────┘
   the laptop sleeps. mosh bootstraps over SSH, then runs over UDP syncing
   *screen state*, so it roams and survives sleep with instant local echo.
 - **tmux on top of mosh** — mosh keeps the *connection* alive; tmux keeps the
-  *session* alive on the remote (CC keeps running through a full disconnect,
+  *session* alive on the remote (work keeps running through a full disconnect,
   and `new-session -A` re-attaches). mosh only syncs the visible screen, so
   tmux also restores scrollback.
-- **Mutagen, not sshfs** — a network mount *hangs* the remote (and CC) when the
-  link drops. Mutagen keeps a real copy on each side and reconciles changes, so
-  CC always reads native-speed local files; drops just pause/resume the sync.
+- **Mutagen, not sshfs** — a network mount *hangs* the remote when the link
+  drops. Mutagen keeps a real copy on each side and reconciles changes, so you
+  always read native-speed local files; drops just pause/resume the sync.
 
 ## Configure
 
@@ -61,6 +60,30 @@ devbox --raw      # plain mosh, no tmux
 devbox --help     # usage + active host + synced folders
 ```
 
+### Example: a full session
+
+```bash
+# One-time: register a synced folder
+devbox sync add work ~/Documents/Work    # ~/Documents/Work ⇄ remote ~/work
+
+# Day to day: connect from inside a synced folder
+cd ~/Documents/Work/api
+devbox api                               # opens tmux session 'api' in remote ~/work/api
+
+# … work on the remote; edits sync back to the laptop within ~1s …
+
+# Close the laptop / lose Wi-Fi — the session keeps running on the remote.
+devbox api                               # re-attaches exactly where you left off
+
+# Later, from another folder:
+devbox list                              # api, main
+devbox doctor                            # everything healthy?
+```
+
+Launching from inside a synced folder opens the remote session in the matching
+remote path (`~/Documents/Work/api` → `~/work/api`); this applies only when
+*creating* a session, so re-attaching keeps its own directory.
+
 ### Managing synced folders with `devbox sync`
 
 Add or remove Mutagen syncs without hand-editing the config:
@@ -80,11 +103,6 @@ the sync name (under the remote home); pass a third arg for a different path, or
 Each session name is independent and persists on the remote. Closing the tab
 only drops the local connection — `devbox <name>` re-attaches. Forgot what's
 running? `devbox list`.
-
-**Matching working directory:** if you run `devbox` from inside a synced folder
-(e.g. `~/Documents/ATX/abc`), the new remote session opens in the corresponding
-remote path (`~/ATX/abc`). Only applies when *creating* a session — re-attaching
-an existing one keeps its own directory.
 
 ### Troubleshooting with `devbox doctor`
 
