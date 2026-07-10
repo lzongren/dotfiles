@@ -21,6 +21,7 @@ Terminal emulator configuration.
 Personal scripts for `~/.local/bin`.
 - `dev` — open a project workspace with claude, yazi, and lazygit in tmux
 - `devbox` — connect to a remote dev host over mosh + tmux (see [remote-dev](remote-dev/))
+- `devbox-status.30s.sh` — SwiftBar menu-bar plugin showing remote session status
 
 ### [remote-dev](remote-dev/)
 Work on a remote dev host from your laptop with local files kept in sync.
