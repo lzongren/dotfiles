@@ -12,8 +12,7 @@ local visible = true
 local widgetX = 40
 local widgetY = 60
 local widgetW = 320
-local dragging = false
-local dragOffset = {x = 0, y = 0}
+local dragTap = nil
 
 -- Colors
 local bg = {red = 0.12, green = 0.12, blue = 0.14, alpha = 0.92}
@@ -22,6 +21,8 @@ local greenColor = {red = 0.3, green = 0.78, blue = 0.38, alpha = 1}
 local orangeColor = {red = 0.9, green = 0.6, blue = 0.2, alpha = 1}
 local grayColor = {red = 0.45, green = 0.45, blue = 0.45, alpha = 1}
 local pathColor = {red = 0.4, green = 0.4, blue = 0.4, alpha = 1}
+local redColor = {red = 0.8, green = 0.3, blue = 0.3, alpha = 1}
+local bellColor = {red = 1.0, green = 0.84, blue = 0.0, alpha = 1} -- bright yellow
 
 local function ago(now, then_ts)
   local d = now - then_ts
@@ -49,18 +50,42 @@ local function fetchSessions()
   if not status or not out or out == "" then return {} end
   local sessions = {}
   for line in out:gmatch("[^\n]+") do
-    local name, att, act, cmd_s, path = line:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
+    local name, att, act, bell, cmd_s, path = line:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
     if name and name ~= "" then
       table.insert(sessions, {
         name = name,
-        attached = (att == "1" or att == "2"),
+        attached = (att ~= "0" and att ~= ""),
         activity = tonumber(act) or 0,
+        bell = (bell == "1"),
         cmd = cmd_s or "",
         path = path or ""
       })
     end
   end
   return sessions
+end
+
+-- Dragging: on mouseDown inside the canvas, follow the mouse with an eventtap
+-- until mouseUp (canvas callbacks have no mouseDragged message).
+local function startDrag()
+  if dragTap then dragTap:stop() end
+  local startMouse = hs.mouse.absolutePosition()
+  local startTL = canvas:topLeft()
+  dragTap = hs.eventtap.new(
+    {hs.eventtap.event.types.leftMouseDragged, hs.eventtap.event.types.leftMouseUp},
+    function(e)
+      if e:getType() == hs.eventtap.event.types.leftMouseUp then
+        local tl = canvas:topLeft()
+        widgetX, widgetY = tl.x, tl.y
+        dragTap:stop()
+        dragTap = nil
+        return false
+      end
+      local m = hs.mouse.absolutePosition()
+      canvas:topLeft({x = startTL.x + (m.x - startMouse.x), y = startTL.y + (m.y - startMouse.y)})
+      return false
+    end)
+  dragTap:start()
 end
 
 local function drawWidget(sessions)
@@ -70,8 +95,8 @@ local function drawWidget(sessions)
   local lineH = 36
   local headerH = 30
   local padY = 10
-  local h = headerH + padY * 2 + #sessions * lineH + 10
-  if #sessions == 0 then h = headerH + padY * 2 + 20 end
+  local h = headerH + padY + #sessions * lineH + 10
+  if #sessions == 0 then h = headerH + padY + 24 end
 
   canvas = hs.canvas.new({x = widgetX, y = widgetY, w = widgetW, h = h})
   canvas:level(hs.canvas.windowLevels.floating)
@@ -83,12 +108,15 @@ local function drawWidget(sessions)
     action = "fill",
     roundedRectRadii = {xRadius = 10, yRadius = 10},
     fillColor = bg,
+    trackMouseDown = true,
   })
 
   -- Header
   local attached = 0
+  local bells = 0
   for _, s in ipairs(sessions) do
     if s.attached then attached = attached + 1 end
+    if s.bell then bells = bells + 1 end
   end
 
   canvas:appendElements({
@@ -97,18 +125,28 @@ local function drawWidget(sessions)
       font = {name = "Menlo-Bold", size = 10},
       color = headerColor,
     }),
-    frame = {x = "14", y = tostring(padY), w = "150", h = "16"},
+    frame = {x = 14, y = padY, w = 130, h = 16},
   })
 
-  local countText = #sessions > 0 and (attached .. "/" .. #sessions .. " attached") or "unreachable"
-  local countColor = #sessions > 0 and greenColor or {red = 0.8, green = 0.3, blue = 0.3, alpha = 1}
+  local countText, countColor
+  if #sessions == 0 then
+    countText = "unreachable"
+    countColor = redColor
+  elseif bells > 0 then
+    countText = "🔔 " .. bells .. " need attention"
+    countColor = bellColor
+  else
+    countText = attached .. "/" .. #sessions .. " attached"
+    countColor = greenColor
+  end
   canvas:appendElements({
     type = "text",
     text = hs.styledtext.new(countText, {
       font = {name = "Menlo", size = 10},
       color = countColor,
     }),
-    frame = {x = "150", y = tostring(padY), w = "160", h = "16"},
+    frame = {x = widgetW - 160 - 14, y = padY, w = 160, h = 16},
+    textAlignment = "right",
   })
 
   -- Sessions
@@ -116,7 +154,9 @@ local function drawWidget(sessions)
     local idle = ago(now, s.activity)
     local idleSec = now - s.activity
     local color
-    if s.attached and idleSec < 3600 then
+    if s.bell then
+      color = bellColor -- needs attention: bright yellow
+    elseif s.attached and idleSec < 3600 then
       color = greenColor
     elseif s.attached then
       color = orangeColor
@@ -124,7 +164,14 @@ local function drawWidget(sessions)
       color = grayColor
     end
 
-    local icon = s.attached and "●" or "○"
+    local icon
+    if s.bell then
+      icon = "🔔"
+    elseif s.attached then
+      icon = "●"
+    else
+      icon = "○"
+    end
     local yPos = headerH + padY + (i - 1) * lineH
 
     -- Session name line
@@ -134,7 +181,7 @@ local function drawWidget(sessions)
         font = {name = "Menlo", size = 12},
         color = color,
       }),
-      frame = {x = "14", y = tostring(yPos), w = tostring(widgetW - 28), h = "16"},
+      frame = {x = 14, y = yPos, w = widgetW - 28, h = 16},
     })
 
     -- Path line
@@ -144,33 +191,20 @@ local function drawWidget(sessions)
         font = {name = "Menlo", size = 10},
         color = pathColor,
       }),
-      frame = {x = "14", y = tostring(yPos + 16), w = tostring(widgetW - 28), h = "14"},
+      frame = {x = 14, y = yPos + 17, w = widgetW - 28, h = 14},
     })
   end
 
-  -- Dragging support
   canvas:mouseCallback(function(c, msg, id, x, y)
-    if msg == "mouseDown" then
-      dragging = true
-      dragOffset = {x = x, y = y}
-    elseif msg == "mouseUp" then
-      dragging = false
-      local f = c:topLeft()
-      widgetX = f.x
-      widgetY = f.y
-    elseif msg == "mouseDragged" and dragging then
-      local f = c:topLeft()
-      c:topLeft({x = f.x + x - dragOffset.x, y = f.y + y - dragOffset.y})
-    end
+    if msg == "mouseDown" then startDrag() end
   end)
-  canvas:canvasMouseEvents(true, true, true, true)
+  canvas:canvasMouseEvents(true, false, false, false)
 
   if visible then canvas:show() end
 end
 
 local function refresh()
-  local sessions = fetchSessions()
-  drawWidget(sessions)
+  drawWidget(fetchSessions())
 end
 
 -- Toggle visibility: Ctrl+Opt+D
