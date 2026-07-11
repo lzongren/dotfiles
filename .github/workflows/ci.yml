@@ -16,20 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ubuntu's `bats` package IS bats-core (>=1.10); `lua-check` is luacheck.
       - name: Install tools (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck lua5.3
-          # shfmt
-          curl -sS https://webinstall.dev/shfmt | bash
-          export PATH="$HOME/.local/bin:$PATH"
-          # bats-core
-          git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats
-          sudo /tmp/bats/install.sh /usr/local
-          # luacheck
-          sudo apt-get install -y -qq luarocks
-          sudo luarocks install luacheck
+          sudo apt-get install -y -qq shellcheck shfmt bats lua-check
 
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
@@ -37,8 +29,6 @@ jobs:
 
       - name: Shell lint + test (strict)
         run: ./remote-dev/test/run.sh --strict
-        env:
-          PATH: "${{ runner.os == 'Linux' && format('{0}/.local/bin:/usr/local/bin:/usr/bin:/bin', env.HOME) || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }}"
 
       - name: Luacheck
         run: luacheck hammerspoon/
