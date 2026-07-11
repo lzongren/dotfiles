@@ -208,14 +208,18 @@ if [[ "$1" == "list" || "$1" == "ls" ]]; then
 fi
 
 if [[ "$1" == "status" ]]; then
-  # Machine-readable status: one line per session (name|attached|ago|cmd|path).
+  # Status: one line per session (name|attached|activity|bell|cmd|path).
   # --raw: skip the pretty table, emit raw pipe-delimited lines for scripts.
   _lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
   # shellcheck source=/dev/null
   [ -f "$_lib" ] && . "$_lib"
+  # `true` last: ssh reports the LAST remote command's status, and both tmux
+  # calls fail when no server runs — a reachable host with zero sessions must
+  # not look like an unreachable one.
   probe="$(timeout 10 ssh -o ConnectTimeout=5 "$DEVBOX_HOST" '
     tmux list-sessions -F "S|#{session_name}|#{session_attached}|#{session_activity}" 2>/dev/null
     tmux list-panes -a -F "P|#{session_name}|#{window_active}|#{pane_active}|#{window_bell_flag}|#{pane_current_command}|#{pane_current_path}" 2>/dev/null
+    true
   ' 2>/dev/null)" || {
     echo "devbox: cannot reach $DEVBOX_HOST" >&2
     exit 1
