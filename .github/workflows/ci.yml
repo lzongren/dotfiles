@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ubuntu's `bats` package IS bats-core (>=1.10); `lua-check` is luacheck.
+      - name: Install tools (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck shfmt bats lua-check
+
+      - name: Install tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck shfmt bats-core luacheck
+
+      - name: Shell lint + test (strict)
+        run: ./remote-dev/test/run.sh --strict
+
+      - name: Luacheck
+        run: luacheck hammerspoon/
