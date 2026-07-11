@@ -54,6 +54,8 @@ Put `bin/` on your PATH, then connect:
 devbox            # mosh + auto-attach tmux session 'main'
 devbox scratch    # a differently-named session
 devbox list       # show running sessions without connecting
+devbox status     # session table: state, idle, command, path
+devbox status --summary  # natural language summary (uses claude CLI)
 devbox doctor     # health-check every layer (see below)
 devbox sync ls    # manage synced folders (see below)
 devbox --raw      # plain mosh, no tmux
@@ -162,6 +164,116 @@ Typical flow: `devbox` to land on the remote, then `dev <project>` there.
 - **Sync status:** `mutagen sync list` (state, conflicts), `mutagen sync
   monitor <name>` (live). Conflicts (same file edited both sides) are flagged,
   never auto-resolved — fix the file, then `mutagen sync flush <name>`.
+
+## Session status at a glance
+
+After a day away it's easy to forget what sessions exist and which ones want
+your attention. Three surfaces answer that, all fed by the same pipeline:
+`devbox status` (CLI table + LLM summary), a Hammerspoon floating widget
+(always on top), and an optional SwiftBar menu-bar plugin.
+
+```
+ LAPTOP (macOS)                                    │  REMOTE (cloud desktop)
+                                                   │
+ ┌────────────────────────────┐                    │
+ │  Hammerspoon widget        │                    │
+ │  (hammerspoon/init.lua)    │                    │
+ │  ┌──────────────────────┐  │                    │
+ │  │ DEVBOX   🔔 1 need…  │  │  every 30s         │
+ │  │ 🔔 abc      zsh · 2m │──┼──────────┐         │
+ │  │ ● api    claude · 3h │  │          ▼         │
+ │  │ ○ main      zsh · 1d │  │   devbox status --raw
+ │  └──────────────────────┘  │          │         │
+ │   click row │    drag body │          │         │
+ └─────────────┼──────────────┘          │         │
+               │                         ▼         │
+               │              ┌────────────────┐   │   ┌───────────────────┐
+               │              │  bin/devbox    │  ssh  │  tmux server      │
+               │              │  status        │───┼──►│  list-sessions -F │
+               │              │                │   │   │  list-panes -F    │
+               │              │  probe (1 ssh):│◄──┼───│                   │
+               │              │  S|name|att|act│   │   │  #{session_*}     │
+               │              │  P|…|bell|cmd|path    │  #{window_bell_flag}
+               │              └───────┬────────┘   │   └───────────────────┘
+               │                      │            │        ▲          ▲
+               │                      ▼            │        │          │
+               │              ┌────────────────┐   │     bell rung   title set
+               │              │ lib.sh (awk)   │   │     by claude   "devbox:#S"
+               │              │ devbox_status_ │   │     (\a on      (set-titles
+               │              │ lines: merge   │   │     finish/     in tmux.conf)
+               │              │ S+P → 1 line   │   │     input)      │
+               │              │ per session    │   │        │        │
+               │              └───────┬────────┘   │   ┌────┴────────┴────┐
+               │                      │            │   │ claude / zsh /…  │
+               │       name|att|act|bell|cmd|path  │   │ (your sessions)  │
+               │                      │            │   └──────────────────┘
+               │                      ▼            │
+               │            back to widget → draw  │
+               │                                   │
+   ┌───────────▼───────────────────────────┐       │
+   │ clickSession(name)                    │       │
+   │                                       │       │
+   │ 1. AX API: scan Ghostty tab titles    │       │
+   │    for "devbox:<name>"                │       │
+   │    found? ──► AXPress → focus tab ────┼──► Ghostty tab
+   │                                       │    (already attached)
+   │ 2. not found? ──► ghostty -e          │       │
+   │       devbox <name> ──────────────────┼──► new Ghostty window
+   │                                       │    └─► mosh ──► tmux attach
+   └───────────────────────────────────────┘       │
+```
+
+Three loops tie it together:
+
+1. **Status loop (every 30s):** widget → `devbox status --raw` → one ssh probe
+   → tmux formats (`S|` session lines + `P|` pane lines with the bell flag) →
+   awk merge in `lib.sh` → `name|attached|activity|bell|cmd|path` → the widget
+   colors each row (🔔 yellow / ● green / ● orange / ○ gray).
+2. **Attention loop (event-driven):** a command finishes and rings the bell
+   (`\a`) → tmux sets `window_bell_flag` on that window → the next probe picks
+   it up → the row turns 🔔 yellow. Same signal Ghostty uses for its tab alert
+   — one bell, two surfaces.
+3. **Focus loop (on click):** tmux titles each tab `devbox:<session>`
+   (`set-titles-string`) → the widget walks Ghostty's accessibility tree for a
+   matching tab title → found: `AXPress` focuses the tab; not found:
+   `ghostty -e devbox <name>` opens a fresh attached window.
+
+The widget has no state of its own — tmux on the remote is the single source
+of truth, `devbox status` is the only pipe, and Ghostty tab titles are the
+join key between remote sessions and local tabs.
+
+### Hammerspoon floating widget
+
+`hammerspoon/init.lua` draws an always-on-top panel listing every session:
+state icon, name, running command, idle time, and working directory. Yellow 🔔
+rows rang their bell (e.g. claude finished and wants input). Click a row to
+jump to that session's Ghostty tab (or open one); drag anywhere to move it;
+**Ctrl+Opt+D** toggles visibility.
+
+```bash
+brew install --cask hammerspoon
+mkdir -p ~/.hammerspoon
+cp hammerspoon/init.lua ~/.hammerspoon/init.lua   # or symlink
+```
+
+Grant Hammerspoon **Accessibility** permission (System Settings → Privacy &
+Security) — needed for click-to-focus and dragging. Force a refresh from a
+shell with `hs -c 'refresh()'`.
+
+### macOS menu-bar status (SwiftBar, optional)
+
+`bin/devbox-status.30s.sh` is a [SwiftBar](https://github.com/swiftbar/SwiftBar)
+plugin showing the same status in the menu bar. Install, then symlink:
+
+```bash
+brew install --cask swiftbar
+ln -sf ~/Personal/dotfiles/bin/devbox-status.30s.sh \
+  ~/Library/Application\ Support/SwiftBar/Plugins/
+```
+
+The menu bar shows `⬡ 3/7` (3 attached / 7 total), or `⬡ 🔔1` when a session
+needs attention. The dropdown lists each session; "Summarize" runs
+`devbox status --summary` for a natural-language recap of what work is active.
 
 ## Notes
 
