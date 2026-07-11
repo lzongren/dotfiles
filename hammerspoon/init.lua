@@ -7,7 +7,7 @@ local REFRESH = 30 -- seconds
 
 -- Widget state
 local canvas = nil
-local timer = nil
+local timer = nil -- luacheck: ignore (hs.timer prevents GC via internal ref)
 local visible = true
 local widgetX = 40
 local widgetY = 60
@@ -243,7 +243,7 @@ local function drawWidget(sessions)
     })
   end
 
-  canvas:mouseCallback(function(c, msg, id, x, y)
+  canvas:mouseCallback(function(_c, msg, _id, _x, y) -- luacheck: no unused args
     if msg == "mouseDown" then startDrag(y) end
   end)
   canvas:canvasMouseEvents(true, false, false, false)

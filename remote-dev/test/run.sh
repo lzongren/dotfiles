@@ -5,6 +5,9 @@
 # real bats-core explicitly.
 set -euo pipefail
 
+STRICT=false
+[[ "${1:-}" == "--strict" || "${CI:-}" == "true" ]] && STRICT=true
+
 DIR="$(cd "$(dirname "$0")/../.." && pwd)" # repo root
 cd "$DIR"
 
@@ -29,6 +32,9 @@ echo "${BOLD}shellcheck${RESET}"
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x --severity=warning "${SCRIPTS[@]}" &&
     echo "${GREEN}✓ shellcheck clean${RESET}" || fail=1
+elif $STRICT; then
+  echo "${RED}✗ shellcheck not installed (required in CI)${RESET}"
+  fail=1
 else
   echo "  (shellcheck not installed — skipping; brew install shellcheck)"
 fi
@@ -40,6 +46,9 @@ if command -v shfmt >/dev/null 2>&1; then
     echo "${RED}✗ run: shfmt -i 2 -ci -w ${SCRIPTS[*]}${RESET}"
     fail=1
   }
+elif $STRICT; then
+  echo "${RED}✗ shfmt not installed (required in CI)${RESET}"
+  fail=1
 else
   echo "  (shfmt not installed — skipping; brew install shfmt)"
 fi
@@ -47,6 +56,9 @@ fi
 echo "${BOLD}bats${RESET}"
 if [ -n "$BATS" ]; then
   "$BATS" remote-dev/test/ || fail=1
+elif $STRICT; then
+  echo "${RED}✗ bats-core not installed (required in CI)${RESET}"
+  fail=1
 else
   echo "  (bats-core not found — skipping; brew install bats-core)"
 fi

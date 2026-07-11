@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck lua5.3
+          # shfmt
+          curl -sS https://webinstall.dev/shfmt | bash
+          export PATH="$HOME/.local/bin:$PATH"
+          # bats-core
+          git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats
+          sudo /tmp/bats/install.sh /usr/local
+          # luacheck
+          sudo apt-get install -y -qq luarocks
+          sudo luarocks install luacheck
+
+      - name: Install tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck shfmt bats-core luacheck
+
+      - name: Shell lint + test (strict)
+        run: ./remote-dev/test/run.sh --strict
+        env:
+          PATH: "${{ runner.os == 'Linux' && format('{0}/.local/bin:/usr/local/bin:/usr/bin:/bin', env.HOME) || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }}"
+
+      - name: Luacheck
+        run: luacheck hammerspoon/

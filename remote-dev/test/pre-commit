@@ -17,7 +17,30 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 runner="$root/remote-dev/test/run.sh"
 [ -x "$runner" ] || exit 0 # not this repo — do nothing
 
-if git diff --cached --name-only | grep -qE '^(bin/devbox|remote-dev/)'; then
+if git diff --cached --name-only | grep -qE '^(bin/devbox|remote-dev/|hammerspoon/)'; then
   echo "pre-commit: linting + testing remote-dev…"
   "$runner"
+fi
+
+# Guard: block host-specific identifiers from being committed to the public repo.
+# Values come from the gitignored devbox config; if the config doesn't exist we
+# skip (no values to guard against).
+_devbox_config="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
+if [ -f "$_devbox_config" ]; then
+  # shellcheck source=/dev/null
+  . "$_devbox_config"
+  _patterns=""
+  [ -n "${DEVBOX_HOST:-}" ] && _patterns="$DEVBOX_HOST"
+  # Also guard the remote username if it differs from the local one.
+  if [ -n "${DEVBOX_USER:-}" ] && [ "$DEVBOX_USER" != "$(whoami)" ]; then
+    _patterns="${_patterns:+$_patterns|}$DEVBOX_USER"
+  fi
+  if [ -n "$_patterns" ]; then
+    # Search staged content (not filenames) for any of the guarded patterns.
+    if git diff --cached -U0 | grep -qE "$_patterns"; then
+      echo "pre-commit: ERROR — staged diff contains host-specific identifiers ($_patterns)"
+      echo "  These belong in ~/.config/devbox/config, not in the public repo."
+      exit 1
+    fi
+  fi
 fi
