@@ -22,11 +22,16 @@ if [ -z "$raw" ]; then
   exit 0
 fi
 
+# Raw format: name|attached|activity|bell|cmd|path (see lib.sh devbox_status_lines).
+# attached can be >1 (multiple clients), so compare against 0, not 1.
 total="$(wc -l <<<"$raw" | tr -d ' ')"
-attached="$(grep -c '|1|' <<<"$raw" || true)"
+attached="$(awk -F'|' '$2 != 0' <<<"$raw" | wc -l | tr -d ' ')"
+bells="$(awk -F'|' '$4 == 1' <<<"$raw" | wc -l | tr -d ' ')"
 
-# Menu bar: green if any attached, gray if all detached
-if [ "$attached" -gt 0 ]; then
+# Menu bar: yellow bell if any session needs attention, green if any attached.
+if [ "$bells" -gt 0 ]; then
+  echo "⬡ 🔔${bells} | sfcolor=#c4a000"
+elif [ "$attached" -gt 0 ]; then
   echo "⬡ ${attached}/${total} | sfcolor=#1a8c32"
 else
   echo "⬡ 0/${total} | sfcolor=#888888"
@@ -34,7 +39,7 @@ fi
 echo "---"
 
 now="$(date +%s)"
-while IFS='|' read -r name att act cmd path; do
+while IFS='|' read -r name att act bell cmd path; do
   [ -n "$name" ] || continue
 
   # Compact idle time
@@ -48,8 +53,12 @@ while IFS='|' read -r name att act cmd path; do
     idle="$((d / 3600))h"
   else idle="$((d / 86400))d"; fi
 
-  # Color: green=attached+active, orange=attached+stale, dim=detached
-  if [ "$att" = 1 ]; then
+  # Color: yellow=bell (needs attention), green=attached+active,
+  # orange=attached+stale, dim=detached
+  if [ "$bell" = 1 ]; then
+    color="#c4a000" # yellow — rang its bell
+    icon="🔔"
+  elif [ "$att" != 0 ]; then
     if [ "$d" -lt 3600 ]; then
       color="#1a8c32" # dark green — active
     else

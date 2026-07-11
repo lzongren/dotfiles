@@ -30,10 +30,11 @@ Work on a remote dev host from your laptop with local files kept in sync.
 - Host and folders configured via a gitignored `~/.config/devbox/config`
 
 ### [Hammerspoon](hammerspoon/)
-Always-on-top floating widget showing remote devbox session status.
-- Color-coded: green (active), orange (stale), gray (detached)
-- Draggable, toggle with Ctrl+Opt+D
-- Refreshes every 30s via `devbox status --raw`
+Always-on-top floating widget showing remote devbox session status
+(see [remote-dev README](remote-dev/README.md#session-status-at-a-glance) for the architecture).
+- Color-coded: 🔔 yellow (needs attention), green (active), orange (stale), gray (detached)
+- Click a session row to jump to its Ghostty tab (or open one)
+- Draggable, toggle with Ctrl+Opt+D, refreshes every 30s via `devbox status --raw`
 
 ### [MarkEdit](markedit/)
 Extensions for the MarkEdit markdown editor.
