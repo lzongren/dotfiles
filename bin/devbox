@@ -22,6 +22,21 @@ DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
 [ -f "$DEVBOX_CONFIG" ] && . "$DEVBOX_CONFIG"
 DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 
+# Transport: mosh needs a direct route to the host, while SSH can use any
+# ProxyJump or ProxyCommand configured by the user. Probe direct TCP:22 access;
+# fall back to SSH when mosh cannot reach the host. Override with
+# DEVBOX_TRANSPORT=mosh|ssh in the config to skip auto-detection.
+devbox_transport() {
+  case "${DEVBOX_TRANSPORT:-}" in mosh | ssh)
+    printf '%s' "$DEVBOX_TRANSPORT"
+    return
+    ;;
+  esac
+  local h
+  h="$(ssh -G "$DEVBOX_HOST" 2>/dev/null | awk '/^hostname /{print $2; exit}')"
+  if nc -z -G 2 "${h:-$DEVBOX_HOST}" 22 >/dev/null 2>&1; then printf 'mosh'; else printf 'ssh'; fi
+}
+
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
   sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
@@ -58,6 +73,16 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   MUTAGEN="$(command -v mutagen || echo "$HOME/bin/mutagen")"
   [ -x "$MUTAGEN" ] && pass "mutagen installed (laptop)" || fail "mutagen missing (laptop)" "run remote-dev/setup-sync.sh"
 
+  # --- transport ---
+  transport="$(devbox_transport)"
+  if [ "$transport" = mosh ]; then
+    pass "direct route to host ${d}(transport: mosh)${z}"
+  elif [ "${DEVBOX_TRANSPORT:-}" = ssh ]; then
+    pass "ssh transport configured ${d}(no roaming)${z}"
+  else
+    pass "no direct route; ssh fallback ${d}(ProxyJump/ProxyCommand supported, no roaming)${z}"
+  fi
+
   # --- remote reachability (single ssh, gather everything at once) ---
   # Fields are newline-separated key=value; values may contain spaces, so parse
   # line-by-line instead of eval (which would split "up 2 days" into commands).
@@ -71,7 +96,7 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
     echo "ORPHANS=$(pgrep -c mosh-server 2>/dev/null || echo 0)"
   ' 2>/dev/null)"
   if [ -z "$probe" ]; then
-    fail "remote unreachable ($DEVBOX_HOST)" "rebooting? check VPN / ssh $DEVBOX_HOST"
+    fail "remote unreachable ($DEVBOX_HOST)" "run ssh $DEVBOX_HOST; check keys, SSH proxy/jump host, VPN, and host status"
   else
     UP=""
     TMUX=""
@@ -264,7 +289,11 @@ if [[ "$1" == "status" ]]; then
 fi
 
 if [[ "$1" == "--raw" ]]; then
-  exec mosh "$DEVBOX_HOST"
+  if [ "$(devbox_transport)" = mosh ]; then
+    exec mosh "$DEVBOX_HOST"
+  fi
+  echo "devbox: direct mosh route unavailable; using plain ssh" >&2
+  exec ssh -t "$DEVBOX_HOST"
 fi
 
 SESSION="${1:-main}"
@@ -281,8 +310,14 @@ if [ -f "$_lib" ]; then
     CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$PWD" "$rhome")"
 fi
 
-if [ -n "$CDIR" ]; then
-  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION" -c "$CDIR"
-else
-  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION"
+# tmux args as an array so both transports run the identical remote command.
+TMUX_CMD=(tmux new-session -A -s "$SESSION")
+[ -n "$CDIR" ] && TMUX_CMD+=(-c "$CDIR")
+
+if [ "$(devbox_transport)" = mosh ]; then
+  exec mosh "$DEVBOX_HOST" -- "${TMUX_CMD[@]}"
 fi
+# SSH may use a ProxyJump or ProxyCommand from ~/.ssh/config. Sessions survive
+# identically (tmux lives on the remote); only mosh's roaming is unavailable.
+echo "devbox: direct mosh route unavailable; using ssh + tmux" >&2
+exec ssh -t "$DEVBOX_HOST" "${TMUX_CMD[@]}"
