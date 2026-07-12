@@ -22,6 +22,21 @@ DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
 [ -f "$DEVBOX_CONFIG" ] && . "$DEVBOX_CONFIG"
 DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 
+# Transport: mosh needs direct UDP to the host; off VPN ssh tunnels through
+# wssh (TCP-only), where mosh can't follow. Probe: direct TCP:22 reachable?
+# Off VPN corp DNS doesn't resolve, so the probe fails in ms. Override with
+# DEVBOX_TRANSPORT=mosh|ssh in the config to skip the probe.
+devbox_transport() {
+  case "${DEVBOX_TRANSPORT:-}" in mosh | ssh)
+    printf '%s' "$DEVBOX_TRANSPORT"
+    return
+    ;;
+  esac
+  local h
+  h="$(ssh -G "$DEVBOX_HOST" 2>/dev/null | awk '/^hostname /{print $2; exit}')"
+  if nc -z -G 2 "${h:-$DEVBOX_HOST}" 22 >/dev/null 2>&1; then printf 'mosh'; else printf 'ssh'; fi
+}
+
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
   sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
@@ -58,6 +73,27 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   MUTAGEN="$(command -v mutagen || echo "$HOME/bin/mutagen")"
   [ -x "$MUTAGEN" ] && pass "mutagen installed (laptop)" || fail "mutagen missing (laptop)" "run remote-dev/setup-sync.sh"
 
+  # --- auth + transport (matters most off VPN, where ssh rides wssh) ---
+  cert="$HOME/.ssh/id_ecdsa-cert.pub"
+  if [ -f "$cert" ]; then
+    cert_end="$(ssh-keygen -L -f "$cert" 2>/dev/null | grep -oE 'to [0-9T:-]+' | cut -d' ' -f2)"
+    if [ -n "$cert_end" ] && [ "$(date -j -f '%Y-%m-%dT%H:%M:%S' "$cert_end" +%s 2>/dev/null || echo 0)" -gt "$(date +%s)" ]; then
+      pass "midway ssh cert valid ${d}(until $cert_end)${z}"
+    else
+      fail "midway ssh cert expired" "run mwinit"
+    fi
+  else
+    warn "no midway ssh cert" "run mwinit"
+  fi
+  transport="$(devbox_transport)"
+  if [ "$transport" = mosh ]; then
+    pass "direct route to host ${d}(transport: mosh)${z}"
+  else
+    command -v wssh >/dev/null &&
+      pass "no direct route; wssh tunnel ${d}(transport: ssh, no roaming)${z}" ||
+      fail "no direct route and wssh missing" "install WSSH from self-service, or connect VPN"
+  fi
+
   # --- remote reachability (single ssh, gather everything at once) ---
   # Fields are newline-separated key=value; values may contain spaces, so parse
   # line-by-line instead of eval (which would split "up 2 days" into commands).
@@ -71,7 +107,7 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
     echo "ORPHANS=$(pgrep -c mosh-server 2>/dev/null || echo 0)"
   ' 2>/dev/null)"
   if [ -z "$probe" ]; then
-    fail "remote unreachable ($DEVBOX_HOST)" "rebooting? check VPN / ssh $DEVBOX_HOST"
+    fail "remote unreachable ($DEVBOX_HOST)" "rebooting? off VPN run mwinit (wssh needs a live AEA session) / ssh $DEVBOX_HOST"
   else
     UP=""
     TMUX=""
@@ -264,7 +300,11 @@ if [[ "$1" == "status" ]]; then
 fi
 
 if [[ "$1" == "--raw" ]]; then
-  exec mosh "$DEVBOX_HOST"
+  if [ "$(devbox_transport)" = mosh ]; then
+    exec mosh "$DEVBOX_HOST"
+  fi
+  echo "devbox: no direct route (off VPN?) — plain ssh instead of mosh" >&2
+  exec ssh -t "$DEVBOX_HOST"
 fi
 
 SESSION="${1:-main}"
@@ -281,8 +321,14 @@ if [ -f "$_lib" ]; then
     CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$PWD" "$rhome")"
 fi
 
-if [ -n "$CDIR" ]; then
-  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION" -c "$CDIR"
-else
-  exec mosh "$DEVBOX_HOST" -- tmux new-session -A -s "$SESSION"
+# tmux args as an array so both transports run the identical remote command.
+TMUX_CMD=(tmux new-session -A -s "$SESSION")
+[ -n "$CDIR" ] && TMUX_CMD+=(-c "$CDIR")
+
+if [ "$(devbox_transport)" = mosh ]; then
+  exec mosh "$DEVBOX_HOST" -- "${TMUX_CMD[@]}"
 fi
+# Off VPN: ssh rides the wssh ProxyCommand (see ~/.ssh/config). Sessions
+# survive identically (tmux lives on the remote); you lose mosh's roaming.
+echo "devbox: no direct route (off VPN?) — ssh + tmux instead of mosh" >&2
+exec ssh -t "$DEVBOX_HOST" "${TMUX_CMD[@]}"
