@@ -282,6 +282,21 @@ The menu bar shows `⬡ 3/7` (3 attached / 7 total), or `⬡ 🔔1` when a sessi
 needs attention. The dropdown lists each session; "Summarize" runs
 `devbox status --summary` for a natural-language recap of what work is active.
 
+## Working without a direct route
+
+SSH-based commands (`devbox status/list/sync/doctor`, Mutagen) honor the user's
+standard `~/.ssh/config`. Hosts reached through `ProxyJump`, `ProxyCommand`, a
+VPN, or another SSH routing mechanism therefore need no provider-specific
+configuration in `devbox`.
+
+mosh is the exception: it needs direct UDP access to the host, which an SSH
+proxy or jump host does not provide. `devbox` auto-detects the route: direct
+TCP:22 access selects mosh; otherwise it uses `ssh -t … tmux` with the same
+auto-attach semantics. Work remains persistent because tmux runs remotely; the
+SSH fallback only loses mosh's roaming and instant echo. Force a transport with
+`DEVBOX_TRANSPORT=mosh|ssh`. `devbox doctor` reports the selected transport and
+then verifies the SSH connection end to end.
+
 ## Notes
 
 - **Excluded from sync:** VCS internals, `node_modules/`, `build/` (build trees
