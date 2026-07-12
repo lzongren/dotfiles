@@ -282,6 +282,22 @@ The menu bar shows `⬡ 3/7` (3 attached / 7 total), or `⬡ 🔔1` when a sessi
 needs attention. The dropdown lists each session; "Summarize" runs
 `devbox status --summary` for a natural-language recap of what work is active.
 
+## Working without VPN
+
+Everything ssh-based (`devbox status/list/sync/doctor`, Mutagen) works off VPN
+once ssh is tunnelled through **WSSH**: a `Match … !exec "nc -z …"` block in
+`~/.ssh/config` adds `ProxyCommand wssh proxy %h` only when the host isn't
+directly reachable, so on VPN nothing changes. Requirements: WSSH installed
+(self-service store) and a live midway AEA session (`mwinit`; the AEA posture
+cookie is attached by default).
+
+mosh is the exception — it needs direct UDP, which no ssh tunnel carries.
+`devbox` auto-detects: direct route → mosh; otherwise → `ssh -t … tmux` with
+the same auto-attach semantics. You keep persistent sessions (tmux lives on
+the remote); you lose only mosh's roaming/instant-echo. Force a transport with
+`DEVBOX_TRANSPORT=mosh|ssh`. `devbox doctor` reports cert validity and which
+transport is active.
+
 ## Notes
 
 - **Excluded from sync:** VCS internals, `node_modules/`, `build/` (build trees
