@@ -115,6 +115,16 @@ else
   rm -f "/tmp/tmux-$(id -u)/default" 2>/dev/null || true
   rok "tmux built → ~/.local/bin/tmux ($("$HOME/.local/bin/tmux" -V))"
 fi
+
+# --- tmux plugins: resurrect + continuum (session persistence across reboots) ---
+for p in tmux-resurrect tmux-continuum; do
+  if [ -d "$HOME/.tmux/plugins/$p" ]; then
+    rok "$p present"
+  else
+    git clone -q --depth 1 "https://github.com/tmux-plugins/$p" "$HOME/.tmux/plugins/$p"
+    rok "$p cloned"
+  fi
+done
 REMOTE
 ok "Remote build complete"
 

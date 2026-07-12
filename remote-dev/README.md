@@ -126,10 +126,14 @@ devbox doctor — host: <your-host>
 ```
 
 Each line is pass (✓) / warn (!) / fail (✗) with a fix hint; exits non-zero if
-anything failed. A **remote reboot** kills tmux sessions and pauses Mutagen —
-sessions are gone (files are safe on the laptop), and Mutagen auto-reconnects
-once the host is back. If a sync shows disconnected long after, `mutagen sync
-reset <name>`.
+anything failed. A **remote reboot** (dev desktops patch-reboot weekly) kills
+the tmux server and pauses Mutagen — Mutagen auto-reconnects once the host is
+back, and sessions are restored on your first `devbox <name>` afterwards:
+tmux-resurrect + tmux-continuum snapshot the layout every 15 min and replay
+sessions/windows/panes with their working directories on server start. Panes
+that were running claude come back as `claude --continue` (resumes the last
+conversation in that directory). If a sync shows disconnected long after,
+`mutagen sync reset <name>`.
 
 ### What `setup-remote.sh` handles
 
@@ -143,6 +147,9 @@ The AL2 packages are unusable, so it builds from source and encodes the fixes:
   `~/.local`, clears the stale 1.8 socket, and deploys [`tmux.conf`](tmux.conf).
 - **PATH** — adds `~/.local/bin` via `.zshenv` so mosh's non-login shell finds
   the new binaries.
+- **session persistence** — clones tmux-resurrect + tmux-continuum to
+  `~/.tmux/plugins/` so sessions survive the weekly host reboot (see
+  Troubleshooting above).
 
 ## `devbox` vs `dev`
 
