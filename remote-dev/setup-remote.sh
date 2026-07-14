@@ -59,6 +59,15 @@ else
   rok ".zshenv PATH already set"
 fi
 
+# --- LANG: ensure UTF-8 for tmux (mosh validates at protocol level, but ssh
+# and local shells inherit POSIX on AL2 unless explicitly set) ---
+if ! grep -q 'LANG' "$HOME/.zshenv" 2>/dev/null; then
+  printf '\nexport LANG=C.UTF-8\n' >> "$HOME/.zshenv"
+  rok ".zshenv LANG=C.UTF-8"
+else
+  rok ".zshenv LANG already set"
+fi
+
 # --- build dependencies (protobuf 2.5 + libevent; openssl11 already present) ---
 NEED=()
 for p in gcc-c++ protobuf-devel protobuf-compiler ncurses-devel zlib-devel \
