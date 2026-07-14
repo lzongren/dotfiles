@@ -1,0 +1,201 @@
+#!/bin/bash
+# sessions — list recent coding-agent sessions (local + remote)
+#
+# Aggregates sessions from:
+#   - Claude Code    (~/.claude/sessions/*.json)
+#   - Codex          (~/.codex/sessions/**/*.jsonl)
+#   - Remote devbox  (tmux sessions via ssh, optional)
+#
+# Usage: sessions [options]
+#        sessions --all          (include dead/old sessions)
+#        sessions --no-remote    (skip remote query)
+#        sessions --json         (machine-readable output)
+#        sessions --days N       (lookback window, default 7)
+
+set -euo pipefail
+
+DAYS=7
+SHOW_REMOTE=true
+SHOW_ALL=false
+JSON_OUT=false
+MOTD=false
+LIMIT=0  # 0 = no limit
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --all) SHOW_ALL=true ;;
+    --no-remote) SHOW_REMOTE=false ;;
+    --json) JSON_OUT=true ;;
+    --days) [[ $# -ge 2 ]] || { echo "sessions: --days needs a value" >&2; exit 1; }; DAYS="$2"; shift ;;
+    --limit) [[ $# -ge 2 ]] || { echo "sessions: --limit needs a value" >&2; exit 1; }; LIMIT="$2"; shift ;;
+    --motd) MOTD=true; DAYS=3; LIMIT=8 ;;
+    -h|--help)
+      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) echo "sessions: unknown option: $1" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+NOW=$(date +%s)
+CUTOFF=$(( NOW - DAYS * 86400 ))
+
+# --- Colors (skip if piped) ---
+if [[ -t 1 ]]; then
+  B=$'\033[1m'; D=$'\033[2m'; G=$'\033[32m'; Y=$'\033[33m'; Z=$'\033[0m'
+else
+  B=''; D=''; G=''; Y=''; Z=''
+fi
+
+# --- Helpers ---
+ago() {
+  local diff=$(( NOW - $1 ))
+  if (( diff < 60 )); then echo "now"
+  elif (( diff < 3600 )); then echo "$((diff/60))m"
+  elif (( diff < 86400 )); then echo "$((diff/3600))h"
+  else echo "$((diff/86400))d"; fi
+}
+
+short_path() {
+  echo "${1/#$HOME/~}"
+}
+
+# --- Collect sessions into lines: TYPE|STATUS|AGO_SECS|NAME|CWD|EXTRA ---
+entries=()
+
+# 1. Claude Code (live session registry)
+if [[ -d "$HOME/.claude/sessions" ]]; then
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    # Parse with python for reliability (tab-delimited to handle spaces in paths)
+    IFS=$'\t' read -r status started_s cwd name <<< "$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as fh:
+    d = json.load(fh)
+status = d.get('status', 'unknown')
+started = int(d.get('startedAt', 0)) // 1000
+cwd = d.get('cwd', '')
+name = d.get('name', '')
+print(f'{status}\t{started}\t{cwd}\t{name}')
+" "$f" 2>/dev/null)" || continue
+    [[ -z "$started_s" || "$started_s" == "0" ]] && continue
+    # Filter by age unless --all
+    if [[ "$SHOW_ALL" != "true" && "$started_s" -lt "$CUTOFF" ]]; then continue; fi
+    entries+=("claude|${status}|${started_s}|${name}|${cwd}|")
+  done < <(find "$HOME/.claude/sessions" -name "*.json" -type f 2>/dev/null)
+fi
+
+# 2. Codex (session JSONL files, read first line for metadata)
+if [[ -d "$HOME/.codex/sessions" ]]; then
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    IFS=$'\t' read -r ts cwd <<< "$(python3 -c "
+import json, sys, os
+from datetime import datetime
+with open(sys.argv[1]) as fh:
+    line = fh.readline()
+d = json.loads(line)
+if d.get('type') == 'session_meta':
+    p = d.get('payload', {})
+    ts_str = d.get('timestamp', '')
+    try:
+        ts = int(datetime.fromisoformat(ts_str.replace('Z','+00:00')).timestamp())
+    except:
+        ts = 0
+    print(f'{ts}\t{p.get(\"cwd\", \"\")}')
+else:
+    ts = int(os.path.getmtime(sys.argv[1]))
+    print(f'{ts}\t')
+" "$f" 2>/dev/null)" || continue
+    [[ -z "$ts" || "$ts" == "0" ]] && continue
+    if [[ "$SHOW_ALL" != "true" && "$ts" -lt "$CUTOFF" ]]; then continue; fi
+    # Name: use cwd basename, or fallback to date from filename
+    if [[ -n "$cwd" ]]; then
+      bname="$(basename "$cwd")"
+    else
+      bname="$(basename "$f" .jsonl | sed 's/rollout-//;s/T[0-9-]*$//')"
+    fi
+    entries+=("codex|done|${ts}|${bname}|${cwd}|")
+  done < <(find "$HOME/.codex/sessions" -name "*.jsonl" -type f -mtime "-${DAYS}" 2>/dev/null)
+fi
+
+# 3. Remote (devbox tmux sessions)
+if [[ "$SHOW_REMOTE" == "true" ]] && command -v devbox >/dev/null 2>&1; then
+  DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
+  # shellcheck source=/dev/null
+  [[ -f "$DEVBOX_CONFIG" ]] && . "$DEVBOX_CONFIG"
+  DEVBOX_HOST="${DEVBOX_HOST:-dev}"
+
+  # Quick non-blocking check; skip if host unreachable
+  remote_out="$(timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes "$DEVBOX_HOST" \
+    'tmux list-sessions -F "#{session_name}|#{session_activity}|#{session_attached}" 2>/dev/null' 2>/dev/null)" || remote_out=""
+
+  if [[ -n "$remote_out" ]]; then
+    while IFS='|' read -r sname activity attached; do
+      [[ -z "$sname" ]] && continue
+      status="detached"
+      [[ "$attached" == "1" ]] && status="attached"
+      entries+=("devbox|${status}|${activity}|${sname}||${DEVBOX_HOST}")
+    done <<< "$remote_out"
+  fi
+fi
+
+# --- Sort by timestamp descending (while-read: bash 3.2 has no mapfile) ---
+sorted=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && sorted+=("$line")
+done < <(printf '%s\n' "${entries[@]+"${entries[@]}"}" | sort -t'|' -k3 -rn)
+
+# Apply limit
+if [[ "$LIMIT" -gt 0 && ${#sorted[@]} -gt "$LIMIT" ]]; then
+  sorted=("${sorted[@]:0:$LIMIT}")
+fi
+
+# --- Output ---
+if [[ "$JSON_OUT" == "true" ]]; then
+  # Use python to guarantee valid JSON (handles quotes/backslashes in values)
+  printf '%s\n' "${sorted[@]+"${sorted[@]}"}" | python3 -c "
+import json, sys
+entries = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    parts = line.split('|', 5)
+    if len(parts) < 6: continue
+    entries.append({'type': parts[0], 'status': parts[1], 'ts': int(parts[2] or 0),
+                    'name': parts[3], 'cwd': parts[4], 'extra': parts[5]})
+print(json.dumps(entries, indent=2))
+"
+  exit 0
+fi
+
+# Pretty table
+if [[ ${#sorted[@]} -eq 0 ]]; then
+  [[ "$MOTD" == "true" ]] && exit 0  # silent in motd mode
+  echo "No recent sessions (last ${DAYS}d). Try: sessions --all"
+  exit 0
+fi
+
+if [[ "$MOTD" == "true" ]]; then
+  printf '%s⚡ Recent agent sessions:%s\n' "$B" "$Z"
+else
+  printf '%s%-8s %-10s %-5s %-24s %s%s\n' "$B" "TYPE" "STATUS" "AGO" "NAME" "PATH" "$Z"
+fi
+
+for e in "${sorted[@]}"; do
+  IFS='|' read -r type status ts name cwd extra <<< "$e"
+
+  # Color by status
+  case "$status" in
+    idle|active|attached) sc="${G}●${Z}" ;;
+    detached)             sc="${Y}○${Z}" ;;
+    *)                    sc="${D}·${Z}" ;;
+  esac
+
+  age="$(ago "$ts")"
+  display_path="$(short_path "${cwd:-$extra}")"
+  # Truncate name
+  [[ ${#name} -gt 24 ]] && name="${name:0:21}..."
+
+  printf '%-8s %s %-9s %-5s %-24s %s\n' "$type" "$sc" "$status" "$age" "$name" "${D}${display_path}${Z}"
+done
