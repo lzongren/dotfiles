@@ -330,5 +330,7 @@ if [ "$(devbox_transport)" = mosh ]; then
 fi
 # Off VPN: ssh rides the wssh ProxyCommand (see ~/.ssh/config). Sessions
 # survive identically (tmux lives on the remote); you lose mosh's roaming.
+# Force UTF-8 locale: mosh validates this at protocol level, but plain ssh
+# inherits the remote's bare POSIX locale, making tmux render unicode as '_'.
 echo "devbox: no direct route (off VPN?) — ssh + tmux instead of mosh" >&2
-exec ssh -t "$DEVBOX_HOST" "${TMUX_CMD[@]}"
+exec ssh -t "$DEVBOX_HOST" env LANG=C.UTF-8 "${TMUX_CMD[@]}"
