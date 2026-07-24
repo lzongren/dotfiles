@@ -98,6 +98,71 @@ EOF
   [ "$local_count" -eq 8 ]
 }
 
+@test "refresh reaps a stale lock left by a crashed refresh" {
+  # A refresh killed before its EXIT trap leaves refresh.lock behind. A lock
+  # older than 60s must be reaped so the cache can update again (else wedged).
+  mkdir -p "$MOCK_HOME/.cache/sessions/refresh.lock"
+  touch -t 202001010000 "$MOCK_HOME/.cache/sessions/refresh.lock"
+
+  # Mock ssh returns two sessions in the activity|attached|name format.
+  cat > "$MOCK_BIN/ssh" <<'SH'
+#!/bin/sh
+echo "1600000000|1|reaped-ok"
+echo "1600000100|0|second"
+SH
+  chmod +x "$MOCK_BIN/ssh"
+
+  run env HOME="$MOCK_HOME" PATH="$MOCK_BIN:$PATH" "$SESSIONS" --refresh-remote-cache
+  [ "$status" -eq 0 ]
+  [ ! -d "$MOCK_HOME/.cache/sessions/refresh.lock" ]      # reaped + released
+  grep -q "reaped-ok" "$MOCK_HOME/.cache/sessions/remote-entries"
+}
+
+@test "a fresh lock still blocks refresh (no false reap)" {
+  mkdir -p "$MOCK_HOME/.cache/sessions/refresh.lock"     # mtime = now
+  printf 'devbox|detached|1600000000|preexisting||mock-dev\n' \
+    > "$MOCK_HOME/.cache/sessions/remote-entries"
+  cat > "$MOCK_BIN/ssh" <<'SH'
+#!/bin/sh
+echo "1600000000|1|should-not-appear"
+SH
+  chmod +x "$MOCK_BIN/ssh"
+
+  run env HOME="$MOCK_HOME" PATH="$MOCK_BIN:$PATH" "$SESSIONS" --refresh-remote-cache
+  [ "$status" -eq 0 ]
+  grep -q "preexisting" "$MOCK_HOME/.cache/sessions/remote-entries"     # untouched
+  ! grep -q "should-not-appear" "$MOCK_HOME/.cache/sessions/remote-entries"
+}
+
+@test "corrupt cache line does not crash motd (non-numeric ts)" {
+  mkdir -p "$MOCK_HOME/.cache/sessions"
+  printf 'devbox|detached|garbagetext|badline||mock-dev\n\ndevbox|attached|%s|good||mock-dev\n' "$NOW" \
+    > "$MOCK_HOME/.cache/sessions/remote-entries"
+
+  run env HOME="$MOCK_HOME" PATH="$MOCK_BIN:$PATH" SESSIONS_NO_REFRESH=1 \
+    "$SESSIONS" --motd
+  [ "$status" -eq 0 ]   # ago() coerces non-numeric ts to 0 instead of aborting
+
+  run env HOME="$MOCK_HOME" PATH="$MOCK_BIN:$PATH" SESSIONS_NO_REFRESH=1 \
+    "$SESSIONS" --json --motd
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -m json.tool >/dev/null
+}
+
+@test "session name with spaces survives the refresh round-trip" {
+  cat > "$MOCK_BIN/ssh" <<'SH'
+#!/bin/sh
+echo "1600000000|0|Reasoning and thinkinkg"
+SH
+  chmod +x "$MOCK_BIN/ssh"
+  env HOME="$MOCK_HOME" PATH="$MOCK_BIN:$PATH" "$SESSIONS" --refresh-remote-cache
+
+  run env HOME="$MOCK_HOME" PATH="$MOCK_BIN:$PATH" SESSIONS_NO_REFRESH=1 \
+    "$SESSIONS" --motd
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Reasoning and thinkinkg"* ]]   # space name intact, not split
+}
+
 @test "empty sessions dir shows nothing in motd" {
   rm -rf "$MOCK_HOME/.claude/sessions"/* "$MOCK_HOME/.codex/sessions"/*
   run env HOME="$MOCK_HOME" PATH="$MOCK_BIN:$PATH" SESSIONS_NO_REFRESH=1 \

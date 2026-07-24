@@ -74,6 +74,14 @@ done
 
 refresh_remote_cache() {
   mkdir -p "$CACHE_DIR" || return 0
+  # Reap a lock left by a crashed refresh (kill -9 / reboot / sleep mid-ssh):
+  # ssh is bounded by `timeout 5`, so a lock older than 60s is orphaned.
+  # Without this, one dead refresh wedges the cache forever (mkdir keeps failing).
+  if [[ -d "$CACHE_DIR/refresh.lock" ]]; then
+    local lock_m
+    lock_m="$(stat -f %m "$CACHE_DIR/refresh.lock" 2>/dev/null || stat -c %Y "$CACHE_DIR/refresh.lock" 2>/dev/null || echo 0)"
+    (($(date +%s) - lock_m > 60)) && rmdir "$CACHE_DIR/refresh.lock" 2>/dev/null
+  fi
   mkdir "$CACHE_DIR/refresh.lock" || return 0
   trap 'rmdir "$CACHE_DIR/refresh.lock" 2>/dev/null' EXIT
 
@@ -83,13 +91,19 @@ refresh_remote_cache() {
   DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 
   local remote_out tmp status sname activity attached
+  # session_name is LAST in the format: tmux names may contain '|' (and spaces);
+  # putting the free-text field last lets `read` capture it intact in one var,
+  # so a pipe in a name can't shift a text value into the numeric ts column.
+  # ponytail: a literal '|' inside a name still mis-renders at display (the
+  # cache line is pipe-delimited), but ts stays numeric so login never crashes;
+  # switch the entry delimiter to a tab only if pipe-named sessions ever appear.
   if ! remote_out="$(timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes "$DEVBOX_HOST" \
-    'tmux list-sessions -F "#{session_name}|#{session_activity}|#{session_attached}"' 2>/dev/null)"; then
+    'tmux list-sessions -F "#{session_activity}|#{session_attached}|#{session_name}"' 2>/dev/null)"; then
     return 0
   fi
 
   tmp="$(mktemp "$CACHE_DIR/remote-entries.tmp.XXXXXX")" || return 0
-  while IFS='|' read -r sname activity attached; do
+  while IFS='|' read -r activity attached sname; do
     [[ -z "$sname" ]] && continue
     status="detached"
     [[ "$attached" == "1" ]] && status="attached"
@@ -124,7 +138,9 @@ fi
 
 # --- Helpers ---
 ago() {
-  local diff=$((NOW - $1))
+  local ts="$1"
+  [[ "$ts" =~ ^[0-9]+$ ]] || ts=0 # never let a corrupt cache line crash login
+  local diff=$((NOW - ts))
   if ((diff < 60)); then
     echo "now"
   elif ((diff < 3600)); then
@@ -231,12 +247,13 @@ if [[ "$SHOW_REMOTE" == "true" ]] && command -v devbox >/dev/null 2>&1; then
     [[ -f "$DEVBOX_CONFIG" ]] && . "$DEVBOX_CONFIG"
     DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 
-    # Quick non-blocking check; skip if host unreachable
+    # Quick non-blocking check; skip if host unreachable. session_name is LAST
+    # so a '|' in a tmux name can't shift fields (see refresh_remote_cache).
     remote_out="$(timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes "$DEVBOX_HOST" \
-      'tmux list-sessions -F "#{session_name}|#{session_activity}|#{session_attached}" 2>/dev/null' 2>/dev/null)" || remote_out=""
+      'tmux list-sessions -F "#{session_activity}|#{session_attached}|#{session_name}" 2>/dev/null' 2>/dev/null)" || remote_out=""
 
     if [[ -n "$remote_out" ]]; then
-      while IFS='|' read -r sname activity attached; do
+      while IFS='|' read -r activity attached sname; do
         [[ -z "$sname" ]] && continue
         status="detached"
         [[ "$attached" == "1" ]] && status="attached"
@@ -285,7 +302,9 @@ for line in sys.stdin:
     if not line: continue
     parts = line.split('|', 5)
     if len(parts) < 6: continue
-    entries.append({'type': parts[0], 'status': parts[1], 'ts': int(parts[2] or 0),
+    try: ts = int(parts[2])
+    except ValueError: ts = 0
+    entries.append({'type': parts[0], 'status': parts[1], 'ts': ts,
                     'name': parts[3], 'cwd': parts[4], 'extra': parts[5]})
 print(json.dumps(entries, indent=2))
 "
