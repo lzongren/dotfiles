@@ -8,9 +8,11 @@
 #
 # Usage: sessions [options]
 #        sessions --all          (include dead/old sessions)
-#        sessions --no-remote    (skip remote query)
+#        sessions --no-remote    (skip live remote query; MOTD still uses cache)
 #        sessions --json         (machine-readable output)
 #        sessions --days N       (lookback window, default 7)
+#        sessions --motd         (fast listing with cached remote sessions)
+#        sessions --refresh-remote-cache  (refresh MOTD cache, no output)
 
 set -euo pipefail
 
@@ -19,48 +21,135 @@ SHOW_REMOTE=true
 SHOW_ALL=false
 JSON_OUT=false
 MOTD=false
-LIMIT=0  # 0 = no limit
+LIMIT=0 # 0 = no limit
+REFRESH_REMOTE_CACHE=false
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sessions"
+REMOTE_CACHE="$CACHE_DIR/remote-entries"
+MAX_CACHE_AGE=21600
+REFRESH_INTERVAL=60
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all) SHOW_ALL=true ;;
     --no-remote) SHOW_REMOTE=false ;;
     --json) JSON_OUT=true ;;
-    --days) [[ $# -ge 2 ]] || { echo "sessions: --days needs a value" >&2; exit 1; }; DAYS="$2"; shift ;;
-    --limit) [[ $# -ge 2 ]] || { echo "sessions: --limit needs a value" >&2; exit 1; }; LIMIT="$2"; shift ;;
-    --motd) MOTD=true; DAYS=3; LIMIT=8 ;;
-    -h|--help)
-      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0 ;;
-    *) echo "sessions: unknown option: $1" >&2; exit 1 ;;
+    --days)
+      [[ $# -ge 2 ]] || {
+        echo "sessions: --days needs a value" >&2
+        exit 1
+      }
+      DAYS="$2"
+      shift
+      ;;
+    --limit)
+      [[ $# -ge 2 ]] || {
+        echo "sessions: --limit needs a value" >&2
+        exit 1
+      }
+      LIMIT="$2"
+      shift
+      ;;
+    --motd)
+      MOTD=true
+      DAYS=3
+      LIMIT=8
+      ;;
+    --refresh-remote-cache) REFRESH_REMOTE_CACHE=true ;;
+    -h | --help)
+      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "sessions: unknown option: $1" >&2
+      exit 1
+      ;;
   esac
   shift
 done
 
+# MOTD never performs live SSH, so the legacy startup --no-remote flag only
+# suppresses live queries and does not hide cached remote sessions.
+[[ "$MOTD" == "true" ]] && SHOW_REMOTE=true
+
+refresh_remote_cache() {
+  mkdir -p "$CACHE_DIR" || return 0
+  mkdir "$CACHE_DIR/refresh.lock" || return 0
+  trap 'rmdir "$CACHE_DIR/refresh.lock" 2>/dev/null' EXIT
+
+  DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
+  # shellcheck source=/dev/null
+  [[ -f "$DEVBOX_CONFIG" ]] && . "$DEVBOX_CONFIG"
+  DEVBOX_HOST="${DEVBOX_HOST:-dev}"
+
+  local remote_out tmp status sname activity attached
+  if ! remote_out="$(timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes "$DEVBOX_HOST" \
+    'tmux list-sessions -F "#{session_name}|#{session_activity}|#{session_attached}"' 2>/dev/null)"; then
+    return 0
+  fi
+
+  tmp="$(mktemp "$CACHE_DIR/remote-entries.tmp.XXXXXX")" || return 0
+  while IFS='|' read -r sname activity attached; do
+    [[ -z "$sname" ]] && continue
+    status="detached"
+    [[ "$attached" == "1" ]] && status="attached"
+    printf 'devbox|%s|%s|%s||%s\n' "$status" "$activity" "$sname" "$DEVBOX_HOST"
+  done <<<"$remote_out" >"$tmp"
+
+  mv "$tmp" "$REMOTE_CACHE" || rm -f "$tmp"
+}
+
+if [[ "$REFRESH_REMOTE_CACHE" == "true" ]]; then
+  refresh_remote_cache >/dev/null 2>&1 || true
+  exit 0
+fi
+
 NOW=$(date +%s)
-CUTOFF=$(( NOW - DAYS * 86400 ))
+CUTOFF=$((NOW - DAYS * 86400))
 
 # --- Colors (skip if piped) ---
 if [[ -t 1 ]]; then
-  B=$'\033[1m'; D=$'\033[2m'; G=$'\033[32m'; Y=$'\033[33m'; Z=$'\033[0m'
+  B=$'\033[1m'
+  D=$'\033[2m'
+  G=$'\033[32m'
+  Y=$'\033[33m'
+  Z=$'\033[0m'
 else
-  B=''; D=''; G=''; Y=''; Z=''
+  B=''
+  D=''
+  G=''
+  Y=''
+  Z=''
 fi
 
 # --- Helpers ---
 ago() {
-  local diff=$(( NOW - $1 ))
-  if (( diff < 60 )); then echo "now"
-  elif (( diff < 3600 )); then echo "$((diff/60))m"
-  elif (( diff < 86400 )); then echo "$((diff/3600))h"
-  else echo "$((diff/86400))d"; fi
+  local diff=$((NOW - $1))
+  if ((diff < 60)); then
+    echo "now"
+  elif ((diff < 3600)); then
+    echo "$((diff / 60))m"
+  elif ((diff < 86400)); then
+    echo "$((diff / 3600))h"
+  else echo "$((diff / 86400))d"; fi
 }
 
 short_path() {
   echo "${1/#$HOME/~}"
 }
 
-# --- Collect sessions into lines: TYPE|STATUS|AGO_SECS|NAME|CWD|EXTRA ---
+file_mtime() {
+  local value
+  if value="$(stat -f %m "$1" 2>/dev/null)" && [[ "$value" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$value"
+  elif value="$(stat -c %Y "$1" 2>/dev/null)" && [[ "$value" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$value"
+  else
+    return 1
+  fi
+}
+
+# --- Collect sessions into lines: TYPE|STATUS|TS|NAME|CWD|EXTRA ---
 entries=()
 
 # 1. Claude Code (live session registry)
@@ -68,7 +157,7 @@ if [[ -d "$HOME/.claude/sessions" ]]; then
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     # Parse with python for reliability (tab-delimited to handle spaces in paths)
-    IFS=$'\t' read -r status started_s cwd name <<< "$(python3 -c "
+    IFS=$'\t' read -r status started_s cwd name <<<"$(python3 -c "
 import json, sys
 with open(sys.argv[1]) as fh:
     d = json.load(fh)
@@ -89,7 +178,7 @@ fi
 if [[ -d "$HOME/.codex/sessions" ]]; then
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
-    IFS=$'\t' read -r ts cwd <<< "$(python3 -c "
+    IFS=$'\t' read -r ts cwd <<<"$(python3 -c "
 import json, sys, os
 from datetime import datetime
 with open(sys.argv[1]) as fh:
@@ -119,24 +208,41 @@ else:
   done < <(find "$HOME/.codex/sessions" -name "*.jsonl" -type f -mtime "-${DAYS}" 2>/dev/null)
 fi
 
-# 3. Remote (devbox tmux sessions)
+# 3. Remote (cached for MOTD, live for explicit sessions calls)
 if [[ "$SHOW_REMOTE" == "true" ]] && command -v devbox >/dev/null 2>&1; then
-  DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
-  # shellcheck source=/dev/null
-  [[ -f "$DEVBOX_CONFIG" ]] && . "$DEVBOX_CONFIG"
-  DEVBOX_HOST="${DEVBOX_HOST:-dev}"
+  if [[ "$MOTD" == "true" ]]; then
+    cache_age=-1
+    if [[ -f "$REMOTE_CACHE" ]] && cache_mtime="$(file_mtime "$REMOTE_CACHE")"; then
+      cache_age=$((NOW - cache_mtime))
+      ((cache_age < 0)) && cache_age=0
+      if ((cache_age <= MAX_CACHE_AGE)); then
+        while IFS= read -r line; do
+          [[ -n "$line" ]] && entries+=("$line")
+        done <"$REMOTE_CACHE"
+      fi
+    fi
 
-  # Quick non-blocking check; skip if host unreachable
-  remote_out="$(timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes "$DEVBOX_HOST" \
-    'tmux list-sessions -F "#{session_name}|#{session_activity}|#{session_attached}" 2>/dev/null' 2>/dev/null)" || remote_out=""
+    if [[ -z "${SESSIONS_NO_REFRESH+x}" ]] && ((cache_age < 0 || cache_age > REFRESH_INTERVAL)); then
+      ("$0" --refresh-remote-cache >/dev/null 2>&1 &)
+    fi
+  else
+    DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox/config}"
+    # shellcheck source=/dev/null
+    [[ -f "$DEVBOX_CONFIG" ]] && . "$DEVBOX_CONFIG"
+    DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 
-  if [[ -n "$remote_out" ]]; then
-    while IFS='|' read -r sname activity attached; do
-      [[ -z "$sname" ]] && continue
-      status="detached"
-      [[ "$attached" == "1" ]] && status="attached"
-      entries+=("devbox|${status}|${activity}|${sname}||${DEVBOX_HOST}")
-    done <<< "$remote_out"
+    # Quick non-blocking check; skip if host unreachable
+    remote_out="$(timeout 5 ssh -o ConnectTimeout=3 -o BatchMode=yes "$DEVBOX_HOST" \
+      'tmux list-sessions -F "#{session_name}|#{session_activity}|#{session_attached}" 2>/dev/null' 2>/dev/null)" || remote_out=""
+
+    if [[ -n "$remote_out" ]]; then
+      while IFS='|' read -r sname activity attached; do
+        [[ -z "$sname" ]] && continue
+        status="detached"
+        [[ "$attached" == "1" ]] && status="attached"
+        entries+=("devbox|${status}|${activity}|${sname}||${DEVBOX_HOST}")
+      done <<<"$remote_out"
+    fi
   fi
 fi
 
@@ -146,9 +252,26 @@ while IFS= read -r line; do
   [[ -n "$line" ]] && sorted+=("$line")
 done < <(printf '%s\n' "${entries[@]+"${entries[@]}"}" | sort -t'|' -k3 -rn)
 
-# Apply limit
-if [[ "$LIMIT" -gt 0 && ${#sorted[@]} -gt "$LIMIT" ]]; then
-  sorted=("${sorted[@]:0:$LIMIT}")
+# In MOTD, keep every remote entry and only cap the most recent local entries.
+if [[ "$MOTD" == "true" && "$LIMIT" -gt 0 ]]; then
+  limited=()
+  local_count=0
+  for line in "${sorted[@]+"${sorted[@]}"}"; do
+    case "${line%%|*}" in
+      devbox) limited+=("$line") ;;
+      claude | codex)
+        if ((local_count < LIMIT)); then
+          limited+=("$line")
+          local_count=$((local_count + 1))
+        fi
+        ;;
+    esac
+  done
+  sorted=("${limited[@]+"${limited[@]}"}")
+elif [[ "$LIMIT" -gt 0 && -n "${sorted[0]+x}" ]]; then
+  if [[ ${#sorted[@]} -gt "$LIMIT" ]]; then
+    sorted=("${sorted[@]:0:$LIMIT}")
+  fi
 fi
 
 # --- Output ---
@@ -170,8 +293,8 @@ print(json.dumps(entries, indent=2))
 fi
 
 # Pretty table
-if [[ ${#sorted[@]} -eq 0 ]]; then
-  [[ "$MOTD" == "true" ]] && exit 0  # silent in motd mode
+if [[ -z "${sorted[0]+x}" ]]; then
+  [[ "$MOTD" == "true" ]] && exit 0 # silent in motd mode
   echo "No recent sessions (last ${DAYS}d). Try: sessions --all"
   exit 0
 fi
@@ -182,14 +305,14 @@ else
   printf '%s%-8s %-10s %-5s %-24s %s%s\n' "$B" "TYPE" "STATUS" "AGO" "NAME" "PATH" "$Z"
 fi
 
-for e in "${sorted[@]}"; do
-  IFS='|' read -r type status ts name cwd extra <<< "$e"
+for e in "${sorted[@]+"${sorted[@]}"}"; do
+  IFS='|' read -r type status ts name cwd extra <<<"$e"
 
   # Color by status
   case "$status" in
-    idle|active|attached) sc="${G}●${Z}" ;;
-    detached)             sc="${Y}○${Z}" ;;
-    *)                    sc="${D}·${Z}" ;;
+    idle | active | attached) sc="${G}●${Z}" ;;
+    detached) sc="${Y}○${Z}" ;;
+    *) sc="${D}·${Z}" ;;
   esac
 
   age="$(ago "$ts")"
