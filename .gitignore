@@ -3,3 +3,6 @@
 # Local machine-specific config — never commit (contains host/user/paths)
 remote-dev/config
 .config/devbox/config
+
+# local compiled tool (github.com/lzongren/afkick), not repo-managed
+bin/afkick
