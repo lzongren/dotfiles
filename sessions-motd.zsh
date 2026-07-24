@@ -6,6 +6,13 @@
 
 # Only in interactive shells, not inside tmux/nested/editors/agents
 if [[ -o interactive && -z "$TMUX" && -z "$VSCODE_PID" && -z "$INSIDE_EMACS" && -z "$CLAUDE_CODE" ]]; then
-  # Skip remote on startup (adds 1-3s latency). Use `sessions` for the full view.
-  sessions --motd --no-remote 2>/dev/null
+  # Defer to a one-shot precmd hook: printing during .zshrc trips the
+  # Powerlevel10k instant-prompt warning; precmd runs after startup.
+  _sessions_motd_precmd() {
+    unfunction _sessions_motd_precmd
+    precmd_functions=(${precmd_functions:#_sessions_motd_precmd})
+    # Skip remote on startup (adds 1-3s latency). Use `sessions` for the full view.
+    sessions --motd --no-remote 2>/dev/null
+  }
+  precmd_functions+=(_sessions_motd_precmd)
 fi
