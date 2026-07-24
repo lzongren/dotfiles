@@ -17,7 +17,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 runner="$root/remote-dev/test/run.sh"
 [ -x "$runner" ] || exit 0 # not this repo — do nothing
 
-if git diff --cached --name-only | grep -qE '^(bin/devbox|remote-dev/|hammerspoon/)'; then
+if git diff --cached --name-only | grep -qE '^(bin/devbox|bin/sessions|sessions-motd\.zsh|remote-dev/|test/|hammerspoon/)'; then
   echo "pre-commit: linting + testing remote-dev…"
   "$runner"
 fi
