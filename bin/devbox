@@ -4,15 +4,17 @@
 # (see remote-dev/README.md). Host comes from ~/.config/devbox/config (copy
 # remote-dev/config.example); nothing host-specific lives in this repo.
 #
-# Pairs with `dev` (local workspace launcher): use `devbox` to reach the
-# remote, then `dev <project>` on the remote for the claude/yazi/lazygit layout.
+# Pairs with `dev` (remote workspace launcher), or starts remote agent sessions
+# directly with explicit `--cc` / `--codex` flags.
 #
-# Usage: devbox [session-name]     (default session: main)
-#        devbox list              (show running sessions, don't connect)
-#        devbox status            (session table: state, idle, cmd, path)
-#        devbox doctor            (health-check every layer)
-#        devbox sync [ls|add|rm]  (manage synced folders)
-#        devbox --raw             (plain mosh, no tmux)
+# Usage: devbox [session-name]            (remote shell; default session: main)
+#        devbox --cc [session-name] [path]  (Claude Code on remote)
+#        devbox --codex [session-name] [path]  (Codex on remote)
+#        devbox list                     (show running sessions, don't connect)
+#        devbox status                   (session table: state, idle, cmd, path)
+#        devbox doctor                   (health-check every layer)
+#        devbox sync [ls|add|rm]         (manage synced folders)
+#        devbox --raw                    (plain mosh, no tmux)
 
 # Load host config (gitignored, lives outside the repo). Only DEVBOX_HOST is
 # needed here; mosh-server and tmux resolve on the remote PATH (~/.local/bin
@@ -37,8 +39,28 @@ devbox_transport() {
   if nc -z -G 2 "${h:-$DEVBOX_HOST}" 22 >/dev/null 2>&1; then printf 'mosh'; else printf 'ssh'; fi
 }
 
+devbox_agent_session_name() {
+  local agent="$1" local_dir="$2" base
+  base="$(basename "$local_dir")"
+  case "$agent" in
+    cc | claude) printf 'cc-%s' "$base" ;;
+    codex) printf 'codex-%s' "$base" ;;
+  esac
+}
+
+devbox_agent_command() {
+  case "$1" in
+    cc | claude)
+      printf '%s' 'if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then exec claude --continue; fi; printf "devbox: Claude Code is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix claude on the remote, then run devbox --cc again.\n"; exec "${SHELL:-/bin/sh}" -l'
+      ;;
+    codex)
+      printf '%s' 'if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then exec codex resume --last; fi; printf "devbox: Codex is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix codex on the remote, then run devbox --codex again.\n"; exec "${SHELL:-/bin/sh}" -l'
+      ;;
+  esac
+}
+
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -91,6 +113,8 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
     echo "UP=$(uptime | grep -oE "up [^,]*" | head -1)"
     echo "TMUX=$(command -v tmux || echo MISSING)"
     echo "MOSH=$(command -v mosh-server || echo MISSING)"
+    echo "CLAUDE=$(if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then echo OK; elif command -v claude >/dev/null 2>&1; then echo BROKEN; else echo MISSING; fi)"
+    echo "CODEX=$(if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then echo OK; elif command -v codex >/dev/null 2>&1; then echo BROKEN; else echo MISSING; fi)"
     echo "DISK=$(df --output=pcent "$HOME" 2>/dev/null | tail -1 | tr -dc 0-9)"
     echo "SESSIONS=$(tmux ls 2>/dev/null | wc -l | tr -d " ")"
     echo "ORPHANS=$(pgrep -c mosh-server 2>/dev/null || echo 0)"
@@ -101,18 +125,30 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
     UP=""
     TMUX=""
     MOSH=""
+    CLAUDE=""
+    CODEX=""
     DISK=""
     SESSIONS=0
     ORPHANS=0
     while IFS='=' read -r k v; do
       case "$k" in
-        UP) UP="$v" ;; TMUX) TMUX="$v" ;; MOSH) MOSH="$v" ;;
+        UP) UP="$v" ;; TMUX) TMUX="$v" ;; MOSH) MOSH="$v" ;; CLAUDE) CLAUDE="$v" ;; CODEX) CODEX="$v" ;;
         DISK) DISK="$v" ;; SESSIONS) SESSIONS="$v" ;; ORPHANS) ORPHANS="$v" ;;
       esac
     done <<<"$probe"
     pass "remote reachable (${UP:-up})"
     [ "$TMUX" != MISSING ] && pass "tmux on remote PATH" || fail "tmux not on remote PATH" "run setup-remote.sh; check ~/.zshenv"
     [ "$MOSH" != MISSING ] && pass "mosh-server on remote PATH" || fail "mosh-server not on remote PATH" "run setup-remote.sh"
+    case "$CLAUDE" in
+      OK) pass "Claude Code on remote PATH" ;;
+      BROKEN) warn "Claude Code on remote PATH but failed to start" "devbox --cc will open a shell with a fix hint" ;;
+      *) warn "Claude Code missing on remote" "devbox --cc will open a shell with an install hint" ;;
+    esac
+    case "$CODEX" in
+      OK) pass "Codex on remote PATH" ;;
+      BROKEN) warn "Codex on remote PATH but failed to start" "devbox --codex will open a shell with a fix hint" ;;
+      *) warn "Codex missing on remote" "devbox --codex will open a shell with an install hint" ;;
+    esac
     if [ -n "${DISK:-}" ]; then
       if [ "$DISK" -ge 95 ]; then
         fail "remote disk ${DISK}% full" "frees nothing until cleaned — tmux/mosh/sync will break"
@@ -229,7 +265,22 @@ if [[ "$1" == "sync" ]]; then
 fi
 
 if [[ "$1" == "list" || "$1" == "ls" ]]; then
-  exec ssh "$DEVBOX_HOST" tmux ls # quick query, no mosh/attach
+  # Quick query, no mosh/attach. A missing tmux server only means there are no
+  # sessions yet; surface that cleanly instead of leaking tmux's socket error.
+  if list_out="$(ssh "$DEVBOX_HOST" tmux ls 2>&1)"; then
+    printf '%s\n' "$list_out"
+    exit 0
+  fi
+  case "$list_out" in
+    *"error connecting to "* | *"no server running on "* | *"failed to connect to server"*)
+      echo "No sessions."
+      exit 0
+      ;;
+    *)
+      echo "$list_out" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 if [[ "$1" == "status" ]]; then
@@ -296,7 +347,42 @@ if [[ "$1" == "--raw" ]]; then
   exec ssh -t "$DEVBOX_HOST"
 fi
 
-SESSION="${1:-main}"
+AGENT_MODE=""
+LOCAL_DIR="$PWD"
+
+case "${1:-}" in
+  --cc | --claude | --codex)
+    case "$1" in
+      --cc | --claude) AGENT_MODE="cc" ;;
+      --codex) AGENT_MODE="codex" ;;
+    esac
+    shift
+    if [ "$#" -gt 2 ]; then
+      echo "usage: devbox --$AGENT_MODE [session-name] [path]" >&2
+      exit 1
+    fi
+    if [ "$#" -ge 1 ]; then
+      SESSION="$1"
+      shift
+    else
+      SESSION=""
+    fi
+    if [ "$#" -ge 1 ]; then
+      LOCAL_DIR="${1/#\~/$HOME}"
+      shift
+    fi
+    LOCAL_DIR="$(realpath "$LOCAL_DIR" 2>/dev/null)" || {
+      echo "devbox: cannot resolve path: $LOCAL_DIR" >&2
+      exit 1
+    }
+    [ -d "$LOCAL_DIR" ] || {
+      echo "devbox: path is not a directory: $LOCAL_DIR" >&2
+      exit 1
+    }
+    [ -n "$SESSION" ] || SESSION="$(devbox_agent_session_name "$AGENT_MODE" "$LOCAL_DIR")"
+    ;;
+  *) SESSION="${1:-main}" ;;
+esac
 
 # If launched from within a synced folder, open the remote session in the
 # corresponding remote dir. Only affects NEW sessions (-c is ignored when -A
@@ -307,12 +393,13 @@ if [ -f "$_lib" ]; then
   # shellcheck source=/dev/null
   . "$_lib"
   rhome="$(devbox_remote_home 2>/dev/null)" &&
-    CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$PWD" "$rhome")"
+    CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$rhome")"
 fi
 
 # tmux args as an array so both transports run the identical remote command.
 TMUX_CMD=(tmux new-session -A -s "$SESSION")
 [ -n "$CDIR" ] && TMUX_CMD+=(-c "$CDIR")
+[ -n "$AGENT_MODE" ] && TMUX_CMD+=("$(devbox_agent_command "$AGENT_MODE")")
 
 if [ "$(devbox_transport)" = mosh ]; then
   exec mosh "$DEVBOX_HOST" -- "${TMUX_CMD[@]}"
