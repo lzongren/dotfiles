@@ -53,6 +53,8 @@ Put `bin/` on your PATH, then connect:
 ```bash
 devbox            # mosh + auto-attach tmux session 'main'
 devbox scratch    # a differently-named session
+devbox --cc       # Claude Code session on the remote, in the synced cwd
+devbox --codex api  # Codex session on the remote, named 'api'
 devbox list       # show running sessions without connecting
 devbox status     # session table: state, idle, command, path
 devbox status --summary  # natural language summary (uses claude CLI)
@@ -71,6 +73,8 @@ devbox sync add work ~/Documents/Work    # ~/Documents/Work ⇄ remote ~/work
 # Day to day: connect from inside a synced folder
 cd ~/Documents/Work/api
 devbox api                               # opens tmux session 'api' in remote ~/work/api
+devbox --cc                              # opens Claude Code in remote ~/work/api
+devbox --codex api                       # opens Codex in session 'api' in remote ~/work/api
 
 # … work on the remote; edits sync back to the laptop within ~1s …
 
@@ -157,10 +161,16 @@ Two different jobs, they compose:
 
 | Command  | Where it runs | What it does |
 |----------|---------------|--------------|
-| `devbox` | laptop        | connect to the remote desktop (mosh + tmux) |
+| `devbox` | laptop        | connect to the remote desktop (mosh + tmux), or start a remote agent session |
+| `devbox --cc` / `devbox --codex` | laptop | open Claude Code / Codex inside a remote tmux session |
 | [`dev`](../bin/dev) | inside the remote | open a project workspace (claude / yazi / lazygit) |
 
-Typical flow: `devbox` to land on the remote, then `dev <project>` there.
+Typical flow: `cd` into a synced project locally, then run `devbox --cc` or
+`devbox --codex <name>` to land directly in the matching remote directory.
+The agent CLIs must be installed on the remote host's PATH; `devbox doctor`
+reports whether `claude` and `codex` are present. If an agent is missing,
+the tmux session stays open with a short install/fix hint instead of silently
+closing.
 
 ## Daily use
 
