@@ -50,7 +50,7 @@ setup() {
 
 @test "doctor: ssh fallback is provider-neutral" {
   NC_EXIT=1 run "$DEVBOX" doctor
-  [[ "$output" == *"no direct route; ssh fallback"* ]]
+  [[ "$output" == *"SSH fallback selected"* ]]
   [[ "$output" == *"ProxyJump/ProxyCommand supported"* ]]
 
   # Keep private authentication and proxy implementations out of diagnostics.
@@ -64,14 +64,22 @@ setup() {
 
 @test "doctor: forced ssh is reported as configured" {
   DEVBOX_TRANSPORT=ssh run "$DEVBOX" doctor
-  [[ "$output" == *"ssh transport configured"* ]]
-  [[ "$output" != *"no direct route; ssh fallback"* ]]
+  [[ "$output" == *"SSH transport explicitly configured"* ]]
+  [[ "$output" != *"SSH fallback selected"* ]]
 }
 
 @test "default session name is main" {
   DEVBOX_TRANSPORT=ssh run "$DEVBOX"
   [ "$status" -eq 0 ]
   [[ "$output" == *"-s main"* ]]
+}
+
+@test "bare custom name remains a shell session name" {
+  DEVBOX_TRANSPORT=ssh run "$DEVBOX" folder-abc
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tmux new-session -A -s folder-abc"* ]]
+  [[ "$output" != *"command -v claude"* ]]
+  [[ "$output" != *"command -v codex"* ]]
 }
 
 @test "list: missing tmux server prints no sessions" {

@@ -12,7 +12,7 @@
 #        devbox --codex [session-name] [path]  (Codex on remote)
 #        devbox list                     (show running sessions, don't connect)
 #        devbox status                   (session table: state, idle, cmd, path)
-#        devbox doctor                   (health-check every layer)
+#        devbox doctor [--require-agent cc|codex]  (readiness checks)
 #        devbox sync [ls|add|rm]         (manage synced folders)
 #        devbox --raw                    (plain mosh, no tmux)
 
@@ -72,127 +72,264 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
 fi
 
 if [[ "$1" == "doctor" || "$1" == "check" ]]; then
-  # Health-check every layer between laptop and remote. Prints one line per
-  # check; exits non-zero if any hard check FAILs (warnings don't fail).
-  # shellcheck disable=SC2015  # `check && pass || fail` is deliberate: pass/fail are printf, never fail
+  shift
+  REQUIRE_CC=0
+  REQUIRE_CODEX=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --require-agent)
+        [ "$#" -ge 2 ] || {
+          echo "usage: devbox doctor [--require-agent cc|codex]" >&2
+          exit 2
+        }
+        agent="$2"
+        shift 2
+        ;;
+      --require-agent=*)
+        agent="${1#*=}"
+        shift
+        ;;
+      -h | --help)
+        echo "usage: devbox doctor [--require-agent cc|codex]"
+        echo "  Repeat --require-agent to require both remote agent CLIs."
+        exit 0
+        ;;
+      *)
+        echo "devbox doctor: unknown option: $1" >&2
+        echo "usage: devbox doctor [--require-agent cc|codex]" >&2
+        exit 2
+        ;;
+    esac
+    case "$agent" in
+      cc | claude) REQUIRE_CC=1 ;;
+      codex) REQUIRE_CODEX=1 ;;
+      *)
+        echo "devbox doctor: unknown agent: $agent (expected cc or codex)" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  # Failures are unavailable requirements. Warnings are degraded capabilities;
+  # informational lines describe optional or normal runtime state.
   g=$'\033[32m'
+  c=$'\033[36m'
   y=$'\033[33m'
   r=$'\033[31m'
   d=$'\033[2m'
   z=$'\033[0m'
   fails=0
-  pass() { printf '  %s✓%s %s\n' "$g" "$z" "$1"; }
-  warn() { printf '  %s!%s %s %s%s%s\n' "$y" "$z" "$1" "$d" "${2:-}" "$z"; }
+  warnings=0
+  optional_agents_unavailable=0
+  pass() { printf '  %s[ok]%s %s\n' "$g" "$z" "$1"; }
+  info() { printf '  %s[i]%s  %s\n' "$c" "$z" "$1"; }
+  warn() {
+    printf '  %s[!]%s  %s %s%s%s\n' "$y" "$z" "$1" "$d" "${2:-}" "$z"
+    warnings=$((warnings + 1))
+  }
   fail() {
-    printf '  %s✗%s %s %s%s%s\n' "$r" "$z" "$1" "$d" "${2:-}" "$z"
+    printf '  %s[x]%s  %s %s%s%s\n' "$r" "$z" "$1" "$d" "${2:-}" "$z"
     fails=$((fails + 1))
   }
+  section() { printf '\n%s\n' "$1"; }
+  agent_result() {
+    local state="$1" required="$2" label="$3" mode="$4"
+    case "$state" in
+      OK) pass "$label available on remote PATH" ;;
+      BROKEN)
+        if [ "$required" -eq 1 ]; then
+          fail "$label is installed but failed to start" "fix it before using devbox --$mode"
+        else
+          warn "$label is installed but failed to start" "optional; needed for devbox --$mode"
+          optional_agents_unavailable=$((optional_agents_unavailable + 1))
+        fi
+        ;;
+      *)
+        if [ "$required" -eq 1 ]; then
+          fail "$label is not installed on the remote" "required for devbox --$mode"
+        else
+          info "$label not installed (optional; needed for devbox --$mode)"
+          optional_agents_unavailable=$((optional_agents_unavailable + 1))
+        fi
+        ;;
+    esac
+  }
 
-  echo "devbox doctor — host: $DEVBOX_HOST"
+  CONFIGURED_SYNCS=()
+  while IFS='|' read -r sync_name _local_path _remote_path; do
+    [ -n "$sync_name" ] && CONFIGURED_SYNCS+=("$sync_name")
+  done <<<"${DEVBOX_SYNCS:-}"
 
-  # --- local tools ---
-  command -v mosh >/dev/null && pass "mosh installed (laptop)" || fail "mosh missing (laptop)" "brew install mosh"
-  MUTAGEN="$(command -v mutagen || echo "$HOME/bin/mutagen")"
-  [ -x "$MUTAGEN" ] && pass "mutagen installed (laptop)" || fail "mutagen missing (laptop)" "run remote-dev/setup-sync.sh"
+  echo "devbox doctor - host: $DEVBOX_HOST"
 
-  # --- transport ---
+  section "Core"
+  command -v ssh >/dev/null && pass "SSH client available" || fail "SSH client missing"
+
   transport="$(devbox_transport)"
+  section "Transport"
   if [ "$transport" = mosh ]; then
-    pass "direct route to host ${d}(transport: mosh)${z}"
+    pass "direct route selected (mosh)"
+    command -v mosh >/dev/null && pass "local mosh client available" || fail "local mosh client missing" "install mosh or set DEVBOX_TRANSPORT=ssh"
   elif [ "${DEVBOX_TRANSPORT:-}" = ssh ]; then
-    pass "ssh transport configured ${d}(no roaming)${z}"
+    pass "SSH transport explicitly configured"
+    info "mosh checks not required for SSH transport"
   else
-    pass "no direct route; ssh fallback ${d}(ProxyJump/ProxyCommand supported, no roaming)${z}"
+    pass "SSH fallback selected (ProxyJump/ProxyCommand supported)"
+    info "mosh checks skipped because no direct route was detected"
   fi
 
-  # --- remote reachability (single ssh, gather everything at once) ---
-  # Fields are newline-separated key=value; values may contain spaces, so parse
-  # line-by-line instead of eval (which would split "up 2 days" into commands).
-  # shellcheck disable=SC2016  # the $(...) below intentionally run on the remote
-  probe="$(timeout 20 ssh -o ConnectTimeout=10 "$DEVBOX_HOST" '
-    echo "UP=$(uptime | grep -oE "up [^,]*" | head -1)"
-    echo "TMUX=$(command -v tmux || echo MISSING)"
-    echo "MOSH=$(command -v mosh-server || echo MISSING)"
-    echo "CLAUDE=$(if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then echo OK; elif command -v claude >/dev/null 2>&1; then echo BROKEN; else echo MISSING; fi)"
-    echo "CODEX=$(if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then echo OK; elif command -v codex >/dev/null 2>&1; then echo BROKEN; else echo MISSING; fi)"
-    echo "DISK=$(df --output=pcent "$HOME" 2>/dev/null | tail -1 | tr -dc 0-9)"
-    echo "SESSIONS=$(tmux ls 2>/dev/null | wc -l | tr -d " ")"
-    echo "ORPHANS=$(pgrep -c mosh-server 2>/dev/null || echo 0)"
-  ' 2>/dev/null)"
-  if [ -z "$probe" ]; then
-    fail "remote unreachable ($DEVBOX_HOST)" "run ssh $DEVBOX_HOST; check keys, SSH proxy/jump host, VPN, and host status"
-  else
-    UP=""
-    TMUX=""
-    MOSH=""
-    CLAUDE=""
-    CODEX=""
-    DISK=""
-    SESSIONS=0
-    ORPHANS=0
+  # Gather remote state with one SSH connection using explicit connection and
+  # keepalive limits. PROBE_OK distinguishes valid state from unrelated output.
+  PROBE_OK=""
+  UP=""
+  TMUX=""
+  MOSH=""
+  CLAUDE=""
+  CODEX=""
+  DISK=""
+  SESSIONS=""
+  ORPHANS=""
+  probe=""
+  ssh_completed=0
+  remote_ok=0
+  # shellcheck disable=SC2016  # command substitutions intentionally run remotely
+  if probe="$(ssh \
+    -o ConnectTimeout=10 \
+    -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=5 \
+    -o ServerAliveCountMax=2 \
+    "$DEVBOX_HOST" '
+      echo "PROBE_OK=1"
+      echo "UP=$(uptime | sed "s/.* up /up /; s/, *[0-9][0-9]* user.*//")"
+      echo "TMUX=$(command -v tmux || echo MISSING)"
+      echo "MOSH=$(command -v mosh-server || echo MISSING)"
+      echo "CLAUDE=$(if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then echo OK; elif command -v claude >/dev/null 2>&1; then echo BROKEN; else echo MISSING; fi)"
+      echo "CODEX=$(if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then echo OK; elif command -v codex >/dev/null 2>&1; then echo BROKEN; else echo MISSING; fi)"
+      echo "DISK=$(df -Pk "$HOME" 2>/dev/null | tail -1 | awk "{print \$5}" | tr -dc "0-9")"
+      echo "SESSIONS=$(tmux list-sessions -F "." 2>/dev/null | wc -l | tr -d " ")"
+      echo "ORPHANS=$(pgrep mosh-server 2>/dev/null | wc -l | tr -d " ")"
+    ' 2>/dev/null)"; then
+    ssh_completed=1
     while IFS='=' read -r k v; do
       case "$k" in
-        UP) UP="$v" ;; TMUX) TMUX="$v" ;; MOSH) MOSH="$v" ;; CLAUDE) CLAUDE="$v" ;; CODEX) CODEX="$v" ;;
-        DISK) DISK="$v" ;; SESSIONS) SESSIONS="$v" ;; ORPHANS) ORPHANS="$v" ;;
+        PROBE_OK) PROBE_OK="$v" ;;
+        UP) UP="$v" ;;
+        TMUX) TMUX="$v" ;;
+        MOSH) MOSH="$v" ;;
+        CLAUDE) CLAUDE="$v" ;;
+        CODEX) CODEX="$v" ;;
+        DISK) DISK="$v" ;;
+        SESSIONS) SESSIONS="$v" ;;
+        ORPHANS) ORPHANS="$v" ;;
       esac
     done <<<"$probe"
-    pass "remote reachable (${UP:-up})"
-    [ "$TMUX" != MISSING ] && pass "tmux on remote PATH" || fail "tmux not on remote PATH" "run setup-remote.sh; check ~/.zshenv"
-    [ "$MOSH" != MISSING ] && pass "mosh-server on remote PATH" || fail "mosh-server not on remote PATH" "run setup-remote.sh"
-    case "$CLAUDE" in
-      OK) pass "Claude Code on remote PATH" ;;
-      BROKEN) warn "Claude Code on remote PATH but failed to start" "devbox --cc will open a shell with a fix hint" ;;
-      *) warn "Claude Code missing on remote" "devbox --cc will open a shell with an install hint" ;;
-    esac
-    case "$CODEX" in
-      OK) pass "Codex on remote PATH" ;;
-      BROKEN) warn "Codex on remote PATH but failed to start" "devbox --codex will open a shell with a fix hint" ;;
-      *) warn "Codex missing on remote" "devbox --codex will open a shell with an install hint" ;;
-    esac
-    if [ -n "${DISK:-}" ]; then
-      if [ "$DISK" -ge 95 ]; then
-        fail "remote disk ${DISK}% full" "frees nothing until cleaned — tmux/mosh/sync will break"
-      elif [ "$DISK" -ge 85 ]; then
-        warn "remote disk ${DISK}% full" "getting tight"
-      else pass "remote disk ${DISK}% used"; fi
-    fi
-    if [ "${SESSIONS:-0}" -gt 0 ]; then pass "$SESSIONS tmux session(s) alive"; else warn "no tmux sessions" "devbox <name> starts one"; fi
-    [ "${ORPHANS:-0}" -gt 5 ] && warn "$ORPHANS mosh-servers running" "orphans piling up; kill stale ones"
+    [ "$PROBE_OK" = 1 ] && remote_ok=1
   fi
 
-  # --- mutagen daemon + per-session connection ---
-  if [ -x "$MUTAGEN" ]; then
-    if "$MUTAGEN" daemon status >/dev/null 2>&1 || "$MUTAGEN" sync list >/dev/null 2>&1; then
-      pass "mutagen daemon running"
-      list="$("$MUTAGEN" sync list 2>/dev/null)"
-      names="$(printf '%s\n' "$list" | grep -oE 'Name: [a-zA-Z0-9_-]+' | awk '{print $2}')"
-      if [ -z "$names" ]; then
-        warn "no sync sessions" "run remote-dev/setup-sync.sh"
-      else
-        # A healthy session shows two "Connected: Yes"; a stalled one shows No/Halted.
-        while read -r n; do
-          [ -n "$n" ] || continue
-          block="$("$MUTAGEN" sync list "$n" 2>/dev/null)"
-          conn="$(printf '%s\n' "$block" | grep -c 'Connected: Yes')"
-          status="$(printf '%s\n' "$block" | grep -m1 'Status:' | sed 's/.*Status: *//')"
-          if [ "$conn" -ge 2 ]; then
-            pass "sync '$n' connected ${d}($status)${z}"
-          else fail "sync '$n' not connected" "status: ${status:-unknown}; mutagen sync reset $n"; fi
-        done <<<"$names"
-      fi
+  section "Remote"
+  if [ "$remote_ok" -eq 1 ]; then
+    pass "remote reachable (${UP:-uptime unavailable})"
+    if [ "$TMUX" = MISSING ] || [ -z "$TMUX" ]; then
+      fail "tmux not on remote PATH" "run setup-remote.sh; check ~/.zshenv"
     else
-      fail "mutagen daemon not running" "mutagen daemon start"
+      pass "tmux available on remote PATH"
+    fi
+
+    if [ "$transport" = mosh ]; then
+      [ "$MOSH" != MISSING ] && [ -n "$MOSH" ] && pass "mosh-server available on remote PATH" || fail "mosh-server not on remote PATH" "run setup-remote.sh or set DEVBOX_TRANSPORT=ssh"
+    elif [ "$MOSH" != MISSING ] && [ -n "$MOSH" ]; then
+      info "mosh-server available (not required for SSH transport)"
+    else
+      info "mosh-server not installed (not required for SSH transport)"
+    fi
+
+    case "$DISK" in
+      "" | *[!0-9]*) warn "remote disk usage unavailable" ;;
+      *)
+        if [ "$DISK" -ge 95 ]; then
+          fail "remote disk ${DISK}% full" "clean up space before tmux, mosh, or sync fail"
+        elif [ "$DISK" -ge 85 ]; then
+          warn "remote disk ${DISK}% full" "getting tight"
+        else
+          pass "remote disk ${DISK}% used"
+        fi
+        ;;
+    esac
+  elif [ "$ssh_completed" -eq 1 ]; then
+    fail "remote probe returned an invalid response" "verify the remote login shell does not alter non-interactive output"
+  else
+    fail "remote unreachable ($DEVBOX_HOST)" "run ssh $DEVBOX_HOST; check keys, SSH proxy/jump host, VPN, and host status"
+  fi
+
+  section "Agents"
+  if [ "$remote_ok" -eq 1 ]; then
+    agent_result "$CLAUDE" "$REQUIRE_CC" "Claude Code" cc
+    agent_result "$CODEX" "$REQUIRE_CODEX" "Codex" codex
+  else
+    info "agent checks skipped because the remote probe failed"
+  fi
+
+  section "Runtime"
+  if [ "$remote_ok" -ne 1 ]; then
+    info "tmux runtime checks skipped because the remote probe failed"
+  elif [ "$TMUX" = MISSING ] || [ -z "$TMUX" ]; then
+    info "tmux runtime checks skipped because tmux is unavailable"
+  else
+    case "$SESSIONS" in
+      "" | *[!0-9]*) warn "tmux session count unavailable" ;;
+      0) info "no tmux sessions (normal; devbox <name> starts one)" ;;
+      *) pass "$SESSIONS tmux session(s) alive" ;;
+    esac
+  fi
+  if [ "$remote_ok" -eq 1 ] && [ "$transport" = mosh ]; then
+    case "$ORPHANS" in
+      "" | *[!0-9]*) warn "mosh-server process count unavailable" ;;
+      *) [ "$ORPHANS" -gt 5 ] && warn "$ORPHANS mosh-server processes running" "clean up stale processes" ;;
+    esac
+  fi
+
+  section "Sync"
+  if [ "${#CONFIGURED_SYNCS[@]}" -eq 0 ]; then
+    info "no syncs configured; Mutagen is not required"
+  else
+    MUTAGEN="$(command -v mutagen 2>/dev/null || true)"
+    [ -z "$MUTAGEN" ] && [ -x "$HOME/bin/mutagen" ] && MUTAGEN="$HOME/bin/mutagen"
+    if [ -z "$MUTAGEN" ]; then
+      fail "Mutagen missing" "required by ${#CONFIGURED_SYNCS[@]} configured sync(s); run remote-dev/setup-sync.sh"
+    elif "$MUTAGEN" daemon status >/dev/null 2>&1 || "$MUTAGEN" sync list >/dev/null 2>&1; then
+      pass "Mutagen daemon running"
+      for sync_name in "${CONFIGURED_SYNCS[@]}"; do
+        block="$("$MUTAGEN" sync list "$sync_name" 2>/dev/null)"
+        if [ -z "$block" ]; then
+          fail "sync '$sync_name' not found" "run remote-dev/setup-sync.sh"
+          continue
+        fi
+        conn="$(printf '%s\n' "$block" | grep -c 'Connected: Yes')"
+        status="$(printf '%s\n' "$block" | grep -m1 'Status:' | sed 's/.*Status: *//')"
+        if [ "$conn" -ge 2 ]; then
+          pass "sync '$sync_name' connected (${status:-status unavailable})"
+        else
+          fail "sync '$sync_name' not connected" "status: ${status:-unknown}; mutagen sync reset $sync_name"
+        fi
+      done
+    else
+      fail "Mutagen daemon not running" "run mutagen daemon start"
     fi
   fi
 
   echo
   if [ "$fails" -eq 0 ]; then
-    printf '%sAll checks passed.%s\n' "$g" "$z"
+    if [ "$warnings" -eq 0 ]; then
+      printf '%sREADY - all required checks passed.%s\n' "$g" "$z"
+    else
+      printf '%sREADY - all required checks passed with %d warning(s).%s\n' "$y" "$warnings" "$z"
+    fi
+    [ "$optional_agents_unavailable" -gt 0 ] && printf 'Optional agent capabilities unavailable: %d.\n' "$optional_agents_unavailable"
     exit 0
-  else
-    printf '%s%d check(s) failed.%s\n' "$r" "$fails" "$z"
-    exit 1
   fi
+  printf '%sNOT READY - %d required check(s) failed.%s\n' "$r" "$fails" "$z"
+  [ "$optional_agents_unavailable" -gt 0 ] && printf 'Optional agent capabilities unavailable: %d.\n' "$optional_agents_unavailable"
+  exit 1
 fi
 
 if [[ "$1" == "sync" ]]; then

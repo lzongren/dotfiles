@@ -58,7 +58,8 @@ devbox --codex api  # Codex session on the remote, named 'api'
 devbox list       # show running sessions without connecting
 devbox status     # session table: state, idle, command, path
 devbox status --summary  # natural language summary (uses claude CLI)
-devbox doctor     # health-check every layer (see below)
+devbox doctor     # check readiness for the configured transport and syncs
+devbox doctor --require-agent cc  # also require Claude Code on the remote
 devbox sync ls    # manage synced folders (see below)
 devbox --raw      # plain mosh, no tmux
 devbox --help     # usage + active host + synced folders
@@ -113,26 +114,60 @@ running? `devbox list`.
 ### Troubleshooting with `devbox doctor`
 
 If sync or `devbox` stops working — most often after the remote gets recycled
-(dev desktops reboot every few days) — run `devbox doctor` for a per-layer
-verdict:
+(dev desktops reboot every few days) — run `devbox doctor` for a readiness
+verdict based on the current configuration:
 
 ```
-devbox doctor — host: <your-host>
-  ✓ mosh installed (laptop)
-  ✓ mutagen installed (laptop)
-  ✓ remote reachable (up 2 days)
-  ✓ tmux on remote PATH
-  ✓ mosh-server on remote PATH
-  ✓ remote disk 44% used
-  ✓ 2 tmux session(s) alive
-  ✓ mutagen daemon running
-  ✓ sync 'work' connected (Watching for changes)
+devbox doctor - host: <your-host>
+
+Core
+  [ok] SSH client available
+
+Transport
+  [ok] SSH transport explicitly configured
+  [i]  mosh checks not required for SSH transport
+
+Remote
+  [ok] remote reachable (up 2 days)
+  [ok] tmux available on remote PATH
+  [ok] remote disk 44% used
+
+Agents
+  [i]  Claude Code not installed (optional; needed for devbox --cc)
+  [ok] Codex available on remote PATH
+
+Runtime
+  [i]  no tmux sessions (normal; devbox <name> starts one)
+
+Sync
+  [ok] Mutagen daemon running
+  [ok] sync 'work' connected (Watching for changes)
+
+READY - all required checks passed.
 ```
 
-Each line is pass (✓) / warn (!) / fail (✗) with a fix hint; exits non-zero if
-anything failed. A **remote reboot** (dev desktops patch-reboot weekly) kills
-the tmux server and pauses Mutagen — Mutagen auto-reconnects once the host is
-back, and sessions are restored on your first `devbox <name>` afterwards:
+The four states are pass (`[ok]`), information (`[i]`), warning (`[!]`), and
+required failure (`[x]`). The command exits non-zero only for required failures:
+SSH, remote tmux, the selected transport, and any configured syncs. Mosh is not
+required in SSH mode, Mutagen is not required when no syncs are configured, and
+zero tmux sessions is a normal state.
+
+Agent CLIs are optional by default. Require one or both when checking readiness
+for a specific workflow; the option is repeatable:
+
+```bash
+devbox doctor --require-agent cc
+devbox doctor --require-agent codex
+devbox doctor --require-agent cc --require-agent codex
+```
+
+These doctor options do not change the launch command map: `devbox folder-abc`
+still opens a shell session named `folder-abc`, while `devbox --cc folder-abc`
+and `devbox --codex folder-abc` explicitly launch an agent.
+
+A **remote reboot** (dev desktops patch-reboot weekly) kills the tmux server and
+pauses Mutagen — Mutagen auto-reconnects once the host is back, and sessions are
+restored on your first `devbox <name>` afterwards:
 tmux-resurrect + tmux-continuum snapshot the layout every 15 min and replay
 sessions/windows/panes with their working directories on server start. Panes
 that were running claude come back as `claude --continue` (resumes the last
@@ -168,7 +203,9 @@ Two different jobs, they compose:
 Typical flow: `cd` into a synced project locally, then run `devbox --cc` or
 `devbox --codex <name>` to land directly in the matching remote directory.
 The agent CLIs must be installed on the remote host's PATH; `devbox doctor`
-reports whether `claude` and `codex` are present. If an agent is missing,
+reports whether `claude` and `codex` are present without treating either as a
+default requirement. Use `devbox doctor --require-agent cc` or
+`--require-agent codex` when that agent is required. If an agent is missing,
 the tmux session stays open with a short install/fix hint instead of silently
 closing.
 
