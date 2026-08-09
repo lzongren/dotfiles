@@ -1,0 +1,551 @@
+#!/usr/bin/env bash
+# Install, inspect, verify, update, and roll back dotfiles-tools releases.
+set -euo pipefail
+
+PROGRAM="dotfiles-tools"
+REPOSITORY="lzongren/dotfiles"
+PREFIX="${DOTFILES_TOOLS_PREFIX:-$HOME/.local}"
+FORCE=false
+
+resolve_self() {
+  local source_path="$1" source_dir target
+  while [ -L "$source_path" ]; do
+    source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    target="$(readlink "$source_path")"
+    case "$target" in /*) source_path="$target" ;; *) source_path="$source_dir/$target" ;; esac
+  done
+  source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+  printf '%s/%s\n' "$source_dir" "$(basename "$source_path")"
+}
+
+SELF_PATH="$(resolve_self "$0")"
+SELF_BIN_DIR="$(dirname "$SELF_PATH")"
+VERSION_LIB="$SELF_BIN_DIR/../lib/dotfiles-tools-version.sh"
+# shellcheck source=/dev/null
+[ -f "$VERSION_LIB" ] && . "$VERSION_LIB"
+
+usage() {
+  cat <<'EOF'
+Usage: dotfiles-tools [--prefix DIR] <command> [options]
+
+Commands:
+  install VERSION [--archive FILE --checksums FILE] [--force]
+  update [--force]             Install the latest GitHub Release
+  latest                       Print the highest stable tools-v release
+  use VERSION [--force]        Activate an already installed release
+  rollback                     Swap current and previous releases
+  verify [VERSION]             Verify installed files against checksums.txt
+  status                       Show installed versions and resolved commands
+  list                         List locally installed releases
+  --version                    Show this command's source or release identity
+
+The default prefix is ~/.local. Releases live under
+PREFIX/opt/dotfiles-tools/releases and command links under PREFIX/bin.
+EOF
+}
+
+die() {
+  echo "$PROGRAM: $*" >&2
+  exit 1
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+metadata_value() {
+  local key="$1" metadata_file="$2"
+  sed -n "s/^${key}=//p" "$metadata_file" | head -1
+}
+
+manifest_value() {
+  local key="$1" manifest_file="$2"
+  sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$manifest_file" | head -1
+}
+
+validate_version() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || die "invalid version: $1"
+}
+
+tools_home() { printf '%s/opt/dotfiles-tools' "$PREFIX"; }
+releases_dir() { printf '%s/releases' "$(tools_home)"; }
+release_dir() { printf '%s/%s' "$(releases_dir)" "$1"; }
+
+current_version() {
+  local metadata
+  metadata="$(tools_home)/current/release.env"
+  [ -f "$metadata" ] && metadata_value DOTFILES_TOOLS_RELEASE_VERSION "$metadata"
+}
+
+previous_version() {
+  local metadata
+  metadata="$(tools_home)/previous/release.env"
+  [ -f "$metadata" ] && metadata_value DOTFILES_TOOLS_RELEASE_VERSION "$metadata"
+}
+
+verify_release_dir() {
+  local directory="$1" checksums_file
+  local manifest_file release_version release_commit release_tag release_commands_value
+  local manifest_version manifest_commit manifest_tag manifest_schema
+  local line expected path actual count command_name required actual_path relative_path special
+  local failed=0 seen=0
+  checksums_file="$directory/checksums.txt"
+  [ -f "$directory/release.env" ] || {
+    echo "$PROGRAM: missing release.env in $directory" >&2
+    return 1
+  }
+  [ -f "$checksums_file" ] || {
+    echo "$PROGRAM: missing checksums.txt in $directory" >&2
+    return 1
+  }
+  manifest_file="$directory/manifest.json"
+  [ -f "$manifest_file" ] || {
+    echo "$PROGRAM: missing manifest.json in $directory" >&2
+    return 1
+  }
+
+  release_version="$(metadata_value DOTFILES_TOOLS_RELEASE_VERSION "$directory/release.env")"
+  release_commit="$(metadata_value DOTFILES_TOOLS_RELEASE_COMMIT "$directory/release.env")"
+  release_tag="$(metadata_value DOTFILES_TOOLS_RELEASE_TAG "$directory/release.env")"
+  release_commands_value="$(metadata_value DOTFILES_TOOLS_RELEASE_COMMANDS "$directory/release.env")"
+  manifest_version="$(manifest_value version "$manifest_file")"
+  manifest_commit="$(manifest_value commit "$manifest_file")"
+  manifest_tag="$(manifest_value tag "$manifest_file")"
+  manifest_schema="$(sed -n 's/.*"schema"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$manifest_file" | head -1)"
+
+  [[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+    echo "$PROGRAM: invalid release.env version: $release_version" >&2
+    return 1
+  }
+  [[ "$release_commit" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "$PROGRAM: invalid release.env commit: $release_commit" >&2
+    return 1
+  }
+  [ "$release_tag" = "tools-v$release_version" ] || {
+    echo "$PROGRAM: release.env tag '$release_tag' does not match version '$release_version'" >&2
+    return 1
+  }
+  [[ "$release_commands_value" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]] || {
+    echo "$PROGRAM: invalid release command list" >&2
+    return 1
+  }
+  [ "$manifest_schema" = 1 ] || {
+    echo "$PROGRAM: unsupported or missing manifest schema: ${manifest_schema:-none}" >&2
+    return 1
+  }
+  [ "$manifest_version" = "$release_version" ] || {
+    echo "$PROGRAM: manifest version '$manifest_version' does not match release.env version '$release_version'" >&2
+    return 1
+  }
+  [ "$manifest_commit" = "$release_commit" ] || {
+    echo "$PROGRAM: manifest commit '$manifest_commit' does not match release.env commit '$release_commit'" >&2
+    return 1
+  }
+  [ "$manifest_tag" = "$release_tag" ] || {
+    echo "$PROGRAM: manifest tag '$manifest_tag' does not match release.env tag '$release_tag'" >&2
+    return 1
+  }
+
+  special="$(find "$directory" -mindepth 1 ! -type d ! -type f -print -quit)"
+  [ -z "$special" ] || {
+    echo "$PROGRAM: link or special file is not allowed: ${special#"$directory"/}" >&2
+    return 1
+  }
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    expected="${line%% *}"
+    path="${line#"$expected"}"
+    path="${path#  }"
+    seen=$((seen + 1))
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || {
+      echo "$PROGRAM: invalid checksum hash for ${path:-unknown}" >&2
+      failed=1
+      continue
+    }
+    [ "$line" = "$expected  $path" ] && [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+      echo "$PROGRAM: invalid checksum line: $line" >&2
+      failed=1
+      continue
+    }
+    case "$path" in
+      checksums.txt | /* | .. | ../* | */../* | */..)
+        echo "$PROGRAM: unsafe checksum path: $path" >&2
+        failed=1
+        continue
+        ;;
+    esac
+    count="$(awk -v wanted="$path" '$2 == wanted { count++ } END { print count + 0 }' "$checksums_file")"
+    if [ "$count" -ne 1 ]; then
+      echo "$PROGRAM: duplicate checksum path: $path" >&2
+      failed=1
+      continue
+    fi
+    if [ ! -f "$directory/$path" ] || [ -L "$directory/$path" ]; then
+      echo "$PROGRAM: missing installed file: $path" >&2
+      failed=1
+      continue
+    fi
+    actual="$(sha256_file "$directory/$path")"
+    if [ "$actual" != "$expected" ]; then
+      echo "$PROGRAM: checksum mismatch: $path" >&2
+      failed=1
+    fi
+  done <"$checksums_file"
+  [ "$seen" -gt 0 ] || {
+    echo "$PROGRAM: checksums.txt is empty" >&2
+    return 1
+  }
+
+  while IFS= read -r actual_path; do
+    relative_path="${actual_path#"$directory"/}"
+    [ "$relative_path" = checksums.txt ] && continue
+    count="$(awk -v wanted="$relative_path" '$2 == wanted { count++ } END { print count + 0 }' "$checksums_file")"
+    if [ "$count" -ne 1 ]; then
+      echo "$PROGRAM: file is not covered by checksums.txt: $relative_path" >&2
+      failed=1
+    fi
+  done < <(find "$directory" -type f -print)
+
+  for required in VERSION release.env manifest.json bin/dotfiles-tools lib/dotfiles-tools-version.sh remote-dev/lib.sh remote-dev/setup-remote.sh remote-dev/setup-sync.sh remote-dev/tmux.conf; do
+    if [ ! -f "$directory/$required" ]; then
+      echo "$PROGRAM: required release file is missing: $required" >&2
+      failed=1
+    fi
+  done
+  if [ -f "$directory/VERSION" ] && [ "$(tr -d '[:space:]' <"$directory/VERSION")" != "$release_version" ]; then
+    echo "$PROGRAM: VERSION does not match release.env version '$release_version'" >&2
+    failed=1
+  fi
+  while IFS= read -r command_name; do
+    [ -n "$command_name" ] || continue
+    if [ ! -x "$directory/bin/$command_name" ] || [ -L "$directory/bin/$command_name" ]; then
+      echo "$PROGRAM: declared command is missing or not executable: $command_name" >&2
+      failed=1
+    fi
+  done < <(printf '%s\n' "$release_commands_value" | tr ',' '\n')
+  [ "$failed" -eq 0 ]
+}
+
+atomic_link() {
+  local target="$1" link_path="$2" temp_link
+  temp_link="${link_path}.tmp.$$"
+  [ ! -e "$temp_link" ] && [ ! -L "$temp_link" ] || unlink "$temp_link"
+  ln -s "$target" "$temp_link"
+  if mv -f -T "$temp_link" "$link_path" 2>/dev/null; then
+    return 0
+  fi
+  if mv -f -h "$temp_link" "$link_path" 2>/dev/null; then
+    return 0
+  fi
+  # Last-resort fallback for mv implementations without -T or -h. This has a
+  # very small unlink/relink window, so supported GNU and BSD mv stay above.
+  [ ! -e "$link_path" ] && [ ! -L "$link_path" ] || unlink "$link_path"
+  mv -f "$temp_link" "$link_path"
+}
+
+release_commands() {
+  local directory="$1" commands
+  commands="$(metadata_value DOTFILES_TOOLS_RELEASE_COMMANDS "$directory/release.env")"
+  [ -n "$commands" ] || commands="dev,devbox,devbox-status.30s.sh,sessions,dotfiles-tools"
+  printf '%s\n' "$commands" | tr ',' '\n'
+}
+
+preflight_shims() {
+  local directory="$1" command_name link_path expected current_target
+  mkdir -p "$PREFIX/bin"
+  while IFS= read -r command_name; do
+    [ -n "$command_name" ] || continue
+    link_path="$PREFIX/bin/$command_name"
+    expected="../opt/dotfiles-tools/current/bin/$command_name"
+    if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+      current_target="$(readlink "$link_path" 2>/dev/null || true)"
+      if [ "$current_target" != "$expected" ] && [ "$FORCE" != true ]; then
+        die "$link_path already exists; rerun with --force to preserve it as a backup"
+      fi
+    fi
+  done < <(release_commands "$directory")
+}
+
+install_shims() {
+  local directory="$1" command_name link_path expected backup_stamp
+  backup_stamp="$(date +%Y%m%d%H%M%S)"
+  while IFS= read -r command_name; do
+    [ -n "$command_name" ] || continue
+    link_path="$PREFIX/bin/$command_name"
+    expected="../opt/dotfiles-tools/current/bin/$command_name"
+    if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+      if [ "$(readlink "$link_path" 2>/dev/null || true)" = "$expected" ]; then
+        continue
+      fi
+      mv "$link_path" "$link_path.before-dotfiles-tools-$backup_stamp"
+      echo "preserved existing $link_path as $link_path.before-dotfiles-tools-$backup_stamp"
+    fi
+    atomic_link "$expected" "$link_path"
+  done < <(release_commands "$directory")
+}
+
+remove_obsolete_shims() {
+  local old_directory="$1" new_directory="$2" command_name link_path expected
+  [ -d "$old_directory" ] || return 0
+  while IFS= read -r command_name; do
+    [ -n "$command_name" ] || continue
+    if release_commands "$new_directory" | grep -Fxq "$command_name"; then
+      continue
+    fi
+    link_path="$PREFIX/bin/$command_name"
+    expected="../opt/dotfiles-tools/current/bin/$command_name"
+    if [ -L "$link_path" ] && [ "$(readlink "$link_path" 2>/dev/null || true)" = "$expected" ]; then
+      unlink "$link_path"
+      echo "removed obsolete managed command $link_path"
+    fi
+  done < <(release_commands "$old_directory")
+}
+
+activate_version() {
+  local version="$1" directory old_version old_directory=""
+  directory="$(release_dir "$version")"
+  [ -d "$directory" ] || die "release $version is not installed"
+  verify_release_dir "$directory" || die "release $version failed verification"
+  preflight_shims "$directory"
+  old_version="$(current_version || true)"
+  [ -z "$old_version" ] || old_directory="$(release_dir "$old_version")"
+  mkdir -p "$(tools_home)" "$PREFIX/bin"
+  if [ -n "$old_version" ] && [ "$old_version" != "$version" ] && [ -d "$(release_dir "$old_version")" ]; then
+    atomic_link "releases/$old_version" "$(tools_home)/previous"
+  fi
+  atomic_link "releases/$version" "$(tools_home)/current"
+  install_shims "$directory"
+  [ -z "$old_directory" ] || remove_obsolete_shims "$old_directory" "$directory"
+}
+
+verify_outer_checksum() {
+  local archive="$1" checksums="$2" archive_name expected actual
+  archive_name="$(basename "$archive")"
+  expected="$(awk -v name="$archive_name" '$2 == name {print $1; exit}' "$checksums")"
+  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "no valid checksum for $archive_name"
+  actual="$(sha256_file "$archive")"
+  [ "$actual" = "$expected" ] || die "archive checksum mismatch for $archive_name"
+}
+
+validate_archive_paths() {
+  local archive="$1" payload_name="$2" entry verbose_listing type
+  verbose_listing="$(tar -tvzf "$archive")" || die "cannot inspect archive"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    type="${entry%"${entry#?}"}"
+    case "$type" in
+      - | d) ;;
+      *) die "archive contains a link or special file" ;;
+    esac
+  done <<<"$verbose_listing"
+  while IFS= read -r entry; do
+    case "$entry" in
+      "$payload_name" | "$payload_name/" | "$payload_name/"*) ;;
+      *) die "archive contains an unexpected path: $entry" ;;
+    esac
+    case "$entry" in
+      /* | .. | ../* | */../* | */..) die "archive contains an unsafe path: $entry" ;;
+    esac
+  done < <(tar -tzf "$archive")
+}
+
+latest_version() {
+  local response tags version releases_url
+  releases_url="${DOTFILES_TOOLS_RELEASES_URL:-https://api.github.com/repos/$REPOSITORY/releases?per_page=100}"
+  response="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$releases_url")" || die "could not query GitHub Releases"
+  tags="$(printf '%s\n' "$response" | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+  version="$(printf '%s\n' "$tags" | awk -F. '
+    /^tools-v[0-9]+\.[0-9]+\.[0-9]+$/ {
+      major = substr($1, 8) + 0
+      minor = $2 + 0
+      patch = $3 + 0
+      if (!found || major > best_major ||
+          (major == best_major && minor > best_minor) ||
+          (major == best_major && minor == best_minor && patch > best_patch)) {
+        found = 1
+        best_major = major
+        best_minor = minor
+        best_patch = patch
+      }
+    }
+    END {
+      if (found) printf "%d.%d.%d\n", best_major, best_minor, best_patch
+    }
+  ')"
+  [ -n "$version" ] || die "no stable tools-v release was found"
+  printf '%s\n' "$version"
+}
+
+download_release() {
+  local version="$1" directory="$2" base
+  base="https://github.com/$REPOSITORY/releases/download/tools-v$version"
+  curl -fL --retry 3 -o "$directory/dotfiles-tools-$version.tar.gz" "$base/dotfiles-tools-$version.tar.gz"
+  curl -fL --retry 3 -o "$directory/SHA256SUMS" "$base/SHA256SUMS"
+}
+
+install_release() {
+  local version="$1"
+  shift
+  local archive="" checksums="" target payload_name payload metadata_version metadata_commit installed_commit
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --archive)
+        [ "$#" -ge 2 ] || die "--archive requires a file"
+        archive="$2"
+        shift 2
+        ;;
+      --checksums)
+        [ "$#" -ge 2 ] || die "--checksums requires a file"
+        checksums="$2"
+        shift 2
+        ;;
+      --force)
+        FORCE=true
+        shift
+        ;;
+      *) die "unknown install option: $1" ;;
+    esac
+  done
+
+  [ "$version" != latest ] || version="$(latest_version)"
+  validate_version "$version"
+  DOTFILES_TOOLS_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-tools-install.XXXXXX")"
+  trap 'rm -rf "$DOTFILES_TOOLS_TMP"' EXIT
+  if [ -z "$archive" ]; then
+    download_release "$version" "$DOTFILES_TOOLS_TMP"
+    archive="$DOTFILES_TOOLS_TMP/dotfiles-tools-$version.tar.gz"
+    checksums="$DOTFILES_TOOLS_TMP/SHA256SUMS"
+  fi
+  [ -f "$archive" ] || die "archive not found: $archive"
+  [ -n "$checksums" ] && [ -f "$checksums" ] || die "a SHA256SUMS file is required"
+  verify_outer_checksum "$archive" "$checksums"
+
+  payload_name="dotfiles-tools-$version"
+  validate_archive_paths "$archive" "$payload_name"
+  tar -xzf "$archive" -C "$DOTFILES_TOOLS_TMP"
+  payload="$DOTFILES_TOOLS_TMP/$payload_name"
+  [ -d "$payload" ] || die "archive is missing $payload_name"
+  [ ! -L "$payload" ] || die "release payload cannot be a symlink"
+  verify_release_dir "$payload" || die "release payload failed verification"
+  metadata_version="$(metadata_value DOTFILES_TOOLS_RELEASE_VERSION "$payload/release.env")"
+  metadata_commit="$(metadata_value DOTFILES_TOOLS_RELEASE_COMMIT "$payload/release.env")"
+  [ "$metadata_version" = "$version" ] || die "release metadata version '$metadata_version' does not match requested '$version'"
+  [ -n "$metadata_commit" ] || die "release metadata has no commit"
+
+  mkdir -p "$(releases_dir)"
+  target="$(release_dir "$version")"
+  if [ -d "$target" ]; then
+    verify_release_dir "$target" || die "installed release $version is damaged"
+    if ! cmp -s "$target/checksums.txt" "$payload/checksums.txt" || ! cmp -s "$target/release.env" "$payload/release.env"; then
+      die "installed release $version differs from the incoming payload; refusing same-version replacement"
+    fi
+    installed_commit="$(metadata_value DOTFILES_TOOLS_RELEASE_COMMIT "$target/release.env")"
+  else
+    mv "$payload" "$target"
+    installed_commit="$metadata_commit"
+  fi
+  activate_version "$version"
+  echo "installed dotfiles-tools $version (commit $(printf '%.12s' "$installed_commit"))"
+}
+
+verify_command() {
+  local version="${1:-}" directory
+  [ -n "$version" ] || version="$(current_version || true)"
+  [ -n "$version" ] || die "no current release is installed"
+  validate_version "$version"
+  directory="$(release_dir "$version")"
+  [ -d "$directory" ] || die "release $version is not installed"
+  verify_release_dir "$directory" || exit 1
+  echo "verified dotfiles-tools $version"
+}
+
+status_command() {
+  local current previous command_name resolved expected version_output
+  current="$(current_version || true)"
+  previous="$(previous_version || true)"
+  echo "prefix:   $PREFIX"
+  echo "current:  ${current:-none}"
+  echo "previous: ${previous:-none}"
+  [ -n "$current" ] || return 0
+  while IFS= read -r command_name; do
+    [ -n "$command_name" ] || continue
+    expected="$PREFIX/bin/$command_name"
+    resolved="$(command -v "$command_name" 2>/dev/null || true)"
+    version_output="$($expected --version 2>/dev/null || printf unavailable)"
+    if [ "$resolved" = "$expected" ]; then
+      printf '%-15s %s [%s]\n' "$command_name" "$version_output" "$resolved"
+    else
+      printf '%-15s %s [%s; PATH resolves %s]\n' "$command_name" "$version_output" "$expected" "${resolved:-nothing}"
+    fi
+  done < <(release_commands "$(release_dir "$current")")
+}
+
+list_command() {
+  local directory version
+  directory="$(releases_dir)"
+  [ -d "$directory" ] || return 0
+  for version in "$directory"/*; do
+    [ -d "$version" ] && basename "$version"
+  done
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prefix)
+      [ "$#" -ge 2 ] || die "--prefix requires a directory"
+      PREFIX="${2%/}"
+      shift 2
+      ;;
+    *) break ;;
+  esac
+done
+
+COMMAND="${1:-}"
+[ "$#" -eq 0 ] || shift
+case "$COMMAND" in
+  --version | -V | version)
+    if declare -F dotfiles_tools_print_version >/dev/null 2>&1; then
+      dotfiles_tools_print_version "$PROGRAM" "$SELF_PATH"
+    else
+      echo "$PROGRAM bootstrap"
+    fi
+    ;;
+  install)
+    [ "$#" -ge 1 ] || die "install requires VERSION or latest"
+    install_release "$@"
+    ;;
+  update)
+    install_release latest "$@"
+    ;;
+  latest) latest_version ;;
+  use)
+    [ "$#" -ge 1 ] || die "use requires VERSION"
+    version="$1"
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in --force) FORCE=true ;; *) die "unknown use option: $1" ;; esac
+      shift
+    done
+    validate_version "$version"
+    activate_version "$version"
+    echo "activated dotfiles-tools $version"
+    ;;
+  rollback)
+    version="$(previous_version || true)"
+    [ -n "$version" ] || die "no previous release is available"
+    old_version="$(current_version || true)"
+    activate_version "$version"
+    [ -z "$old_version" ] || atomic_link "releases/$old_version" "$(tools_home)/previous"
+    echo "rolled back to dotfiles-tools $version"
+    ;;
+  verify) verify_command "${1:-}" ;;
+  status) status_command ;;
+  list) list_command ;;
+  -h | --help | help | "") usage ;;
+  *) die "unknown command: $COMMAND" ;;
+esac

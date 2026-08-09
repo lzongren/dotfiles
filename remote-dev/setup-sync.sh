@@ -12,6 +12,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERSION_LIB="$SCRIPT_DIR/../lib/dotfiles-tools-version.sh"
+# shellcheck source=/dev/null
+[ -f "$VERSION_LIB" ] && . "$VERSION_LIB"
+if [[ "${1:-}" == "--version" || "${1:-}" == "-V" ]]; then
+  if declare -F dotfiles_tools_print_version >/dev/null 2>&1; then
+    dotfiles_tools_print_version setup-sync "$0"
+  else
+    echo "setup-sync unknown"
+  fi
+  exit 0
+fi
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/lib.sh"
 

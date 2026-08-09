@@ -6,3 +6,6 @@ remote-dev/config
 
 # local compiled tool (github.com/lzongren/afkick), not repo-managed
 bin/afkick
+
+# Local GitHub Release build artifacts
+dist/

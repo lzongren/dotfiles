@@ -22,6 +22,13 @@ Personal scripts for `~/.local/bin`.
 - `dev` — open a project workspace with claude, yazi, and lazygit in tmux
 - `devbox` — connect to a remote dev host or launch remote Claude Code/Codex sessions with explicit flags over mosh + tmux (see [remote-dev](remote-dev/))
 - `devbox-status.30s.sh` — SwiftBar menu-bar plugin showing remote session status
+- `dotfiles-tools` — install, verify, update, inspect, and roll back versioned tool releases
+
+The scripts are released together as `tools-vX.Y.Z` because `devbox` and its
+support files must stay compatible. Each installation preserves complete
+releases under `~/.local/opt/dotfiles-tools/`, then atomically switches a
+`current` symlink. See [release/README.md](release/README.md) for installation,
+release, and rollback commands.
 
 ### [remote-dev](remote-dev/)
 Work on a remote dev host from your laptop with local files kept in sync.

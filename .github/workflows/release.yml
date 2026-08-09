@@ -1,0 +1,79 @@
+name: Release dotfiles tools
+
+on:
+  push:
+    tags:
+      - "tools-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Test and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag and main ancestry
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          test "$GITHUB_REF_NAME" = "tools-v$version"
+          git fetch origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Require immutable GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          enabled="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            --jq '.enabled')"
+          if [ "$enabled" != true ]; then
+            echo 'Enable immutable releases in the repository settings before publishing.' >&2
+            exit 1
+          fi
+
+      - name: Install test tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck shfmt bats lua-check
+
+      - name: Run strict tests
+        run: |
+          ./remote-dev/test/run.sh --strict
+          luacheck hammerspoon/
+
+      - name: Build release assets
+        run: ./release/build.sh --tag "$GITHUB_REF_NAME" --output dist
+
+      - name: Smoke test packaged installer
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          prefix="$RUNNER_TEMP/dotfiles-tools-prefix"
+          ./release/smoke.sh \
+            --bootstrap ./bin/dotfiles-tools \
+            --archive "dist/dotfiles-tools-$version.tar.gz" \
+            --checksums dist/SHA256SUMS \
+            --prefix "$prefix" \
+            --version "$version"
+
+      - name: Publish immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "dotfiles-tools $version"
