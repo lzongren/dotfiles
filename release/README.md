@@ -37,6 +37,7 @@ suffix before installing the managed link.
 ```bash
 devbox --version
 dotfiles-tools status
+dotfiles-tools latest
 dotfiles-tools verify
 dotfiles-tools update
 dotfiles-tools rollback
@@ -52,6 +53,22 @@ immutable suite version and full release commit metadata packaged by CI.
 SemVer applies to the suite: breaking command/configuration changes increment
 the major version, backward-compatible features the minor version, and fixes
 the patch version.
+
+One-time repository setup is part of the release trust boundary:
+
+- Enable **immutable releases** in the repository's Releases settings. The tag
+  workflow checks GitHub's immutable-releases API and refuses to publish while
+  it is disabled.
+- Protect `main` with all four PR checks: `lint-and-test (ubuntu-latest)`,
+  `lint-and-test (macos-latest)`, `Release package (ubuntu-latest)`, and
+  `Release package (macos-latest)`.
+
+Verify the immutable-release setting with:
+
+```bash
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/lzongren/dotfiles/immutable-releases --jq .enabled
+```
 
 1. Update `VERSION` in a PR and ensure the `CI` and `Release package` checks
    pass on both Ubuntu and macOS.
