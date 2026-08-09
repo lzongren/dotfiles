@@ -326,6 +326,17 @@ EOF
   [ "$output" = "1.10.0" ]
 }
 
+@test "release workflow avoids admin-only APIs and can retry an existing tag" {
+  workflow="$REPO_ROOT/.github/workflows/release.yml"
+
+  run grep -F "immutable-releases" "$workflow"
+  [ "$status" -ne 0 ]
+  grep -q 'workflow_dispatch:' "$workflow"
+  grep -q 'RELEASE_TAG:' "$workflow"
+  grep -Fq 'ref: ${{ env.RELEASE_TAG }}' "$workflow"
+  grep -Fq 'git rev-parse "HEAD^{commit}"' "$workflow"
+}
+
 @test "installing a second release preserves an atomic rollback target" {
   make_fixture_release 1.0.0 "$BATS_TEST_TMPDIR/v1" "devbox,dotfiles-tools,legacy"
   make_fixture_release 1.1.0 "$BATS_TEST_TMPDIR/v2" "devbox,dotfiles-tools"

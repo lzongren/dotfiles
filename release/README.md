@@ -56,9 +56,10 @@ the patch version.
 
 One-time repository setup is part of the release trust boundary:
 
-- Enable **immutable releases** in the repository's Releases settings. The tag
-  workflow checks GitHub's immutable-releases API and refuses to publish while
-  it is disabled.
+- Enable **immutable releases** in the repository's Releases settings before
+  tagging. GitHub's workflow token cannot read this administration-only
+  setting, so verify it from an authenticated administrator session as shown
+  below; GitHub enforces immutability when the release is published.
 - Protect `main` with all four PR checks: `lint-and-test (ubuntu-latest)`,
   `lint-and-test (macos-latest)`, `Release package (ubuntu-latest)`, and
   `Release package (macos-latest)`.
@@ -85,3 +86,10 @@ The tag-triggered workflow refuses a tag that differs from `VERSION`, refuses
 a commit outside `origin/main`, reruns the strict test suite, builds and smoke
 tests the release archive, and then creates the GitHub Release with generated
 notes, the versioned archive, manifest, and checksums.
+
+If a tag-triggered run fails before it publishes a release, fix the workflow on
+`main` and retry that existing tag without deleting or moving it:
+
+```bash
+gh workflow run release.yml --ref main -f tag="tools-v${version}"
+```
