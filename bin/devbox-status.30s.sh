@@ -9,9 +9,30 @@
 # SwiftBar runs with a minimal PATH; add Homebrew + user bins so ssh/timeout work.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/bin:$PATH"
 
-# Resolve through symlink to find the real bin/ directory where devbox lives.
-SELF="$(readlink -f "$0" 2>/dev/null || readlink "$0" 2>/dev/null || echo "$0")"
-DEVBOX="$(cd "$(dirname "$SELF")" && pwd)/devbox"
+# Resolve through installer-managed symlinks to find devbox and version metadata
+# from the same immutable release.
+SELF="$0"
+while [ -L "$SELF" ]; do
+  SELF_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
+  TARGET="$(readlink "$SELF")"
+  case "$TARGET" in /*) SELF="$TARGET" ;; *) SELF="$SELF_DIR/$TARGET" ;; esac
+done
+BIN_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
+SELF="$BIN_DIR/$(basename "$SELF")"
+VERSION_LIB="$BIN_DIR/../lib/dotfiles-tools-version.sh"
+# shellcheck source=/dev/null
+[ -f "$VERSION_LIB" ] && . "$VERSION_LIB"
+
+if [[ "${1:-}" == "--version" || "${1:-}" == "-V" ]]; then
+  if declare -F dotfiles_tools_print_version >/dev/null 2>&1; then
+    dotfiles_tools_print_version devbox-status "$SELF"
+  else
+    echo "devbox-status unknown"
+  fi
+  exit 0
+fi
+
+DEVBOX="$BIN_DIR/devbox"
 
 # Grab raw status (timeout handled inside devbox status).
 raw="$("$DEVBOX" status --raw 2>/dev/null)"

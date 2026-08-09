@@ -13,8 +13,32 @@
 #        sessions --days N       (lookback window, default 7)
 #        sessions --motd         (fast listing with cached remote sessions)
 #        sessions --refresh-remote-cache  (refresh MOTD cache, no output)
+#        sessions --version      (release + commit identity)
 
 set -euo pipefail
+
+_SESSIONS_SOURCE="$0"
+while [ -L "$_SESSIONS_SOURCE" ]; do
+  _SESSIONS_SOURCE_DIR="$(cd -P "$(dirname "$_SESSIONS_SOURCE")" && pwd)"
+  _SESSIONS_TARGET="$(readlink "$_SESSIONS_SOURCE")"
+  case "$_SESSIONS_TARGET" in
+    /*) _SESSIONS_SOURCE="$_SESSIONS_TARGET" ;;
+    *) _SESSIONS_SOURCE="$_SESSIONS_SOURCE_DIR/$_SESSIONS_TARGET" ;;
+  esac
+done
+_SESSIONS_BIN_DIR="$(cd -P "$(dirname "$_SESSIONS_SOURCE")" && pwd)"
+_SESSIONS_VERSION_LIB="$_SESSIONS_BIN_DIR/../lib/dotfiles-tools-version.sh"
+# shellcheck source=/dev/null
+[ -f "$_SESSIONS_VERSION_LIB" ] && . "$_SESSIONS_VERSION_LIB"
+
+if [[ "${1:-}" == "--version" || "${1:-}" == "-V" ]]; then
+  if declare -F dotfiles_tools_print_version >/dev/null 2>&1; then
+    dotfiles_tools_print_version sessions "$_SESSIONS_SOURCE"
+  else
+    echo "sessions unknown"
+  fi
+  exit 0
+fi
 
 DAYS=7
 SHOW_REMOTE=true
@@ -57,7 +81,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --refresh-remote-cache) REFRESH_REMOTE_CACHE=true ;;
     -h | --help)
-      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,14p' "$_SESSIONS_SOURCE" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)

@@ -15,6 +15,32 @@
 #        devbox doctor [--require-agent cc|codex]  (readiness checks)
 #        devbox sync [ls|add|rm]         (manage synced folders)
 #        devbox --raw                    (plain mosh, no tmux)
+#        devbox --version                (release + commit identity)
+
+# Resolve this command through installer-managed symlinks so support files are
+# loaded from the same immutable release as the executable.
+_DEVBOX_SOURCE="$0"
+while [ -L "$_DEVBOX_SOURCE" ]; do
+  _DEVBOX_SOURCE_DIR="$(cd -P "$(dirname "$_DEVBOX_SOURCE")" && pwd)"
+  _DEVBOX_TARGET="$(readlink "$_DEVBOX_SOURCE")"
+  case "$_DEVBOX_TARGET" in
+    /*) _DEVBOX_SOURCE="$_DEVBOX_TARGET" ;;
+    *) _DEVBOX_SOURCE="$_DEVBOX_SOURCE_DIR/$_DEVBOX_TARGET" ;;
+  esac
+done
+_DEVBOX_BIN_DIR="$(cd -P "$(dirname "$_DEVBOX_SOURCE")" && pwd)"
+_DEVBOX_VERSION_LIB="$_DEVBOX_BIN_DIR/../lib/dotfiles-tools-version.sh"
+# shellcheck source=/dev/null
+[ -f "$_DEVBOX_VERSION_LIB" ] && . "$_DEVBOX_VERSION_LIB"
+
+if [[ "${1:-}" == "--version" || "${1:-}" == "-V" ]]; then
+  if declare -F dotfiles_tools_print_version >/dev/null 2>&1; then
+    dotfiles_tools_print_version devbox "$_DEVBOX_SOURCE"
+  else
+    echo "devbox unknown"
+  fi
+  exit 0
+fi
 
 # Load host config (gitignored, lives outside the repo). Only DEVBOX_HOST is
 # needed here; mosh-server and tmux resolve on the remote PATH (~/.local/bin
@@ -60,7 +86,7 @@ devbox_agent_command() {
 }
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "$_DEVBOX_SOURCE" | sed 's/^# \{0,1\}//'
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -336,7 +362,7 @@ if [[ "$1" == "sync" ]]; then
   # Manage synced folders. Config mutation lives in lib.sh (devbox_config_*),
   # which is what the bats tests exercise; this wrapper adds arg parsing, ~
   # expansion, and applying/terminating the live Mutagen session.
-  _lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
+  _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
   if [ ! -f "$_lib" ]; then
     echo "devbox: cannot find remote-dev/lib.sh" >&2
     exit 1
@@ -423,7 +449,7 @@ fi
 if [[ "$1" == "status" ]]; then
   # Status: one line per session (name|attached|activity|bell|cmd|path).
   # --raw: skip the pretty table, emit raw pipe-delimited lines for scripts.
-  _lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
+  _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
   # shellcheck source=/dev/null
   [ -f "$_lib" ] && . "$_lib"
   # `true` last: ssh reports the LAST remote command's status, and both tmux
@@ -525,7 +551,7 @@ esac
 # corresponding remote dir. Only affects NEW sessions (-c is ignored when -A
 # re-attaches an existing one, so reconnecting never jumps you elsewhere).
 CDIR=""
-_lib="$(cd "$(dirname "$0")/../remote-dev" 2>/dev/null && pwd)/lib.sh"
+_lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
 if [ -f "$_lib" ]; then
   # shellcheck source=/dev/null
   . "$_lib"

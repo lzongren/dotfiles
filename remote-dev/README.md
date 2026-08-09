@@ -48,7 +48,9 @@ Two scripts, run from the laptop:
 ./remote-dev/setup-sync.sh        # installs Mutagen + creates the file syncs
 ```
 
-Put `bin/` on your PATH, then connect:
+For a source checkout, put `bin/` on your PATH. For repeatable multi-machine
+installs, use a versioned GitHub Release as described in
+[`release/README.md`](../release/README.md). Then connect:
 
 ```bash
 devbox            # mosh + auto-attach tmux session 'main'
@@ -63,6 +65,7 @@ devbox doctor --require-agent cc  # also require Claude Code on the remote
 devbox sync ls    # manage synced folders (see below)
 devbox --raw      # plain mosh, no tmux
 devbox --help     # usage + active host + synced folders
+devbox --version  # installed release and source commit
 ```
 
 ### Example: a full session
