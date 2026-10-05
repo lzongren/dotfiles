@@ -24,11 +24,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck shfmt bats lua-check
+          sudo apt-get install -y -qq shellcheck shfmt bats lua-check tmux
 
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install shellcheck shfmt bats-core luacheck
+        run: brew install shellcheck shfmt bats-core luacheck tmux
 
       - name: Shell lint + test (strict)
         run: ./remote-dev/test/run.sh --strict

@@ -236,6 +236,12 @@ closing.
 - **Sync status:** `mutagen sync list` (state, conflicts), `mutagen sync
   monitor <name>` (live). Conflicts (same file edited both sides) are flagged,
   never auto-resolved — fix the file, then `mutagen sync flush <name>`.
+- **Copy/paste:** select with the mouse; tmux copy mode and the Claude Code /
+  Codex fullscreen views send the selection to the Mac clipboard (OSC 52).
+  Paste with Cmd-V. Ctrl-C interrupts, and Ctrl-V in Claude Code only pastes
+  images from the remote's (empty) clipboard. Over mosh, a copy is cut at
+  ~12 KB and a copy identical to the previous one is skipped; if one doesn't
+  land, hold Shift while selecting to use Ghostty's own selection.
 
 ## Session status at a glance
 
