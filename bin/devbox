@@ -13,7 +13,7 @@
 #        devbox list                     (show running sessions, don't connect)
 #        devbox status                   (session table: state, idle, cmd, path)
 #        devbox doctor [--require-agent cc|codex]  (readiness checks)
-#        devbox sync [ls|add|rm]         (manage synced folders)
+#        devbox sync [ls|add|rm|reset]   (manage synced folders)
 #        devbox --raw                    (plain mosh, no tmux)
 #        devbox --version                (release + commit identity)
 
@@ -315,11 +315,13 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
   fi
 
   section "Sync"
+  _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
+  # shellcheck source=/dev/null
+  [ -f "$_lib" ] && . "$_lib"
   if [ "${#CONFIGURED_SYNCS[@]}" -eq 0 ]; then
     info "no syncs configured; Mutagen is not required"
   else
-    MUTAGEN="$(command -v mutagen 2>/dev/null || true)"
-    [ -z "$MUTAGEN" ] && [ -x "$HOME/bin/mutagen" ] && MUTAGEN="$HOME/bin/mutagen"
+    MUTAGEN="$(devbox_mutagen)"
     if [ -z "$MUTAGEN" ]; then
       fail "Mutagen missing" "required by ${#CONFIGURED_SYNCS[@]} configured sync(s); run remote-dev/setup-sync.sh"
     elif "$MUTAGEN" daemon status >/dev/null 2>&1 || "$MUTAGEN" sync list >/dev/null 2>&1; then
@@ -337,6 +339,8 @@ if [[ "$1" == "doctor" || "$1" == "check" ]]; then
         else
           fail "sync '$sync_name' not connected" "status: ${status:-unknown}; mutagen sync reset $sync_name"
         fi
+        devbox_sync_stale "$MUTAGEN" "$sync_name" &&
+          fail "sync '$sync_name' has stale ignores" "devbox sync reset $sync_name"
       done
     else
       fail "Mutagen daemon not running" "run mutagen daemon start"
@@ -419,8 +423,69 @@ if [[ "$1" == "sync" ]]; then
       [ -n "$MUT" ] && "$MUT" sync terminate "$name" 2>/dev/null && echo "✓ sync '$name' terminated (files kept on both sides)"
       ;;
 
+    reset)
+      target="${3:-}"
+      [ -n "$target" ] || {
+        echo "usage: devbox sync reset <name|--stale>" >&2
+        exit 1
+      }
+      [ -n "$MUT" ] || {
+        echo "devbox: mutagen not installed; run remote-dev/setup-sync.sh" >&2
+        exit 1
+      }
+      targets=()
+      while IFS= read -r entry; do
+        n="${entry%%|*}"
+        if [ "$target" = --stale ]; then
+          if [ -z "$(devbox_sync_status "$MUT" "$n" </dev/null)" ]; then
+            echo "devbox: sync '$n' has no session; devbox sync reset $n creates it" >&2
+          elif devbox_sync_stale "$MUT" "$n" </dev/null; then
+            targets+=("$entry")
+          fi
+        elif [ "$n" = "$target" ]; then
+          targets+=("$entry")
+        fi
+      done < <(devbox_syncs_list "$DEVBOX_CONFIG")
+      if [ "${#targets[@]}" -eq 0 ]; then
+        [ "$target" = --stale ] && {
+          echo "No stale syncs."
+          exit 0
+        }
+        echo "devbox: no sync named '$target' in $DEVBOX_CONFIG" >&2
+        exit 1
+      fi
+      # Before any terminate: an unreachable host must not leave a folder sessionless.
+      ssh -o ConnectTimeout=10 "$DEVBOX_HOST" true </dev/null || {
+        echo "devbox: cannot reach $DEVBOX_HOST; nothing reset" >&2
+        exit 1
+      }
+      echo "devbox: new sessions have no sync history: unsynced deletions come back, divergent edits become conflicts (see mutagen sync list). Nothing is deleted."
+      rc=0
+      for entry in "${targets[@]}"; do
+        IFS='|' read -r n l r <<<"$entry"
+        # Mutagen would recreate a missing root empty and fill it from the remote.
+        [ -d "$l" ] || {
+          echo "devbox: local path missing: $l; '$n' left as is" >&2
+          rc=1
+          continue
+        }
+        "$MUT" sync terminate "$n" 2>/dev/null
+        # Names aren't unique in Mutagen: never create beside a survivor.
+        if [ -n "$(devbox_sync_status "$MUT" "$n")" ]; then
+          echo "devbox: could not terminate '$n'; not recreated" >&2
+          rc=1
+        elif devbox_sync_create "$n" "$l" "$r"; then
+          echo "✓ sync '$n' recreated"
+        else
+          echo "devbox: recreating '$n' failed; re-run devbox sync reset $n" >&2
+          rc=1
+        fi
+      done
+      exit "$rc"
+      ;;
+
     *)
-      echo "usage: devbox sync [ls|add <name> <local> [remote]|rm <name>]" >&2
+      echo "usage: devbox sync [ls|add <name> <local> [remote]|rm <name>|reset <name|--stale>]" >&2
       exit 1
       ;;
   esac
@@ -557,6 +622,25 @@ if [ -f "$_lib" ]; then
   . "$_lib"
   rhome="$(devbox_remote_home 2>/dev/null)" &&
     CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$rhome")"
+  # tmux -c on a missing dir silently starts in $HOME.
+  # shellcheck disable=SC2029  # CDIR is resolved locally, created remotely
+  [ -n "$CDIR" ] && ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
+    "mkdir -p $(printf '%q' "$CDIR")" </dev/null >/dev/null 2>&1
+  entry="$(devbox_sync_for "$DEVBOX_CONFIG" "$LOCAL_DIR")"
+  sync_name="${entry%%|*}"
+  MUT="$(devbox_mutagen)"
+  if [ -n "$sync_name" ] && [ -n "$MUT" ]; then
+    sync_status="$(devbox_sync_status "$MUT" "$sync_name")"
+    if [ -z "$sync_status" ]; then
+      echo "devbox: sync '$sync_name' has no session; devbox sync reset $sync_name creates it" >&2
+      [ -t 2 ] && sleep 2 # readable before mosh/tmux take over the screen
+    elif devbox_sync_stale "$MUT" "$sync_name"; then
+      echo "devbox: sync '$sync_name' has stale ignores; devbox sync reset $sync_name" >&2
+      [ -t 2 ] && sleep 2
+    elif [ "$sync_status" != Watching ]; then
+      echo "devbox: sync '$sync_name' is $sync_status, not watching; recent local changes may not be on the remote yet" >&2
+    fi
+  fi
 fi
 
 # tmux args as an array so both transports run the identical remote command.

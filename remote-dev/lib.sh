@@ -62,6 +62,21 @@ devbox_sync_create() {
     "${ign[@]}" "$local_path" "$DEVBOX_HOST:$rpath"
 }
 
+# Mutagen freezes ignores into a session at create time, so DEVBOX_IGNORES
+# edits never reach it. Order matters once `!` patterns exist. A missing
+# session is not stale. Args: mutagen-bin name.
+devbox_sync_stale() {
+  local live
+  live="$("$1" sync list --template '{{range .}}{{range .Configuration.Ignore.Paths}}{{.}}{{"\n"}}{{end}}{{end}}' "$2" 2>/dev/null)" || return 1
+  [ "$live" != "$(printf '%s\n' "${DEVBOX_IGNORES[@]}")" ]
+}
+
+# The template prints the short status (Watching), not list's "Watching for
+# changes"; empty if no such session. Args: mutagen-bin name.
+devbox_sync_status() {
+  "$1" sync list --template '{{range .}}{{.Status}}{{end}}' "$2" 2>/dev/null
+}
+
 # --- Config mutation (pure: operate on a file, no network). These are the
 # --- functions the bats tests exercise directly. -----------------------------
 
@@ -90,18 +105,26 @@ devbox_sync_exists() { devbox_syncs_list "$1" | grep -q "^$2|"; }
 # synced root or under one, else nothing. Relative remote paths resolve under
 # remote-home; absolute ones are used as-is.
 devbox_remote_dir() {
-  local cfg="$1" pwd_path="$2" rhome="$3" n l r rel rpath
+  local cfg="$1" pwd_path="$2" rhome="$3" entry l r rpath
+  entry="$(devbox_sync_for "$cfg" "$pwd_path")"
+  [ -n "$entry" ] || return 0
+  IFS='|' read -r _ l r <<<"$entry"
+  case "$r" in /*) rpath="$r" ;; *) rpath="$rhome/$r" ;; esac
+  printf '%s' "$rpath${pwd_path#"$l"}"
+}
+
+# Prints the "name|local|remote" entry whose root is or contains local-path.
+# The / boundary keeps ATXtra out of ATX. Args: cfg  local-path.
+devbox_sync_for() {
+  local n l r
   while IFS='|' read -r n l r; do
     [ -n "$l" ] || continue
-    if [ "$pwd_path" = "$l" ]; then
-      rel="" # at the sync root
-    elif [ "${pwd_path#"$l"/}" != "$pwd_path" ]; then
-      rel="/${pwd_path#"$l"/}" # under it (/ boundary avoids ATX vs ATXtra)
-    else continue; fi
-    case "$r" in /*) rpath="$r" ;; *) rpath="$rhome/$r" ;; esac
-    printf '%s' "$rpath$rel"
-    return 0
-  done < <(devbox_syncs_list "$cfg")
+    case "$2" in "$l" | "$l"/*)
+      printf '%s|%s|%s' "$n" "$l" "$r"
+      return 0
+      ;;
+    esac
+  done < <(devbox_syncs_list "$1")
   return 0
 }
 

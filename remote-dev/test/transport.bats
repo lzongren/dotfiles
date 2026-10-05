@@ -16,6 +16,8 @@ setup() {
   printf '#!/bin/bash\necho "mosh $*"\n' > "$STUBS/mosh"
   # nc = the direct TCP:22 reachability probe.
   printf '#!/bin/bash\nexit "${NC_EXIT:-0}"\n' > "$STUBS/nc"
+  # Keep the connect-time sync check off any real Mutagen daemon.
+  printf '#!/bin/bash\nexit 1\n' > "$STUBS/mutagen"
   chmod +x "$STUBS"/*
   PATH="$STUBS:$PATH"
 

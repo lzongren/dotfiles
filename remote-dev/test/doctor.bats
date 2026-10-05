@@ -167,6 +167,31 @@ SH
   [[ "$output" != *"unrelated"* ]]
 }
 
+@test "doctor: a sync with stale ignores fails with the reset command" {
+  write_probe OK OK
+  cat >>"$DEVBOX_CONFIG" <<'EOF'
+DEVBOX_SYNCS="
+workspace|/tmp/workspace|Workspace
+"
+EOF
+  cat >"$STUBS/mutagen" <<'SH'
+#!/bin/bash
+case "$*" in
+  "daemon status") exit 0 ;;
+  "sync list workspace") printf 'Alpha:\n  Connected: Yes\nBeta:\n  Connected: Yes\nStatus: Watching for changes\n' ;;
+  "sync list --template "*" workspace") printf '.DS_Store\n*.pyc\n' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$STUBS/mutagen"
+
+  DEVBOX_TRANSPORT=ssh run "$DEVBOX" doctor
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sync 'workspace' connected (Watching for changes)"* ]]
+  [[ "$output" == *"sync 'workspace' has stale ignores"*"devbox sync reset workspace"* ]]
+}
+
 @test "doctor: SSH failure is distinct from an invalid probe" {
   cat >"$STUBS/ssh" <<'SH'
 #!/bin/bash
