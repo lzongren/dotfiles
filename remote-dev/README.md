@@ -103,12 +103,26 @@ devbox sync ls                              # list configured folders
 devbox sync add work ~/Documents/Work       # local ~/Documents/Work ⇄ remote ~/work
 devbox sync add work ~/Documents/Work code  # …⇄ remote ~/code (explicit remote name)
 devbox sync rm work                         # stop syncing (files kept on both sides)
+devbox sync reset work                      # recreate the session from the config
+devbox sync reset --stale                   # …only sessions with stale ignores
 ```
 
 `add` updates `~/.config/devbox/config` (with a `.bak` backup and a validate-or-rollback
 guard) and creates the live Mutagen session in one step. `rm` removes the config entry and
 terminates the session — it does **not** delete files on either side. Remote path defaults to
 the sync name (under the remote home); pass a third arg for a different path, or an absolute path.
+
+Mutagen freezes the ignore list (`DEVBOX_IGNORES` in `lib.sh`) into a session when it is
+created, so editing it later never reaches existing sessions. A stale session can sync
+remote build trees (`build/`, `env/`) and get stuck scanning millions of files.
+`devbox doctor` and `devbox` itself flag stale sessions; `reset` terminates and recreates the
+session. The new session has no sync history: files deleted on one side since the last
+sync come back, and divergent edits become conflicts. Nothing is deleted. `reset` skips a
+sync whose local folder is missing, and `--stale` names configured syncs with no session.
+
+`devbox` also creates the matching remote folder before attaching (tmux would otherwise
+silently start in `$HOME`), and warns when that folder's sync is missing, stale, or not
+`Watching`.
 
 Each session name is independent and persists on the remote. Closing the tab
 only drops the local connection — `devbox <name>` re-attaches. Forgot what's
@@ -151,7 +165,8 @@ READY - all required checks passed.
 
 The four states are pass (`[ok]`), information (`[i]`), warning (`[!]`), and
 required failure (`[x]`). The command exits non-zero only for required failures:
-SSH, remote tmux, the selected transport, and any configured syncs. Mosh is not
+SSH, remote tmux, the selected transport, and any configured syncs (including a
+session with stale ignores). Mosh is not
 required in SSH mode, Mutagen is not required when no syncs are configured, and
 zero tmux sessions is a normal state.
 
