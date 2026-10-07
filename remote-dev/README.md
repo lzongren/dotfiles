@@ -105,6 +105,8 @@ devbox sync add work ~/Documents/Work code  # …⇄ remote ~/code (explicit rem
 devbox sync rm work                         # stop syncing (files kept on both sides)
 devbox sync reset work                      # recreate the session from the config
 devbox sync reset --stale                   # …only sessions with stale ignores
+devbox sync repair work                     # plan how to converge a stalled sync (dry run)
+devbox sync repair work --apply             # …do it, then reset the session
 ```
 
 `add` updates `~/.config/devbox/config` (with a `.bak` backup and a validate-or-rollback
@@ -119,6 +121,37 @@ remote build trees (`build/`, `env/`) and get stuck scanning millions of files.
 session. The new session has no sync history: files deleted on one side since the last
 sync come back, and divergent edits become conflicts. Nothing is deleted. `reset` skips a
 sync whose local folder is missing, and `--stale` names configured syncs with no session.
+
+A sync that has been stuck for days needs more than `reset`: everything either side changed
+since the last completed sync would come back as a conflict. `devbox doctor` (and `devbox`
+itself) reports a sync as **stalled** once it has stayed connected but not `Watching` for over
+an hour without completing a sync cycle, remembering when they first saw it (under
+`~/.local/state/devbox`). A busy sync that keeps completing cycles, an idle one that is
+`Watching`, a disconnected one, or a restarted Mutagen daemon all reset that clock. `devbox sync repair <name>`
+then plans the fix from the last completed sync:
+
+```
+sync 'work': checking changes since <last completed sync - 1h>
+  only local                12  copied up by the new session
+  only remote              340  copied down by the new session
+  identical                 51  changed, but already the same
+  local wins                 3  copied up now (remote copy backed up)
+  remote wins               87  copied down now (local copy backed up)
+  changed on both            2  needs --prefer newest|local|remote
+```
+
+"Changed" means modified after the cutoff, the same signal Mutagen syncs on. A tool that
+preserves modification times (`cp -p`, `rsync -a`, unzip) can therefore look unchanged; the
+file still shows up whenever the two sides differ, but as the other side's win, so check the
+plan before `--apply`. A file changed on one side wins.
+A file changed on both stops `--apply` unless you choose `--prefer newest|local|remote`.
+`--apply` pauses the session first, then plans, checks disk space, backs up every copy it
+replaces (`~/.local/share/devbox-sync-backup/` on that side), copies, verifies both sides hash
+the same, runs `sync reset`, and waits for `Watching`. If a step fails after the pause, the
+session stays paused and the message says how to continue. Deletions made since the last
+completed sync can't be told from new files, so those files come back. `--since YYYY-MM-DD`
+overrides the cutoff. Repair maps `DEVBOX_IGNORES` onto `find`, refuses patterns other than
+`name`, `name/`, and `/name`, and leaves files whose names contain a tab or newline to Mutagen.
 
 `devbox` also creates the matching remote folder before attaching (tmux would otherwise
 silently start in `$HOME`), and warns when that folder's sync is missing, stale, or not
@@ -166,7 +199,7 @@ READY - all required checks passed.
 The four states are pass (`[ok]`), information (`[i]`), warning (`[!]`), and
 required failure (`[x]`). The command exits non-zero only for required failures:
 SSH, remote tmux, the selected transport, and any configured syncs (including a
-session with stale ignores). Mosh is not
+session with stale ignores or a stalled sync). Mosh is not
 required in SSH mode, Mutagen is not required when no syncs are configured, and
 zero tmux sessions is a normal state.
 
