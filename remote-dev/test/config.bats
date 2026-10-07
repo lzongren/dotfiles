@@ -15,8 +15,8 @@ setup() {
 DEVBOX_HOST="test-host"
 
 DEVBOX_SYNCS="
-atx|/tmp/ATX|ATX
-idf|/tmp/IDF|IDF
+work|/tmp/Work|Work
+notes|/tmp/Notes|Notes
 "
 EOF
 }
@@ -32,12 +32,12 @@ assert_valid_with() {
 @test "list: reads existing entries" {
   run devbox_syncs_list "$CFG"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"atx|/tmp/ATX|ATX"* ]]
-  [[ "$output" == *"idf|/tmp/IDF|IDF"* ]]
+  [[ "$output" == *"work|/tmp/Work|Work"* ]]
+  [[ "$output" == *"notes|/tmp/Notes|Notes"* ]]
 }
 
 @test "exists: true for present, false for absent" {
-  devbox_sync_exists "$CFG" atx
+  devbox_sync_exists "$CFG" work
   ! devbox_sync_exists "$CFG" nope
 }
 
@@ -49,12 +49,12 @@ assert_valid_with() {
 }
 
 @test "add: rejects a duplicate name (exit 3), config unchanged" {
-  run devbox_config_add "$CFG" atx /tmp/Other Other
+  run devbox_config_add "$CFG" work /tmp/Other Other
   [ "$status" -eq 3 ]
   assert_valid_with 2
-  # the original atx entry must be intact, not overwritten
+  # the original work entry must be intact, not overwritten
   run devbox_syncs_list "$CFG"
-  [[ "$output" == *"atx|/tmp/ATX|ATX"* ]]
+  [[ "$output" == *"work|/tmp/Work|Work"* ]]
 }
 
 @test "add: rejects an invalid name (exit 2)" {
@@ -79,10 +79,10 @@ assert_valid_with() {
 }
 
 @test "rm: removes an entry and config stays valid" {
-  run devbox_config_rm "$CFG" atx
+  run devbox_config_rm "$CFG" work
   [ "$status" -eq 0 ]
-  ! devbox_sync_exists "$CFG" atx
-  devbox_sync_exists "$CFG" idf
+  ! devbox_sync_exists "$CFG" work
+  devbox_sync_exists "$CFG" notes
   assert_valid_with 1
 }
 
