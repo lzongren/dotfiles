@@ -89,7 +89,7 @@ devbox_agent_command() {
 }
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,20p' "$_DEVBOX_SOURCE" | sed 's/^# \{0,1\}//'
+  awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$_DEVBOX_SOURCE"
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -605,14 +605,12 @@ case "${1:-}" in
     else
       WORKSPACE="$SESSION"
     fi
-    LOCAL_DIR="$(realpath "$LOCAL_DIR" 2>/dev/null)" || {
-      echo "devbox: cannot resolve path: $LOCAL_DIR" >&2
-      exit 1
-    }
     [ -d "$LOCAL_DIR" ] || {
       echo "devbox: path is not a directory: $LOCAL_DIR" >&2
       exit 1
     }
+    # Logical, like $PWD: sync roots are matched as configured, symlinks included.
+    LOCAL_DIR="$(CDPATH='' cd -- "$LOCAL_DIR" && pwd)" || exit 1
     [ -n "$SESSION" ] || SESSION="$(devbox_agent_session_name "$AGENT_MODE" "$LOCAL_DIR")"
     ;;
   *)
@@ -637,9 +635,10 @@ if [ -f "$_lib" ]; then
   # ignores -c. The = makes has-session match exactly, and is quoted because
   # zsh expands a bare leading = to a command path.
   # shellcheck disable=SC2029  # CDIR is resolved locally, created remotely
+  created=""
   [ -n "$CDIR" ] && created="$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
     "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null || { mkdir -p $(printf '%q' "$CDIR") && echo created; }" </dev/null 2>/dev/null)"
-  [ -n "$WORKSPACE" ] && [ "${created:-}" = created ] && mkdir -p "$LOCAL_DIR"
+  [ -n "$WORKSPACE" ] && [[ "$created" == *created ]] && mkdir -p "$LOCAL_DIR"
   entry="$(devbox_sync_for "$DEVBOX_CONFIG" "$LOCAL_DIR")"
   sync_name="${entry%%|*}"
   MUT="$(devbox_mutagen)"

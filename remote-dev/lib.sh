@@ -114,7 +114,7 @@ devbox_remote_dir() {
 }
 
 # Prints the "name|local|remote" entry whose root is or contains local-path.
-# The / boundary keeps ATXtra out of ATX. Args: cfg  local-path.
+# The / boundary keeps Workshop out of Work. Args: cfg  local-path.
 devbox_sync_for() {
   local n l r
   while IFS='|' read -r n l r; do

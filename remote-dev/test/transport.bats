@@ -70,6 +70,14 @@ setup() {
   [[ "$output" != *"SSH fallback selected"* ]]
 }
 
+@test "help prints the whole usage header and no code" {
+  run "$DEVBOX" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"devbox --version"* ]]
+  [[ "$output" != *"_DEVBOX_SOURCE"* ]]
+  [[ "$output" == *"host: stub-host"* ]]
+}
+
 @test "default session name is main" {
   DEVBOX_TRANSPORT=ssh run "$DEVBOX"
   [ "$status" -eq 0 ]
