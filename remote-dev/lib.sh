@@ -93,7 +93,7 @@ devbox_syncs_list() {
     printf '%s' "${DEVBOX_SYNCS:-}"
   )"
   printf '%s\n' "$syncs" | while IFS='|' read -r n l r; do
-    [ -n "$n" ] && printf '%s|%s|%s\n' "$n" "$l" "$r"
+    [ -n "$n" ] && printf '%s|%s|%s\n' "$n" "${l%/}" "$r"
   done
 }
 
@@ -114,7 +114,7 @@ devbox_remote_dir() {
 }
 
 # Prints the "name|local|remote" entry whose root is or contains local-path.
-# The / boundary keeps ATXtra out of ATX. Args: cfg  local-path.
+# The / boundary keeps Workshop out of Work. Args: cfg  local-path.
 devbox_sync_for() {
   local n l r
   while IFS='|' read -r n l r; do
@@ -125,6 +125,22 @@ devbox_sync_for() {
       ;;
     esac
   done < <(devbox_syncs_list "$1")
+  return 0
+}
+
+# Prints <local-path>/<name> when local-path is a synced root and name is a
+# plain folder name that syncs and is not a file, else nothing.
+# Args: cfg  local-path  name.
+devbox_workspace_dir() {
+  local entry l i
+  [[ "$3" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || return 0
+  { [ -e "$2/$3" ] || [ -L "$2/$3" ]; } && [ ! -d "$2/$3" ] && return 0
+  for i in "${DEVBOX_IGNORES[@]}"; do
+    [ "$i" = "$3/" ] || [ "$i" = "/$3" ] && return 0
+  done
+  entry="$(devbox_sync_for "$1" "$2")"
+  IFS='|' read -r _ l _ <<<"$entry"
+  [ -n "$entry" ] && [ "$2" = "$l" ] && printf '%s/%s' "$2" "$3"
   return 0
 }
 

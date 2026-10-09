@@ -5,7 +5,9 @@
 # remote-dev/config.example); nothing host-specific lives in this repo.
 #
 # Pairs with `dev` (remote workspace launcher), or starts remote agent sessions
-# directly with explicit `--cc` / `--codex` flags.
+# directly with explicit `--cc` / `--codex` flags. Run from a synced folder's
+# root, `devbox [--cc|--codex] <name>` starts the new session in <root>/<name>,
+# creating that folder on both sides.
 #
 # Usage: devbox [session-name]            (remote shell; default session: main)
 #        devbox --cc [session-name] [path]  (Claude Code on remote)
@@ -77,7 +79,8 @@ devbox_agent_session_name() {
 devbox_agent_command() {
   case "$1" in
     cc | claude)
-      printf '%s' 'if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then exec claude --continue; fi; printf "devbox: Claude Code is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix claude on the remote, then run devbox --cc again.\n"; exec "${SHELL:-/bin/sh}" -l'
+      # claude --continue exits 1 in a folder that has no conversation yet.
+      printf '%s' 'if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then claude --continue || exec claude; exit; fi; printf "devbox: Claude Code is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix claude on the remote, then run devbox --cc again.\n"; exec "${SHELL:-/bin/sh}" -l'
       ;;
     codex)
       printf '%s' 'if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then exec codex resume --last; fi; printf "devbox: Codex is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix codex on the remote, then run devbox --codex again.\n"; exec "${SHELL:-/bin/sh}" -l'
@@ -86,7 +89,7 @@ devbox_agent_command() {
 }
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,18p' "$_DEVBOX_SOURCE" | sed 's/^# \{0,1\}//'
+  awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$_DEVBOX_SOURCE"
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -398,6 +401,7 @@ if [[ "$1" == "sync" ]]; then
         echo "devbox: local path not a directory: $local_path" >&2
         exit 1
       }
+      local_path="$(CDPATH='' cd -- "$local_path" && pwd)" || exit 1
       devbox_config_add "$DEVBOX_CONFIG" "$name" "$local_path" "$remote" || exit 1
       echo "✓ added '$name' to $DEVBOX_CONFIG"
       if [ -n "$MUT" ]; then
@@ -577,6 +581,7 @@ fi
 
 AGENT_MODE=""
 LOCAL_DIR="$PWD"
+WORKSPACE_NAME=""
 
 case "${1:-}" in
   --cc | --claude | --codex)
@@ -598,18 +603,21 @@ case "${1:-}" in
     if [ "$#" -ge 1 ]; then
       LOCAL_DIR="${1/#\~/$HOME}"
       shift
+    else
+      WORKSPACE_NAME="$SESSION"
     fi
-    LOCAL_DIR="$(realpath "$LOCAL_DIR" 2>/dev/null)" || {
-      echo "devbox: cannot resolve path: $LOCAL_DIR" >&2
-      exit 1
-    }
     [ -d "$LOCAL_DIR" ] || {
       echo "devbox: path is not a directory: $LOCAL_DIR" >&2
       exit 1
     }
+    # Logical, like $PWD: sync roots are matched as configured, symlinks included.
+    LOCAL_DIR="$(CDPATH='' cd -- "$LOCAL_DIR" && pwd)" || exit 1
     [ -n "$SESSION" ] || SESSION="$(devbox_agent_session_name "$AGENT_MODE" "$LOCAL_DIR")"
     ;;
-  *) SESSION="${1:-main}" ;;
+  *)
+    SESSION="${1:-main}"
+    WORKSPACE_NAME="${1:-}"
+    ;;
 esac
 
 # If launched from within a synced folder, open the remote session in the
@@ -620,12 +628,18 @@ _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
 if [ -f "$_lib" ]; then
   # shellcheck source=/dev/null
   . "$_lib"
+  WORKSPACE="$(devbox_workspace_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$WORKSPACE_NAME")"
+  [ -n "$WORKSPACE" ] && LOCAL_DIR="$WORKSPACE"
   rhome="$(devbox_remote_home 2>/dev/null)" &&
     CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$rhome")"
-  # tmux -c on a missing dir silently starts in $HOME.
+  # tmux -c on a missing dir silently starts in $HOME; a running session
+  # ignores -c. The = makes has-session match exactly, and is quoted because
+  # zsh expands a bare leading = to a command path.
   # shellcheck disable=SC2029  # CDIR is resolved locally, created remotely
-  [ -n "$CDIR" ] && ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
-    "mkdir -p $(printf '%q' "$CDIR")" </dev/null >/dev/null 2>&1
+  created=""
+  [ -n "$CDIR" ] && created="$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
+    "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null || { mkdir -p $(printf '%q' "$CDIR") && echo created; }" </dev/null 2>/dev/null)"
+  [ -n "$WORKSPACE" ] && [[ "$created" == *created ]] && mkdir -p "$LOCAL_DIR"
   entry="$(devbox_sync_for "$DEVBOX_CONFIG" "$LOCAL_DIR")"
   sync_name="${entry%%|*}"
   MUT="$(devbox_mutagen)"

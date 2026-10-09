@@ -70,6 +70,14 @@ setup() {
   [[ "$output" != *"SSH fallback selected"* ]]
 }
 
+@test "help prints the whole usage header and no code" {
+  run "$DEVBOX" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"devbox --version"* ]]
+  [[ "$output" != *"_DEVBOX_SOURCE"* ]]
+  [[ "$output" == *"host: stub-host"* ]]
+}
+
 @test "default session name is main" {
   DEVBOX_TRANSPORT=ssh run "$DEVBOX"
   [ "$status" -eq 0 ]
@@ -130,6 +138,32 @@ SH
   [[ "$output" == *"ssh -t stub-host env LANG=C.UTF-8 tmux new-session -A -s feature"* ]]
   [[ "$output" == *"command -v claude"* ]]
   [[ "$output" == *"claude --continue"* ]]
+}
+
+@test "agent=cc continues the folder's conversation, or starts one if there is none" {
+  cat >"$STUBS/ssh" <<SH
+#!/bin/bash
+[[ "\$*" == *"tmux new-session"* ]] && printf '%s' "\${!#}" >"$BATS_TEST_TMPDIR/cmd"
+exit 0
+SH
+  cat >"$STUBS/claude" <<'SH'
+#!/bin/bash
+case "$1" in
+  --version) ;;
+  --continue) [ -n "${HAS_CONVERSATION:-}" ] && echo continued || exit 1 ;;
+  *) echo "new conversation" ;;
+esac
+SH
+  chmod +x "$STUBS/ssh" "$STUBS/claude"
+  DEVBOX_TRANSPORT=ssh run "$DEVBOX" --cc feature
+  [ "$status" -eq 0 ]
+
+  run sh -c "$(cat "$BATS_TEST_TMPDIR/cmd")"
+  [ "$status" -eq 0 ]
+  [ "$output" = "new conversation" ]
+  HAS_CONVERSATION=1 run sh -c "$(cat "$BATS_TEST_TMPDIR/cmd")"
+  [ "$status" -eq 0 ]
+  [ "$output" = "continued" ]
 }
 
 @test "agent=codex launches Codex in the remote tmux session" {
