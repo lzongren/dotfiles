@@ -66,8 +66,16 @@ EOF
 }
 
 @test "workspace: anything but a plain folder name is refused" {
-  for name in "" . .. .hidden -x a/b ../x "a b" a.b; do
+  for name in "" . .. .hidden -x a/b ../x "a b" a.b build env node_modules; do
     run devbox_workspace_dir "$CFG" /Users/me/Documents/Work "$name"
     [ "$output" = "" ]
   done
+}
+
+@test "workspace: a configured root with a trailing slash still matches" {
+  printf 'DEVBOX_SYNCS="\nwork|/Users/me/Documents/Work/|Work\n"\n' >"$CFG"
+  run devbox_workspace_dir "$CFG" /Users/me/Documents/Work proj
+  [ "$output" = "/Users/me/Documents/Work/proj" ]
+  run devbox_remote_dir "$CFG" /Users/me/Documents/Work/abc "$RH"
+  [ "$output" = "/home/me/Work/abc" ]
 }
