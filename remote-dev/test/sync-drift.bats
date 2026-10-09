@@ -12,7 +12,12 @@ setup() {
   export CALLS="$BATS_TEST_TMPDIR/calls"
   mkdir -p "$STUBS" "$BATS_TEST_TMPDIR/home"
   : >"$CALLS"
-  printf '#!/bin/bash\necho "ssh $*" >>"$CALLS"\nexit "${SSH_EXIT:-0}"\n' >"$STUBS/ssh"
+  cat >"$STUBS/ssh" <<'SH'
+#!/bin/bash
+echo "ssh $*" >>"$CALLS"
+[ "${SSH_EXIT:-0}" -eq 0 ] && [[ "$*" == *has-session* ]] && [ -z "${TMUX_RUNNING:-}" ] && echo created
+exit "${SSH_EXIT:-0}"
+SH
   printf '#!/bin/bash\necho "mosh $*"\n' >"$STUBS/mosh"
   printf '#!/bin/bash\nexit 0\n' >"$STUBS/nc"
   cat >"$STUBS/mutagen" <<'SH'
@@ -48,7 +53,7 @@ SH
   MUT_OLD_IGNORES="$(printf '%s\n' "${DEVBOX_IGNORES[@]}" | grep -v -e build -e env/)"
   export MUT_IGNORES MUT_OLD_IGNORES
 
-  ROOT="$BATS_TEST_TMPDIR/work"
+  ROOT="$(realpath "$BATS_TEST_TMPDIR")/work"
   mkdir -p "$ROOT/app" "$BATS_TEST_TMPDIR/other"
   export DEVBOX_CONFIG="$BATS_TEST_TMPDIR/config"
   cat >"$DEVBOX_CONFIG" <<EOF
@@ -142,7 +147,7 @@ refute_called() { ! grep -q "$@" "$CALLS"; }
   cd "$ROOT/app"
   MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" app
   [ "$status" -eq 0 ]
-  grep -q 'BatchMode=yes stub-host mkdir -p /home/stub/work/app' "$CALLS"
+  grep -q "BatchMode=yes stub-host tmux has-session -t '='app 2>/dev/null || { mkdir -p /home/stub/work/app && echo created; }" "$CALLS"
   [[ "$output" == *"mosh stub-host -- tmux new-session -A -s app -c /home/stub/work/app"* ]]
   [[ "$output" != *"devbox: "* ]]
 }
@@ -173,4 +178,47 @@ refute_called() { ! grep -q "$@" "$CALLS"; }
   MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" main
   [ "$status" -eq 0 ]
   refute_called -e mkdir -e '^mutagen'
+}
+
+@test "connect: a name from a synced root creates that folder on both sides" {
+  cd "$ROOT"
+  MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" proj
+  [ "$status" -eq 0 ]
+  [ -d "$ROOT/proj" ]
+  grep -q "mkdir -p /home/stub/work/proj && echo created" "$CALLS"
+  [[ "$output" == *"mosh stub-host -- tmux new-session -A -s proj -c /home/stub/work/proj"* ]]
+}
+
+@test "connect: --cc <name> from a synced root starts the agent in the new folder" {
+  cd "$ROOT"
+  MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" --cc proj
+  [ "$status" -eq 0 ]
+  [ -d "$ROOT/proj" ]
+  [[ "$output" == *"-s proj -c /home/stub/work/proj"*"claude --continue"* ]]
+}
+
+@test "connect: re-attaching to a running session creates no folder" {
+  cd "$ROOT"
+  MUT_SESSIONS=work TMUX_RUNNING=1 DEVBOX_TRANSPORT=mosh run "$DEVBOX" proj
+  [ "$status" -eq 0 ]
+  [ ! -e "$ROOT/proj" ]
+  [[ "$output" == *"tmux new-session -A -s proj"* ]]
+}
+
+@test "connect: an unreachable host creates no local folder" {
+  cd "$ROOT"
+  MUT_SESSIONS=work SSH_EXIT=255 DEVBOX_TRANSPORT=mosh run "$DEVBOX" proj
+  [ ! -e "$ROOT/proj" ]
+}
+
+@test "connect: the default session, subfolders, and explicit paths keep their cwd" {
+  cd "$ROOT"
+  MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX"
+  [[ "$output" == *"-s main -c /home/stub/work" ]]
+  MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" --cc proj "$ROOT/app"
+  [[ "$output" == *"-s proj -c /home/stub/work/app "* ]]
+  cd "$ROOT/app"
+  MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" proj
+  [[ "$output" == *"-s proj -c /home/stub/work/app" ]]
+  [ ! -e "$ROOT/main" ] && [ ! -e "$ROOT/proj" ] && [ ! -e "$ROOT/app/proj" ]
 }

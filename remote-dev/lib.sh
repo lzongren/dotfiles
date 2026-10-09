@@ -128,6 +128,17 @@ devbox_sync_for() {
   return 0
 }
 
+# Prints <local-path>/<name> when local-path is a synced root and name is a
+# plain folder name, else nothing. Args: cfg  local-path  name.
+devbox_workspace_dir() {
+  local entry l
+  [[ "$3" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || return 0
+  entry="$(devbox_sync_for "$1" "$2")"
+  IFS='|' read -r _ l _ <<<"$entry"
+  [ -n "$entry" ] && [ "$2" = "$l" ] && printf '%s/%s' "$2" "$3"
+  return 0
+}
+
 # Compact relative time. Args: now-epoch then-epoch. Prints 30s/5m/3h/2d.
 devbox_ago() {
   local d=$(($1 - $2))
