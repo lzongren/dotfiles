@@ -234,3 +234,10 @@ refute_called() { ! grep -q "$@" "$CALLS"; }
   [[ "$output" == *"-s proj -c /home/stub/work/app" ]]
   [ ! -e "$ROOT/main" ] && [ ! -e "$ROOT/proj" ] && [ ! -e "$ROOT/app/proj" ]
 }
+
+@test "sync add: a relative local path is stored absolute" {
+  cd "$ROOT"
+  run "$DEVBOX" sync add rel ./app/
+  [ "$status" -eq 0 ]
+  grep -qx "rel|$ROOT/app|rel" "$DEVBOX_CONFIG"
+}

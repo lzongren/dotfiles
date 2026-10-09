@@ -79,3 +79,13 @@ EOF
   run devbox_remote_dir "$CFG" /Users/me/Documents/Work/abc "$RH"
   [ "$output" = "/home/me/Work/abc" ]
 }
+
+@test "workspace: a name taken by a file in the root is refused" {
+  local root="$BATS_TEST_TMPDIR/root"
+  mkdir -p "$root/dir" && touch "$root/Makefile"
+  printf 'DEVBOX_SYNCS="\nroot|%s|root\n"\n' "$root" >"$CFG"
+  run devbox_workspace_dir "$CFG" "$root" Makefile
+  [ "$output" = "" ]
+  run devbox_workspace_dir "$CFG" "$root" dir
+  [ "$output" = "$root/dir" ]
+}
