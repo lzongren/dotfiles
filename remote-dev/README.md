@@ -44,7 +44,7 @@ $EDITOR ~/.config/devbox/config        # set DEVBOX_HOST and DEVBOX_SYNCS
 Two scripts, run from the laptop:
 
 ```bash
-./remote-dev/setup-remote.sh      # provisions the remote (builds mosh + tmux)
+./remote-dev/setup-remote.sh      # provisions the remote (mosh, tmux, hstr, lazygit, yazi)
 ./remote-dev/setup-sync.sh        # installs Mutagen + creates the file syncs
 ```
 
@@ -198,10 +198,16 @@ The AL2 packages are unusable, so it builds from source and encodes the fixes:
 
 - **mosh** — the EPEL build links protobuf 3.x but AL2 ships 2.5 (symbol-lookup
   crash); built from source against the system protobuf.
-- **openssl** — AL2 has `openssl11` not `openssl-devel`; mosh's `configure`
-  wants `openssl.pc`, so the script symlink-shims `openssl11.pc → openssl.pc`.
+- **openssl** — AL2 has `openssl11-devel` not `openssl-devel`, and a fresh host
+  has neither; the script installs it, and since mosh's `configure` wants
+  `openssl.pc`, symlink-shims `openssl11.pc → openssl.pc`.
 - **tmux** — system tmux is 1.8 (no `new-session -A`); builds 3.5a to
   `~/.local`, clears the stale 1.8 socket, and deploys [`tmux.conf`](tmux.conf).
+- **hstr** — not packaged for AL2; builds it to `~/.local` and appends to
+  `~/.zshrc` (once, with a `.zshrc.bak` backup) a persistent history (zsh saves
+  none by default), hstr on Ctrl-R, and `ll`/`ta`/`tl` aliases.
+- **lazygit + yazi** — release binaries for x86_64 or aarch64 into
+  `~/.local/bin`, so [`dev`](../bin/dev) works on a fresh host.
 - **PATH** — adds `~/.local/bin` via `.zshenv` so mosh's non-login shell finds
   the new binaries.
 - **session persistence** — clones tmux-resurrect + tmux-continuum to
