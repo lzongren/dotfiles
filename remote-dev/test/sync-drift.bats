@@ -15,6 +15,7 @@ setup() {
   cat >"$STUBS/ssh" <<'SH'
 #!/bin/bash
 echo "ssh $*" >>"$CALLS"
+[ -n "${SSH_BANNER:-}" ] && echo "$SSH_BANNER"
 [ "${SSH_EXIT:-0}" -eq 0 ] && [[ "$*" == *has-session* ]] && [ -z "${TMUX_RUNNING:-}" ] && echo created
 exit "${SSH_EXIT:-0}"
 SH
@@ -53,7 +54,7 @@ SH
   MUT_OLD_IGNORES="$(printf '%s\n' "${DEVBOX_IGNORES[@]}" | grep -v -e build -e env/)"
   export MUT_IGNORES MUT_OLD_IGNORES
 
-  ROOT="$(realpath "$BATS_TEST_TMPDIR")/work"
+  ROOT="$BATS_TEST_TMPDIR/work"
   mkdir -p "$ROOT/app" "$BATS_TEST_TMPDIR/other"
   export DEVBOX_CONFIG="$BATS_TEST_TMPDIR/config"
   cat >"$DEVBOX_CONFIG" <<EOF
@@ -189,12 +190,23 @@ refute_called() { ! grep -q "$@" "$CALLS"; }
   [[ "$output" == *"mosh stub-host -- tmux new-session -A -s proj -c /home/stub/work/proj"* ]]
 }
 
-@test "connect: --cc <name> from a synced root starts the agent in the new folder" {
+@test "connect: --cc/--codex <name> from a synced root start the agent in the new folder" {
   cd "$ROOT"
   MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" --cc proj
   [ "$status" -eq 0 ]
   [ -d "$ROOT/proj" ]
   [[ "$output" == *"-s proj -c /home/stub/work/proj"*"claude --continue"* ]]
+  MUT_SESSIONS=work DEVBOX_TRANSPORT=mosh run "$DEVBOX" --codex api
+  [ "$status" -eq 0 ]
+  [ -d "$ROOT/api" ]
+  [[ "$output" == *"-s api -c /home/stub/work/api"*"codex resume --last"* ]]
+}
+
+@test "connect: remote login-shell output does not hide a created folder" {
+  cd "$ROOT"
+  MUT_SESSIONS=work SSH_BANNER="Welcome" DEVBOX_TRANSPORT=mosh run "$DEVBOX" proj
+  [ "$status" -eq 0 ]
+  [ -d "$ROOT/proj" ]
 }
 
 @test "connect: re-attaching to a running session creates no folder" {
