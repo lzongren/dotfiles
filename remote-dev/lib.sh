@@ -129,10 +129,12 @@ devbox_sync_for() {
 }
 
 # Prints <local-path>/<name> when local-path is a synced root and name is a
-# plain folder name that syncs, else nothing. Args: cfg  local-path  name.
+# plain folder name that syncs and is not a file, else nothing.
+# Args: cfg  local-path  name.
 devbox_workspace_dir() {
   local entry l i
   [[ "$3" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || return 0
+  [ -e "$2/$3" ] && [ ! -d "$2/$3" ] && return 0
   for i in "${DEVBOX_IGNORES[@]}"; do
     [ "$i" = "$3/" ] || [ "$i" = "/$3" ] && return 0
   done

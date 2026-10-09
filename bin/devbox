@@ -401,6 +401,7 @@ if [[ "$1" == "sync" ]]; then
         echo "devbox: local path not a directory: $local_path" >&2
         exit 1
       }
+      local_path="$(CDPATH='' cd -- "$local_path" && pwd)" || exit 1
       devbox_config_add "$DEVBOX_CONFIG" "$name" "$local_path" "$remote" || exit 1
       echo "✓ added '$name' to $DEVBOX_CONFIG"
       if [ -n "$MUT" ]; then
@@ -580,7 +581,7 @@ fi
 
 AGENT_MODE=""
 LOCAL_DIR="$PWD"
-WORKSPACE=""
+WORKSPACE_NAME=""
 
 case "${1:-}" in
   --cc | --claude | --codex)
@@ -603,7 +604,7 @@ case "${1:-}" in
       LOCAL_DIR="${1/#\~/$HOME}"
       shift
     else
-      WORKSPACE="$SESSION"
+      WORKSPACE_NAME="$SESSION"
     fi
     [ -d "$LOCAL_DIR" ] || {
       echo "devbox: path is not a directory: $LOCAL_DIR" >&2
@@ -615,7 +616,7 @@ case "${1:-}" in
     ;;
   *)
     SESSION="${1:-main}"
-    WORKSPACE="${1:-}"
+    WORKSPACE_NAME="${1:-}"
     ;;
 esac
 
@@ -627,7 +628,7 @@ _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
 if [ -f "$_lib" ]; then
   # shellcheck source=/dev/null
   . "$_lib"
-  WORKSPACE="$(devbox_workspace_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$WORKSPACE")"
+  WORKSPACE="$(devbox_workspace_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$WORKSPACE_NAME")"
   [ -n "$WORKSPACE" ] && LOCAL_DIR="$WORKSPACE"
   rhome="$(devbox_remote_home 2>/dev/null)" &&
     CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$rhome")"

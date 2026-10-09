@@ -143,7 +143,8 @@ SH
 @test "agent=cc continues the folder's conversation, or starts one if there is none" {
   cat >"$STUBS/ssh" <<SH
 #!/bin/bash
-printf '%s' "\${!#}" >"$BATS_TEST_TMPDIR/cmd"
+[[ "\$*" == *"tmux new-session"* ]] && printf '%s' "\${!#}" >"$BATS_TEST_TMPDIR/cmd"
+exit 0
 SH
   cat >"$STUBS/claude" <<'SH'
 #!/bin/bash
