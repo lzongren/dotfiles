@@ -101,8 +101,9 @@ remote path (`~/Documents/Work/api` → `~/work/api`); this applies only when
 From a synced folder's *root*, the name doubles as a project folder:
 `devbox <name>` (or `--cc`/`--codex <name>`) creates `<root>/<name>` on both
 sides when no session of that name is running, then starts the session there.
-Only plain names qualify (letters, digits, `-`, `_`); an explicit path
-(`devbox --cc <name> <path>`) is used as given.
+Only plain names qualify: a letter or digit, then letters, digits, `-`, `_`,
+and not a folder the sync ignores (`build`, `env`, `node_modules`). An
+explicit path (`devbox --cc <name> <path>`) is used as given.
 
 ### Managing synced folders with `devbox sync`
 
