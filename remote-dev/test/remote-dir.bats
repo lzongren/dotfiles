@@ -80,11 +80,13 @@ EOF
   [ "$output" = "/home/me/Work/abc" ]
 }
 
-@test "workspace: a name taken by a file in the root is refused" {
+@test "workspace: a name taken by a file or broken link in the root is refused" {
   local root="$BATS_TEST_TMPDIR/root"
-  mkdir -p "$root/dir" && touch "$root/Makefile"
+  mkdir -p "$root/dir" && touch "$root/Makefile" && ln -s gone "$root/broken"
   printf 'DEVBOX_SYNCS="\nroot|%s|root\n"\n' "$root" >"$CFG"
   run devbox_workspace_dir "$CFG" "$root" Makefile
+  [ "$output" = "" ]
+  run devbox_workspace_dir "$CFG" "$root" broken
   [ "$output" = "" ]
   run devbox_workspace_dir "$CFG" "$root" dir
   [ "$output" = "$root/dir" ]
