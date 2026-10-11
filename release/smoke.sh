@@ -59,6 +59,10 @@ PATH="$PREFIX/bin:$PATH" "$PREFIX/bin/dotfiles-tools" --prefix "$PREFIX" status
 
 printf 'DEVBOX_HOST="smoke-fixture"\n' >"$SMOKE_TMP/devbox-config"
 DEVBOX_CONFIG="$SMOKE_TMP/devbox-config" "$PREFIX/bin/devbox" sync ls | grep -F 'No synced folders configured.'
+if DEVBOX_WEB_STATE="$SMOKE_TMP/web-state" "$PREFIX/bin/devbox" web --no-open >"$SMOKE_TMP/web.out" 2>&1; then
+  die "devbox web unexpectedly started from an installed prefix"
+fi
+grep -F 'requires the web/ sources' "$SMOKE_TMP/web.out"
 "$PREFIX/opt/dotfiles-tools/current/remote-dev/setup-remote.sh" --version | grep -F "setup-remote $VERSION (commit "
 "$PREFIX/opt/dotfiles-tools/current/remote-dev/setup-sync.sh" --version | grep -F "setup-sync $VERSION (commit "
 

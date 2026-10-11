@@ -19,3 +19,6 @@ DEVBOX_SYNCS="
 work|$HOME/Documents/work|work
 notes|$HOME/Documents/notes|notes
 "
+
+# Local web dashboard port for `devbox web`. Default 7733.
+# DEVBOX_WEB_PORT="7733"
