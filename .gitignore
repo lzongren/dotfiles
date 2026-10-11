@@ -9,3 +9,6 @@ bin/afkick
 
 # Local GitHub Release build artifacts
 dist/
+web/node_modules/
+web/dist/
+web/dist-server/
