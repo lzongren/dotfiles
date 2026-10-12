@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
+import { spawn as ptySpawn, type IPty } from 'node-pty'
 
 export interface RunResult {
   stdout: string
@@ -32,4 +33,37 @@ export function statusRaw(bin: string, timeoutMs = 15000): Promise<RunResult> {
 
 export function printConfig(bin: string, timeoutMs = 15000): Promise<RunResult> {
   return run(bin, ['web', '--print-config'], timeoutMs)
+}
+
+export function attachArgv(host: string, name: string): string[] {
+  return [
+    'ssh',
+    '-t',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=10',
+    '-o',
+    'ServerAliveInterval=15',
+    '-o',
+    'ServerAliveCountMax=2',
+    '--',
+    host,
+    'env',
+    'LANG=C.UTF-8',
+    'tmux',
+    'attach-session',
+    '-t',
+    `'=${name}'`,
+  ]
+}
+
+export function spawnAttachPty(host: string, name: string, cols: number, rows: number): IPty {
+  const [file, ...args] = attachArgv(host, name)
+  const env: Record<string, string> = { TERM: 'xterm-256color' }
+  for (const key of ['HOME', 'USER', 'PATH', 'SSH_AUTH_SOCK']) {
+    const value = process.env[key]
+    if (value !== undefined) env[key] = value
+  }
+  return ptySpawn(file, args, { name: 'xterm-256color', cols, rows, env })
 }

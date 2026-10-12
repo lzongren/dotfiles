@@ -11,8 +11,9 @@ import {
   tokenMatches,
 } from './auth.js'
 import { loadConfig } from './config.js'
-import { statusRaw } from './exec.js'
+import { spawnAttachPty, statusRaw } from './exec.js'
 import { createSessionSource, RemoteUnreachableError } from './sessions.js'
+import { attachTerminalServer } from './terminal.js'
 import { serveStatic } from './static.js'
 import { removeState, writeState } from './state.js'
 
@@ -83,6 +84,13 @@ export async function createApp(opts: AppOptions): Promise<App> {
     serveStatic(distRoot, url.pathname, res)
   })
 
+  const terminals = attachTerminalServer(server, {
+    token,
+    port: () => boundPort,
+    sessions: getSessions,
+    ptyFactory: (name, cols, rows) => spawnAttachPty(config.host, name, cols, rows),
+  })
+
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(opts.port, '127.0.0.1', () => resolve())
@@ -95,10 +103,12 @@ export async function createApp(opts: AppOptions): Promise<App> {
     port: boundPort,
     token,
     url: `http://127.0.0.1:${boundPort}/#t=${token}`,
-    close() {
+    async close() {
       removeState(opts.stateDir, process.pid)
-      return new Promise<void>((resolve) => {
+      await terminals.closeAll()
+      await new Promise<void>((resolve) => {
         server.close(() => resolve())
+        server.closeAllConnections()
       })
     },
   }

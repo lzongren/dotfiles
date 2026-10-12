@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSessions } from './api'
 import type { SessionsResponse } from './shared/types'
 import { SessionTable } from './components/SessionTable'
+import { TerminalTabs } from './components/TerminalTabs'
 
 type View =
   | { phase: 'loading' }
@@ -14,7 +15,20 @@ type Cause = 'remote' | 'local' | 'probe'
 export function App() {
   const [view, setView] = useState<View>({ phase: 'loading' })
   const [now, setNow] = useState(() => Date.now())
+  const [tabs, setTabs] = useState<string[]>([])
+  const [activeTab, setActiveTab] = useState<string | null>(null)
+  const [openSeq, setOpenSeq] = useState(0)
   const lastGood = useRef<SessionsResponse | null>(null)
+
+  const openTerminal = useCallback((name: string) => {
+    setTabs((prev) => (prev.includes(name) ? prev : [...prev, name]))
+    setActiveTab(name)
+    setOpenSeq((n) => n + 1)
+  }, [])
+  const closeTerminal = useCallback((name: string) => {
+    setTabs((prev) => prev.filter((tab) => tab !== name))
+    setActiveTab((prev) => (prev === name ? null : prev))
+  }, [])
 
   const refresh = useCallback(async () => {
     const result = await getSessions()
@@ -104,7 +118,14 @@ export function App() {
           </p>
         ) : null}
       </header>
-      <SessionTable sessions={data.sessions} now={now} />
+      <SessionTable sessions={data.sessions} now={now} onAttach={openTerminal} />
+      <TerminalTabs
+        tabs={tabs}
+        active={activeTab}
+        scrollKey={openSeq}
+        onSelect={setActiveTab}
+        onClose={closeTerminal}
+      />
     </main>
   )
 }

@@ -1,0 +1,385 @@
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TerminalPane } from '../../src/components/Terminal'
+import { TerminalTabs } from '../../src/components/TerminalTabs'
+
+const hoisted = vi.hoisted(() => {
+  class FakeXTerm {
+    static instances: FakeXTerm[] = []
+    cols = 80
+    rows = 24
+    write = vi.fn()
+    writeln = vi.fn()
+    loadAddon = vi.fn()
+    open = vi.fn()
+    dispose = vi.fn()
+    dataCb: ((data: string) => void) | null = null
+    resizeCb: ((size: { cols: number; rows: number }) => void) | null = null
+
+    constructor() {
+      FakeXTerm.instances.push(this)
+    }
+    onData(cb: (data: string) => void) {
+      this.dataCb = cb
+      return { dispose: vi.fn() }
+    }
+    onResize(cb: (size: { cols: number; rows: number }) => void) {
+      this.resizeCb = cb
+      return { dispose: vi.fn() }
+    }
+  }
+  class FakeWebgl {
+    static instances: FakeWebgl[] = []
+    dispose = vi.fn()
+    lossCb: (() => void) | null = null
+    constructor() {
+      FakeWebgl.instances.push(this)
+    }
+    onContextLoss(cb: () => void) {
+      this.lossCb = cb
+      return { dispose: vi.fn() }
+    }
+  }
+  return { FakeXTerm, FakeWebgl }
+})
+
+const xterms = hoisted.FakeXTerm.instances
+const webgls = hoisted.FakeWebgl.instances
+
+vi.mock('@xterm/xterm', () => ({ Terminal: hoisted.FakeXTerm }))
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit = vi.fn()
+  },
+}))
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: hoisted.FakeWebgl }))
+vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
+
+const sockets: FakeWebSocket[] = []
+
+class FakeWebSocket {
+  static OPEN = 1
+  url: string
+  binaryType = 'blob'
+  readyState = 1
+  sent: Array<string | Uint8Array> = []
+  onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null
+  onclose: ((event: { code: number }) => void) | null = null
+
+  constructor(url: string) {
+    this.url = url
+    sockets.push(this)
+  }
+  send(data: string | Uint8Array) {
+    this.sent.push(typeof data === 'string' ? data : Uint8Array.from(data))
+  }
+  close(code = 1005) {
+    this.serverClose(code)
+  }
+  serverReady() {
+    this.onmessage?.({ data: JSON.stringify({ t: 'ready' }) })
+  }
+  serverMessage(data: string | ArrayBuffer) {
+    this.onmessage?.({ data })
+  }
+  serverClose(code: number) {
+    if (this.readyState === 3) return
+    this.readyState = 3
+    this.onclose?.({ code })
+  }
+  binaryPayloads(): Uint8Array[] {
+    return this.sent.filter((d): d is Uint8Array => typeof d !== 'string')
+  }
+  controls(): Array<Record<string, unknown>> {
+    return this.sent.filter((d): d is string => typeof d === 'string').map((d) => JSON.parse(d) as Record<string, unknown>)
+  }
+}
+
+let visibility: DocumentVisibilityState = 'visible'
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  sessionStorage.setItem('devbox-web-token', 'tok')
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
+  visibility = 'visible'
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility })
+  xterms.length = 0
+  webgls.length = 0
+  sockets.length = 0
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+  sessionStorage.clear()
+})
+
+const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
+
+describe('TerminalPane', () => {
+  it('opens a websocket with the token, session, and initial size', () => {
+    render(<TerminalPane name="api" active />)
+    expect(sockets).toHaveLength(1)
+    const url = new URL(sockets[0].url)
+    expect(url.pathname).toBe('/ws/terminal')
+    expect(url.searchParams.get('token')).toBe('tok')
+    expect(url.searchParams.get('session')).toBe('api')
+    expect(url.searchParams.get('cols')).toBe('80')
+    expect(url.searchParams.get('rows')).toBe('24')
+    expect(sockets[0].binaryType).toBe('arraybuffer')
+  })
+
+  it('sends keystrokes as binary frames, never as text', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => xterms[0].dataCb?.('ls\r'))
+    const binary = sockets[0].binaryPayloads()
+    expect(binary).toHaveLength(1)
+    expect(decode(binary[0])).toBe('ls\r')
+    expect(sockets[0].sent.filter((d) => d === 'ls\r')).toHaveLength(0)
+  })
+
+  it('queues input typed before ready and flushes it after ready', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => xterms[0].dataCb?.('early'))
+    expect(sockets[0].binaryPayloads()).toHaveLength(0)
+    act(() => sockets[0].serverReady())
+    expect(decode(sockets[0].binaryPayloads()[0])).toBe('early')
+  })
+
+  it('drops input typed into a closed pane instead of replaying it into the next session', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 0 })))
+    act(() => sockets[0].serverClose(1000))
+    act(() => xterms[0].dataCb?.('make deploy\r'))
+    fireEvent.click(screen.getByRole('button', { name: 'reconnect' }))
+    act(() => sockets[1].serverReady())
+    expect(sockets[1].binaryPayloads()).toHaveLength(0)
+  })
+
+  it('caps input queued while connecting', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => xterms[0].dataCb?.('a'.repeat(60 * 1024)))
+    act(() => xterms[0].dataCb?.('b'.repeat(10 * 1024)))
+    act(() => sockets[0].serverReady())
+    const sent = sockets[0].binaryPayloads().reduce((n, f) => n + f.length, 0)
+    expect(sent).toBe(60 * 1024)
+  })
+
+  it('splits a large paste into 16 KiB binary frames', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => xterms[0].dataCb?.('x'.repeat(40 * 1024)))
+    const frames = sockets[0].binaryPayloads()
+    expect(frames.map((f) => f.length)).toEqual([16384, 16384, 8192])
+  })
+
+  it('writes binary frames from the server into the terminal', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(new TextEncoder().encode('hi').buffer as ArrayBuffer))
+    expect(xterms[0].write).toHaveBeenCalledWith(new Uint8Array([104, 105]))
+  })
+
+  it('sends its current size on ready and on every resize', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    expect(sockets[0].controls()).toEqual([{ t: 'resize', cols: 80, rows: 24 }])
+    act(() => xterms[0].resizeCb?.({ cols: 120, rows: 40 }))
+    xterms[0].cols = 120
+    xterms[0].rows = 40
+    act(() => xterms[0].resizeCb?.({ cols: 120, rows: 40 }))
+    expect(sockets[0].controls().at(-1)).toEqual({ t: 'resize', cols: 120, rows: 40 })
+  })
+
+  it('treats a clean session exit as final and reconnects manually on the same terminal', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 0 })))
+    act(() => sockets[0].serverClose(1000))
+    expect(xterms[0].writeln).toHaveBeenCalledWith(expect.stringContaining('session ended'))
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'reconnect' }))
+    expect(sockets).toHaveLength(2)
+    expect(xterms).toHaveLength(1)
+  })
+
+  it('auto-reconnects when ssh itself failed (exit 255)', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 255 })))
+    act(() => sockets[0].serverClose(1000))
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(2)
+  })
+
+  it('backs off exponentially across failed attempts and resets only after a healthy connection', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverClose(1013))
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(2)
+    act(() => sockets[1].serverReady())
+    act(() => sockets[1].serverClose(1006))
+    act(() => {
+      vi.advanceTimersByTime(999)
+    })
+    expect(sockets).toHaveLength(2)
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(sockets).toHaveLength(3)
+    act(() => sockets[2].serverReady())
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+    act(() => sockets[2].serverClose(1006))
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(4)
+  })
+
+  it('stops retrying after repeated failures and offers a manual reconnect', () => {
+    render(<TerminalPane name="api" active />)
+    for (let i = 0; i < 6; i += 1) {
+      act(() => sockets[sockets.length - 1].serverClose(1006))
+      act(() => {
+        vi.advanceTimersByTime(8000)
+      })
+    }
+    expect(sockets).toHaveLength(7)
+    act(() => sockets[6].serverClose(1006))
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(7)
+    expect(screen.getByRole('button', { name: 'reconnect' })).toBeInTheDocument()
+  })
+
+  it('does not hammer a persistently failing ssh: exit 255 right after ready backs off', () => {
+    render(<TerminalPane name="api" active />)
+    const failFast = (i: number) => {
+      act(() => sockets[i].serverReady())
+      act(() => sockets[i].serverMessage(JSON.stringify({ t: 'exit', code: 255 })))
+      act(() => sockets[i].serverClose(1000))
+    }
+    failFast(0)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(2)
+    failFast(1)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(2)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(3)
+  })
+
+  it('does not retry a rejected attach', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverClose(4404))
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(1)
+    expect(screen.getByText('attach rejected')).toBeInTheDocument()
+  })
+
+  it('waits for the tab to be visible again instead of retrying in the background', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    visibility = 'hidden'
+    act(() => sockets[0].serverClose(1006))
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(1)
+    visibility = 'visible'
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(sockets).toHaveLength(2)
+  })
+
+  it('drops the WebGL renderer when its context is lost', () => {
+    render(<TerminalPane name="api" active />)
+    expect(webgls).toHaveLength(1)
+    act(() => webgls[0].lossCb?.())
+    expect(webgls[0].dispose).toHaveBeenCalled()
+  })
+
+  it('closes the socket and disposes the terminal on unmount without reconnecting', () => {
+    const { unmount } = render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    unmount()
+    expect(sockets[0].readyState).toBe(3)
+    expect(xterms[0].dispose).toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(1)
+  })
+})
+
+describe('TerminalTabs', () => {
+  it('renders tabs, marks the active one, and keeps inactive panes mounted but hidden', () => {
+    const { container } = render(
+      <TerminalTabs tabs={['api', 'main']} active="api" scrollKey={0} onSelect={() => {}} onClose={() => {}} />,
+    )
+    const tabButtons = screen.getAllByRole('tab')
+    expect(tabButtons).toHaveLength(2)
+    expect(tabButtons[0]).toHaveAttribute('aria-selected', 'true')
+    const panes = container.querySelectorAll('.termpane')
+    expect(panes).toHaveLength(2)
+    expect((panes[0] as HTMLElement).style.display).toBe('block')
+    expect((panes[1] as HTMLElement).style.display).toBe('none')
+    expect(sockets).toHaveLength(2)
+  })
+
+  it('fires select and close callbacks', () => {
+    const onSelect = vi.fn()
+    const onClose = vi.fn()
+    render(<TerminalTabs tabs={['api', 'main']} active="api" scrollKey={0} onSelect={onSelect} onClose={onClose} />)
+    fireEvent.click(screen.getAllByRole('tab')[1])
+    expect(onSelect).toHaveBeenCalledWith('main')
+    fireEvent.click(screen.getByRole('button', { name: 'close api' }))
+    expect(onClose).toHaveBeenCalledWith('api')
+  })
+
+  it('scrolls into view when a terminal is opened, not when switching tabs', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const props = { onSelect: () => {}, onClose: () => {} }
+    const { rerender } = render(<TerminalTabs tabs={['api']} active={null} scrollKey={0} {...props} />)
+    expect(scroll).not.toHaveBeenCalled()
+    rerender(<TerminalTabs tabs={['api']} active="api" scrollKey={1} {...props} />)
+    expect(scroll).toHaveBeenCalledTimes(1)
+    rerender(<TerminalTabs tabs={['api', 'main']} active="main" scrollKey={1} {...props} />)
+    rerender(<TerminalTabs tabs={['api', 'main']} active="api" scrollKey={1} {...props} />)
+    expect(scroll).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders nothing without tabs', () => {
+    const { container } = render(<TerminalTabs tabs={[]} active={null} scrollKey={0} onSelect={() => {}} onClose={() => {}} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+})

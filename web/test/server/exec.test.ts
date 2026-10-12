@@ -1,7 +1,15 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+const ptyCalls = vi.hoisted(() => [] as Array<{ file: string; args: string[]; opts: Record<string, unknown> }>)
+vi.mock('node-pty', () => ({
+  spawn: (file: string, args: string[], opts: Record<string, unknown>) => {
+    ptyCalls.push({ file, args, opts })
+    return { pid: 1 }
+  },
+}))
 import * as exec from '../../server/exec.js'
 import { isValidHost, isValidSessionName } from '../../src/shared/validate.js'
 
@@ -67,18 +75,57 @@ describe('run result mapping', () => {
 
 describe('spawn site discipline', () => {
   it('exports only the allowlisted constructors', () => {
-    expect(Object.keys(exec).sort()).toEqual(['printConfig', 'statusRaw'])
+    expect(Object.keys(exec).sort()).toEqual(['attachArgv', 'printConfig', 'spawnAttachPty', 'statusRaw'])
   })
 
-  it('exec.ts is the only server module importing child_process', () => {
+  it('exec.ts is the only server module touching child_process or node-pty', () => {
     for (const file of readdirSync(serverDir)) {
       if (!file.endsWith('.ts')) continue
       const source = readFileSync(path.join(serverDir, file), 'utf8')
       if (file === 'exec.ts') {
         expect(source).toContain('child_process')
+        expect(source).toContain('node-pty')
       } else {
         expect(source, `${file} must not spawn processes`).not.toContain('child_process')
+        expect(source, `${file} must not spawn ptys`).not.toContain('node-pty')
       }
     }
+  })
+
+  it('spawns the attach pty in utf8 mode (so the local pty keeps IUTF8), xterm-256color, and a minimal env', () => {
+    ptyCalls.length = 0
+    exec.spawnAttachPty('stub-host', 'api', 120, 40)
+    expect(ptyCalls).toHaveLength(1)
+    const call = ptyCalls[0]
+    expect(call.file).toBe('ssh')
+    expect(call.args).toEqual(exec.attachArgv('stub-host', 'api').slice(1))
+    expect(call.opts).toMatchObject({ name: 'xterm-256color', cols: 120, rows: 40 })
+    expect(call.opts.encoding).toBeUndefined()
+    const env = call.opts.env as Record<string, string>
+    expect(env.TERM).toBe('xterm-256color')
+    expect(Object.keys(env).every((k) => ['TERM', 'HOME', 'USER', 'PATH', 'SSH_AUTH_SOCK'].includes(k))).toBe(true)
+  })
+
+  it('builds the frozen attach argv with keepalives and exact-match quoting', () => {
+    expect(exec.attachArgv('stub-host', 'api')).toEqual([
+      'ssh',
+      '-t',
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=10',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=2',
+      '--',
+      'stub-host',
+      'env',
+      'LANG=C.UTF-8',
+      'tmux',
+      'attach-session',
+      '-t',
+      "'=api'",
+    ])
   })
 })

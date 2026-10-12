@@ -8,7 +8,15 @@ export function ago(nowMs: number, activityEpoch: number): string {
   return `${Math.floor(d / 86400)}d`
 }
 
-export function SessionTable({ sessions, now }: { sessions: Session[]; now: number }) {
+export function SessionTable({
+  sessions,
+  now,
+  onAttach,
+}: {
+  sessions: Session[]
+  now: number
+  onAttach: (name: string) => void
+}) {
   if (sessions.length === 0) {
     return (
       <p className="empty">
@@ -25,12 +33,24 @@ export function SessionTable({ sessions, now }: { sessions: Session[]; now: numb
       <table>
         <thead>
           <tr>
-            <th scope="col">state</th>
-            <th scope="col">session</th>
-            <th scope="col">idle</th>
-            <th scope="col">cmd</th>
-            <th scope="col">path</th>
-            <th scope="col">bell</th>
+            <th scope="col" className="state">
+              state
+            </th>
+            <th scope="col" className="name">
+              session
+            </th>
+            <th scope="col" className="idle">
+              idle
+            </th>
+            <th scope="col" className="cmd">
+              cmd
+            </th>
+            <th scope="col" className="path">
+              path
+            </th>
+            <th scope="col" className="bell">
+              bell
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -44,10 +64,20 @@ export function SessionTable({ sessions, now }: { sessions: Session[]; now: numb
                 {s.attached ? '●' : '○'}
                 {s.clients > 1 ? <span className="clients">×{s.clients}</span> : null}
               </td>
-              <td className="name">{s.name}</td>
+              <td className="name">
+                {s.attachable ? (
+                  <button type="button" className="attach" onClick={() => onAttach(s.name)}>
+                    {s.name}
+                  </button>
+                ) : (
+                  s.name
+                )}
+              </td>
               <td className="idle">{ago(now, s.activityEpoch)}</td>
               <td className="cmd">{s.cmd}</td>
-              <td className="path">{s.path}</td>
+              <td className="path">
+                <span title={s.path}>{s.path}</span>
+              </td>
               <td className="bell">{s.bell ? <span className="bell-badge">bell</span> : null}</td>
             </tr>
           ))}

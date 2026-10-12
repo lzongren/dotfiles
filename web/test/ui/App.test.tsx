@@ -1,5 +1,9 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('../../src/components/Terminal', () => ({
+  TerminalPane: ({ name }: { name: string }) => <div data-testid={`term-${name}`} />,
+}))
+
 import { App } from '../../src/App'
 import { ago } from '../../src/components/SessionTable'
 import type { Session, SessionsResponse } from '../../src/shared/types'
@@ -88,6 +92,13 @@ describe('App', () => {
     const regions = container.querySelectorAll('[aria-live="polite"]')
     expect(regions).toHaveLength(1)
     expect(regions[0]).toHaveTextContent('cc-atx needs attention')
+  })
+
+  it('truncates long paths visually but keeps the full path in a tooltip', async () => {
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    render(<App />)
+    await flush()
+    expect(screen.getByText('/home/me/work/atx')).toHaveAttribute('title', '/home/me/work/atx')
   })
 
   it('dims an unattachable row and explains it in a tooltip', async () => {
@@ -214,6 +225,26 @@ describe('App', () => {
       await vi.advanceTimersByTimeAsync(5100)
     })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('terminal tabs from the dashboard', () => {
+  it('clicking an attachable session opens its terminal tab; close removes it', async () => {
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    render(<App />)
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'cc-atx' }))
+    expect(screen.getByTestId('term-cc-atx')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'cc-atx' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'close cc-atx' }))
+    expect(screen.queryByTestId('term-cc-atx')).not.toBeInTheDocument()
+  })
+
+  it('an unattachable session offers no attach button', async () => {
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    render(<App />)
+    await flush()
+    expect(screen.queryByRole('button', { name: 'api - ~/work/api' })).not.toBeInTheDocument()
   })
 })
 
