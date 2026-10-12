@@ -5,6 +5,7 @@ export type ApiResult<T> =
   | { kind: 'ok'; data: T }
   | { kind: 'unauthorized' }
   | { kind: 'unreachable'; message: string }
+  | { kind: 'network'; message: string }
   | { kind: 'error'; message: string }
 
 export async function fetchJson<T>(path: string): Promise<ApiResult<T>> {
@@ -12,7 +13,7 @@ export async function fetchJson<T>(path: string): Promise<ApiResult<T>> {
   try {
     res = await fetch(path, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } })
   } catch {
-    return { kind: 'error', message: 'devbox web server not reachable' }
+    return { kind: 'network', message: 'devbox web server not reachable' }
   }
   if (res.status === 401) return { kind: 'unauthorized' }
   const body = (await res.json().catch(() => null)) as (T & ApiError) | null

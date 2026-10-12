@@ -204,6 +204,9 @@ EOF
   [ "$status" -eq 2 ]
   run "$DEVBOX" web --no-open --port 70000
   [ "$status" -eq 2 ]
+  DEVBOX_WEB_PORT=abc run "$DEVBOX" web --no-open
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"between 1 and 65535"* ]]
 }
 
 @test "web: --help prints usage and exits zero" {

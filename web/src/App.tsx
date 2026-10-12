@@ -9,7 +9,7 @@ type View =
   | { phase: 'down'; cause: Cause; message: string }
   | { phase: 'ready'; data: SessionsResponse; staleSince: number | null; staleCause: Cause | null }
 
-type Cause = 'remote' | 'local'
+type Cause = 'remote' | 'local' | 'probe'
 
 export function App() {
   const [view, setView] = useState<View>({ phase: 'loading' })
@@ -27,7 +27,7 @@ export function App() {
       setView({ phase: 'unauthorized' })
       return
     }
-    const cause: Cause = result.kind === 'unreachable' ? 'remote' : 'local'
+    const cause: Cause = result.kind === 'unreachable' ? 'remote' : result.kind === 'network' ? 'local' : 'probe'
     const message = result.message
     setView((prev) => {
       if (lastGood.current) {
@@ -80,7 +80,9 @@ export function App() {
         <p role="alert" className="banner">
           {view.cause === 'remote'
             ? `host unreachable: ${view.message}`
-            : 'dashboard server unreachable — run devbox web'}
+            : view.cause === 'local'
+              ? 'dashboard server unreachable — run devbox web'
+              : `probe failed: ${view.message}`}
         </p>
       </main>
     )
@@ -93,8 +95,12 @@ export function App() {
         <h1>devbox — {data.host}</h1>
         {staleSince !== null ? (
           <p role="alert" className="banner">
-            {staleCause === 'local' ? 'dashboard server stopped — run devbox web' : 'host unreachable'} — showing
-            sessions as of {Math.max(0, Math.round((now - staleSince) / 1000))}s ago
+            {staleCause === 'local'
+              ? 'dashboard server stopped — run devbox web'
+              : staleCause === 'probe'
+                ? 'probe failed'
+                : 'host unreachable'}{' '}
+            — showing sessions as of {Math.max(0, Math.round((now - staleSince) / 1000))}s ago
           </p>
         ) : null}
       </header>

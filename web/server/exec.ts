@@ -17,7 +17,7 @@ function run(bin: string, args: string[], timeoutMs: number): Promise<RunResult>
         if (!err) return resolve({ stdout, stderr, exitCode: 0 })
         const failure = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string }
         if (typeof failure.code === 'number') return resolve({ stdout, stderr, exitCode: failure.code })
-        if (failure.killed || failure.signal) {
+        if (failure.killed) {
           return resolve({ stdout, stderr: stderr || 'devbox timed out', exitCode: 124 })
         }
         reject(err)

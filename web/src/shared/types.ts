@@ -15,7 +15,6 @@ export interface SessionsResponse {
   sessions: Session[]
 }
 
-
 export interface ApiError {
   error: string
   message: string

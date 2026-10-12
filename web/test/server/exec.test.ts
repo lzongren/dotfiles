@@ -3,7 +3,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as exec from '../../server/exec.js'
-import { statusRaw } from '../../server/exec.js'
 import { isValidHost, isValidSessionName } from '../../src/shared/validate.js'
 
 const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../server')
@@ -37,9 +36,18 @@ describe('run result mapping', () => {
   it('maps a timed-out devbox to a nonzero exit instead of rejecting', async () => {
     process.env.DEVBOX_STUB_MODE = 'hang'
     try {
-      const res = await statusRaw(stubs, 150)
+      const res = await exec.statusRaw(stubs, 150)
       expect(res.exitCode).toBe(124)
       expect(res.stderr).toContain('timed out')
+    } finally {
+      delete process.env.DEVBOX_STUB_MODE
+    }
+  })
+
+  it('rejects when devbox dies from a signal that was not the timeout kill', async () => {
+    process.env.DEVBOX_STUB_MODE = 'crash'
+    try {
+      await expect(exec.statusRaw(stubs, 5000)).rejects.toThrow()
     } finally {
       delete process.env.DEVBOX_STUB_MODE
     }
@@ -48,7 +56,7 @@ describe('run result mapping', () => {
   it('passes a nonzero exit code through', async () => {
     process.env.DEVBOX_STUB_MODE = 'unreachable'
     try {
-      const res = await statusRaw(stubs, 1000)
+      const res = await exec.statusRaw(stubs, 1000)
       expect(res.exitCode).toBe(1)
       expect(res.stderr).toContain('cannot reach')
     } finally {

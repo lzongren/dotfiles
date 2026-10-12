@@ -184,6 +184,14 @@ describe('App', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('dashboard server unreachable — run devbox web')
   })
 
+  it('shows the probe error itself for a non-502 server failure', async () => {
+    fetchMock.mockImplementation(async () => response({ error: 'internal', message: 'session probe failed' }, 500))
+    render(<App />)
+    await flush()
+    expect(screen.getByRole('alert')).toHaveTextContent('probe failed: session probe failed')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('run devbox web')
+  })
+
   it('shows an unreachable notice when the host is down before any data', async () => {
     fetchMock.mockImplementation(async () => response({ error: 'remote_unreachable', message: 'ssh failed' }, 502))
     render(<App />)
