@@ -94,6 +94,31 @@ Launching from inside a synced folder opens the remote session in the matching
 remote path (`~/Documents/Work/api` → `~/work/api`); this applies only when
 *creating* a session, so re-attaching keeps its own directory.
 
+### Web dashboard: `devbox web`
+
+A local dashboard of the remote tmux sessions, with in-browser terminals
+(needs node >=22 and a checkout of this repo; releases don't ship it yet):
+
+```bash
+devbox web           # build if sources changed, start or reuse, open the URL
+devbox web url       # print the URL again (the token rotates per server start)
+devbox web status    # running?
+devbox web stop
+```
+
+```
+browser ──HTTP + WebSocket──► node server on 127.0.0.1:7733 (per-run token)
+                                 ├─ session list  ◄── devbox status --raw
+                                 └─ terminal tab  ◄── ssh -t HOST tmux attach
+```
+
+Click a session to open it in a terminal tab; each tab is an ordinary tmux
+client, so closing the tab detaches without touching the session. Rows whose
+names don't match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached
+from the web. The server binds 127.0.0.1 only; the token arrives in the URL
+fragment and every request must carry it. Override the port with
+`DEVBOX_WEB_PORT` or `--port`.
+
 ### Managing synced folders with `devbox sync`
 
 Add or remove Mutagen syncs without hand-editing the config:

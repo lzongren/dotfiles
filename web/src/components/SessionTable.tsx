@@ -8,7 +8,15 @@ export function ago(nowMs: number, activityEpoch: number): string {
   return `${Math.floor(d / 86400)}d`
 }
 
-export function SessionTable({ sessions, now }: { sessions: Session[]; now: number }) {
+export function SessionTable({
+  sessions,
+  now,
+  onAttach,
+}: {
+  sessions: Session[]
+  now: number
+  onAttach: (name: string) => void
+}) {
   if (sessions.length === 0) {
     return (
       <p className="empty">
@@ -44,7 +52,15 @@ export function SessionTable({ sessions, now }: { sessions: Session[]; now: numb
                 {s.attached ? '●' : '○'}
                 {s.clients > 1 ? <span className="clients">×{s.clients}</span> : null}
               </td>
-              <td className="name">{s.name}</td>
+              <td className="name">
+                {s.attachable ? (
+                  <button type="button" className="attach" onClick={() => onAttach(s.name)}>
+                    {s.name}
+                  </button>
+                ) : (
+                  s.name
+                )}
+              </td>
               <td className="idle">{ago(now, s.activityEpoch)}</td>
               <td className="cmd">{s.cmd}</td>
               <td className="path">{s.path}</td>

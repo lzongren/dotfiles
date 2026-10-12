@@ -10,3 +10,8 @@ export function isValidHost(host: string): boolean {
   return HOST_RE.test(host)
 }
 
+export function clampInt(value: string | null, min: number, max: number, fallback: number): number {
+  if (value === null || !/^[0-9]+$/.test(value)) return fallback
+  return Math.min(max, Math.max(min, Number(value)))
+}
+

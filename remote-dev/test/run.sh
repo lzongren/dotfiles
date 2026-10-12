@@ -38,6 +38,7 @@ SCRIPTS=(
   remote-dev/test/run.sh
   remote-dev/test/pre-commit
   web/scripts/smoke-live.sh
+  web/test/stubs/fake-remote.sh
 )
 
 echo "${BOLD}shellcheck${RESET}"

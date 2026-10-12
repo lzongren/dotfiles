@@ -67,18 +67,43 @@ describe('run result mapping', () => {
 
 describe('spawn site discipline', () => {
   it('exports only the allowlisted constructors', () => {
-    expect(Object.keys(exec).sort()).toEqual(['printConfig', 'statusRaw'])
+    expect(Object.keys(exec).sort()).toEqual(['attachArgv', 'printConfig', 'spawnAttachPty', 'statusRaw'])
   })
 
-  it('exec.ts is the only server module importing child_process', () => {
+  it('exec.ts is the only server module touching child_process or node-pty', () => {
     for (const file of readdirSync(serverDir)) {
       if (!file.endsWith('.ts')) continue
       const source = readFileSync(path.join(serverDir, file), 'utf8')
       if (file === 'exec.ts') {
         expect(source).toContain('child_process')
+        expect(source).toContain('node-pty')
       } else {
         expect(source, `${file} must not spawn processes`).not.toContain('child_process')
+        expect(source, `${file} must not spawn ptys`).not.toContain('node-pty')
       }
     }
+  })
+
+  it('builds the frozen attach argv with keepalives and exact-match quoting', () => {
+    expect(exec.attachArgv('stub-host', 'api')).toEqual([
+      'ssh',
+      '-t',
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=10',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=2',
+      '--',
+      'stub-host',
+      'env',
+      'LANG=C.UTF-8',
+      'tmux',
+      'attach-session',
+      '-t',
+      "'=api'",
+    ])
   })
 })
