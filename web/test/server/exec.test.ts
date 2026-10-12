@@ -75,7 +75,7 @@ describe('run result mapping', () => {
 
 describe('spawn site discipline', () => {
   it('exports only the allowlisted constructors', () => {
-    expect(Object.keys(exec).sort()).toEqual(['attachArgv', 'printConfig', 'spawnAttachPty', 'statusRaw'])
+    expect(Object.keys(exec).sort()).toEqual(['attachArgv', 'detach', 'printConfig', 'spawnAttachPty', 'statusRaw'])
   })
 
   it('exec.ts is the only server module touching child_process or node-pty', () => {

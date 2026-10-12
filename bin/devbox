@@ -5,11 +5,14 @@
 # remote-dev/config.example); nothing host-specific lives in this repo.
 #
 # Pairs with `dev` (remote workspace launcher), or starts remote agent sessions
-# directly with explicit `--cc` / `--codex` flags.
+# directly with explicit `--cc` / `--codex` flags. Run from a synced folder's
+# root, `devbox [--cc|--codex] <name>` starts the new session in <root>/<name>,
+# creating that folder on both sides.
 #
 # Usage: devbox [session-name]            (remote shell; default session: main)
 #        devbox --cc [session-name] [path]  (Claude Code on remote)
 #        devbox --codex [session-name] [path]  (Codex on remote)
+#        devbox --detach [--cc|--codex] [name]  (start it remotely, don't attach)
 #        devbox list                     (show running sessions, don't connect)
 #        devbox status                   (session table: state, idle, cmd, path)
 #        devbox doctor [--require-agent cc|codex]  (readiness checks)
@@ -78,7 +81,8 @@ devbox_agent_session_name() {
 devbox_agent_command() {
   case "$1" in
     cc | claude)
-      printf '%s' 'if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then exec claude --continue; fi; printf "devbox: Claude Code is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix claude on the remote, then run devbox --cc again.\n"; exec "${SHELL:-/bin/sh}" -l'
+      # claude --continue exits 1 in a folder that has no conversation yet.
+      printf '%s' 'if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then claude --continue || exec claude; exit; fi; printf "devbox: Claude Code is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix claude on the remote, then run devbox --cc again.\n"; exec "${SHELL:-/bin/sh}" -l'
       ;;
     codex)
       printf '%s' 'if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then exec codex resume --last; fi; printf "devbox: Codex is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix codex on the remote, then run devbox --codex again.\n"; exec "${SHELL:-/bin/sh}" -l'
@@ -87,7 +91,7 @@ devbox_agent_command() {
 }
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,19p' "$_DEVBOX_SOURCE" | sed 's/^# \{0,1\}//'
+  awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$_DEVBOX_SOURCE"
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -378,7 +382,7 @@ if [[ "$1" == "sync" ]]; then
 
   case "${2:-ls}" in
     ls | list | "")
-      if ! devbox_syncs_list "$DEVBOX_CONFIG" | grep -q .; then
+      if [ -z "$(devbox_syncs_list "$DEVBOX_CONFIG")" ]; then
         echo "No synced folders configured."
         exit 0
       fi
@@ -399,6 +403,7 @@ if [[ "$1" == "sync" ]]; then
         echo "devbox: local path not a directory: $local_path" >&2
         exit 1
       }
+      local_path="$(CDPATH='' cd -- "$local_path" && pwd)" || exit 1
       devbox_config_add "$DEVBOX_CONFIG" "$name" "$local_path" "$remote" || exit 1
       echo "✓ added '$name' to $DEVBOX_CONFIG"
       if [ -n "$MUT" ]; then
@@ -542,6 +547,9 @@ if [[ "$1" == "web" ]]; then
       . "$_lib"
       devbox_syncs_list "$DEVBOX_CONFIG" | while IFS='|' read -r n l r; do
         [ -n "$n" ] && printf 'sync\t%s\t%s\t%s\n' "$n" "$l" "$r"
+      done
+      for pattern in "${DEVBOX_IGNORES[@]}"; do
+        printf 'ignore\t%s\n' "$pattern"
       done
     fi
     exit 0
@@ -785,8 +793,15 @@ if [[ "$1" == "--raw" ]]; then
   exec ssh -t "$DEVBOX_HOST"
 fi
 
+DETACH=0
+if [[ "${1:-}" == "--detach" ]]; then
+  DETACH=1
+  shift
+fi
+
 AGENT_MODE=""
 LOCAL_DIR="$PWD"
+WORKSPACE_NAME=""
 
 case "${1:-}" in
   --cc | --claude | --codex)
@@ -808,18 +823,21 @@ case "${1:-}" in
     if [ "$#" -ge 1 ]; then
       LOCAL_DIR="${1/#\~/$HOME}"
       shift
+    else
+      WORKSPACE_NAME="$SESSION"
     fi
-    LOCAL_DIR="$(realpath "$LOCAL_DIR" 2>/dev/null)" || {
-      echo "devbox: cannot resolve path: $LOCAL_DIR" >&2
-      exit 1
-    }
     [ -d "$LOCAL_DIR" ] || {
       echo "devbox: path is not a directory: $LOCAL_DIR" >&2
       exit 1
     }
+    # Logical, like $PWD: sync roots are matched as configured, symlinks included.
+    LOCAL_DIR="$(CDPATH='' cd -- "$LOCAL_DIR" && pwd)" || exit 1
     [ -n "$SESSION" ] || SESSION="$(devbox_agent_session_name "$AGENT_MODE" "$LOCAL_DIR")"
     ;;
-  *) SESSION="${1:-main}" ;;
+  *)
+    SESSION="${1:-main}"
+    WORKSPACE_NAME="${1:-}"
+    ;;
 esac
 
 # If launched from within a synced folder, open the remote session in the
@@ -830,12 +848,26 @@ _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
 if [ -f "$_lib" ]; then
   # shellcheck source=/dev/null
   . "$_lib"
+  WORKSPACE="$(devbox_workspace_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$WORKSPACE_NAME")"
+  if [ "$DETACH" = 1 ] && [ -n "$WORKSPACE_NAME" ] && [ -z "$WORKSPACE" ]; then
+    root_entry="$(devbox_sync_for "$DEVBOX_CONFIG" "$LOCAL_DIR")"
+    IFS='|' read -r _ root_local _ <<<"$root_entry"
+    if [ -n "$root_entry" ] && [ "$root_local" = "$LOCAL_DIR" ]; then
+      echo "devbox: '$WORKSPACE_NAME' cannot be a workspace folder in $LOCAL_DIR" >&2
+      exit 2
+    fi
+  fi
+  [ -n "$WORKSPACE" ] && LOCAL_DIR="$WORKSPACE"
   rhome="$(devbox_remote_home 2>/dev/null)" &&
     CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$rhome")"
-  # tmux -c on a missing dir silently starts in $HOME.
+  # tmux -c on a missing dir silently starts in $HOME; a running session
+  # ignores -c. The = makes has-session match exactly, and is quoted because
+  # zsh expands a bare leading = to a command path.
   # shellcheck disable=SC2029  # CDIR is resolved locally, created remotely
-  [ -n "$CDIR" ] && ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
-    "mkdir -p $(printf '%q' "$CDIR")" </dev/null >/dev/null 2>&1
+  created=""
+  [ "$DETACH" != 1 ] && [ -n "$CDIR" ] && created="$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
+    "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null || { mkdir -p $(printf '%q' "$CDIR") && echo created; }" </dev/null 2>/dev/null)"
+  [ -n "$WORKSPACE" ] && [[ "$created" == *created ]] && mkdir -p "$LOCAL_DIR"
   entry="$(devbox_sync_for "$DEVBOX_CONFIG" "$LOCAL_DIR")"
   sync_name="${entry%%|*}"
   MUT="$(devbox_mutagen)"
@@ -854,9 +886,33 @@ if [ -f "$_lib" ]; then
 fi
 
 # tmux args as an array so both transports run the identical remote command.
-TMUX_CMD=(tmux new-session -A -s "$SESSION")
-[ -n "$CDIR" ] && TMUX_CMD+=(-c "$CDIR")
-[ -n "$AGENT_MODE" ] && TMUX_CMD+=("$(devbox_agent_command "$AGENT_MODE")")
+TMUX_ARGS=(-s "$SESSION")
+[ -n "$CDIR" ] && TMUX_ARGS+=(-c "$CDIR")
+[ -n "$AGENT_MODE" ] && TMUX_ARGS+=("$(devbox_agent_command "$AGENT_MODE")")
+TMUX_CMD=(tmux new-session -A "${TMUX_ARGS[@]}")
+
+if [ "$DETACH" = 1 ]; then
+  remote_mkdir=""
+  [ -n "$CDIR" ] && remote_mkdir="mkdir -p $(printf '%q' "$CDIR") && "
+  # shellcheck disable=SC2029  # the command is quoted locally for the remote shell
+  detach_out="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$DEVBOX_HOST" \
+    "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null && echo exists || { ${remote_mkdir}env LANG=C.UTF-8 $(printf '%q ' tmux new-session -d "${TMUX_ARGS[@]}") && echo created; }" </dev/null)" || {
+    echo "devbox: could not start $SESSION on $DEVBOX_HOST" >&2
+    exit 1
+  }
+  case "$detach_out" in
+    *exists) echo "exists $SESSION" ;;
+    *created)
+      [ -n "$WORKSPACE" ] && mkdir -p "$LOCAL_DIR"
+      echo "created $SESSION"
+      ;;
+    *)
+      echo "devbox: could not start $SESSION on $DEVBOX_HOST" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
 
 if [ "$(devbox_transport)" = mosh ]; then
   exec mosh "$DEVBOX_HOST" -- "${TMUX_CMD[@]}"
@@ -866,4 +922,5 @@ fi
 # Force UTF-8 locale: mosh validates this at protocol level, but plain ssh
 # inherits the remote's bare POSIX locale, making tmux render unicode as '_'.
 echo "devbox: direct mosh route unavailable; using ssh + tmux" >&2
-exec ssh -t "$DEVBOX_HOST" env LANG=C.UTF-8 "${TMUX_CMD[@]}"
+# shellcheck disable=SC2029  # the command is quoted locally for the remote shell
+exec ssh -t "$DEVBOX_HOST" "env LANG=C.UTF-8 $(printf '%q ' "${TMUX_CMD[@]}")"

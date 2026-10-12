@@ -178,6 +178,8 @@ EOF
   [ "${lines[0]}" = "$(printf 'host\tstub-host')" ]
   [ "${lines[1]}" = "$(printf 'sync\twork\t/home/me/Documents/Work\twork')" ]
   [ "${lines[2]}" = "$(printf 'sync\tapi\t/home/me/my api\tapi')" ]
+  printf '%s\n' "${lines[@]}" | grep -qx "$(printf 'ignore\tbuild/')"
+  printf '%s\n' "${lines[@]}" | grep -qx "$(printf 'ignore\tnode_modules/')"
 }
 
 @test "web: an unresponsive server is replaced, not leaked" {

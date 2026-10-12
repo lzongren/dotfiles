@@ -4,6 +4,14 @@ vi.mock('../../src/components/Terminal', () => ({
   TerminalPane: ({ name }: { name: string }) => <div data-testid={`term-${name}`} />,
 }))
 
+vi.mock('../../src/components/WorkspacePalette', () => ({
+  WorkspacePalette: ({ onOpen }: { onOpen: (name: string) => void }) => (
+    <button type="button" data-testid="palette" onClick={() => onOpen('from-palette')}>
+      palette
+    </button>
+  ),
+}))
+
 import { App } from '../../src/App'
 import { ago } from '../../src/components/SessionTable'
 import type { Session, SessionsResponse } from '../../src/shared/types'
@@ -238,6 +246,14 @@ describe('terminal tabs from the dashboard', () => {
     expect(screen.getByRole('tab', { name: 'cc-atx' })).toHaveAttribute('aria-selected', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'close cc-atx' }))
     expect(screen.queryByTestId('term-cc-atx')).not.toBeInTheDocument()
+  })
+
+  it('opening from the palette opens a terminal tab', async () => {
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    render(<App />)
+    await flush()
+    fireEvent.click(screen.getByTestId('palette'))
+    expect(screen.getByTestId('term-from-palette')).toBeInTheDocument()
   })
 
   it('an unattachable session offers no attach button', async () => {

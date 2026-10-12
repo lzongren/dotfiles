@@ -1,4 +1,10 @@
-import type { ApiError, SessionsResponse } from './shared/types'
+import type {
+  ApiError,
+  CreateSessionRequest,
+  CreateSessionResponse,
+  SessionsResponse,
+  WorkspacesResponse,
+} from './shared/types'
 import { getToken } from './token'
 
 export type ApiResult<T> =
@@ -8,10 +14,16 @@ export type ApiResult<T> =
   | { kind: 'network'; message: string }
   | { kind: 'error'; message: string }
 
-export async function fetchJson<T>(path: string): Promise<ApiResult<T>> {
+export async function fetchJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<ApiResult<T>> {
   let res: Response
+  const headers: Record<string, string> = { Authorization: `Bearer ${getToken() ?? ''}` }
+  if (init.body !== undefined) headers['Content-Type'] = 'application/json'
   try {
-    res = await fetch(path, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } })
+    res = await fetch(path, {
+      method: init.method ?? 'GET',
+      headers,
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    })
   } catch {
     return { kind: 'network', message: 'devbox web server not reachable' }
   }
@@ -25,4 +37,12 @@ export async function fetchJson<T>(path: string): Promise<ApiResult<T>> {
 
 export function getSessions(): Promise<ApiResult<SessionsResponse>> {
   return fetchJson<SessionsResponse>('/api/sessions')
+}
+
+export function getWorkspaces(): Promise<ApiResult<WorkspacesResponse>> {
+  return fetchJson<WorkspacesResponse>('/api/workspaces')
+}
+
+export function createSession(body: CreateSessionRequest): Promise<ApiResult<CreateSessionResponse>> {
+  return fetchJson<CreateSessionResponse>('/api/sessions', { method: 'POST', body })
 }

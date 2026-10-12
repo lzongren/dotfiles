@@ -8,32 +8,32 @@ setup() {
   cat > "$CFG" <<'EOF'
 DEVBOX_HOST="h"
 DEVBOX_SYNCS="
-atx|/Users/me/Documents/ATX|ATX
-idf|/Users/me/Documents/IDF|/opt/idf
+work|/Users/me/Documents/Work|Work
+lab|/Users/me/Documents/Lab|/opt/lab
 "
 EOF
   RH="/home/me"    # pretend remote home
 }
 
 @test "exact sync root maps to remote root (relative remote)" {
-  run devbox_remote_dir "$CFG" /Users/me/Documents/ATX "$RH"
+  run devbox_remote_dir "$CFG" /Users/me/Documents/Work "$RH"
   [ "$status" -eq 0 ]
-  [ "$output" = "/home/me/ATX" ]
+  [ "$output" = "/home/me/Work" ]
 }
 
 @test "subfolder maps under remote root" {
-  run devbox_remote_dir "$CFG" /Users/me/Documents/ATX/abc "$RH"
-  [ "$output" = "/home/me/ATX/abc" ]
+  run devbox_remote_dir "$CFG" /Users/me/Documents/Work/abc "$RH"
+  [ "$output" = "/home/me/Work/abc" ]
 }
 
 @test "deep subfolder preserved" {
-  run devbox_remote_dir "$CFG" /Users/me/Documents/ATX/a/b/c "$RH"
-  [ "$output" = "/home/me/ATX/a/b/c" ]
+  run devbox_remote_dir "$CFG" /Users/me/Documents/Work/a/b/c "$RH"
+  [ "$output" = "/home/me/Work/a/b/c" ]
 }
 
 @test "absolute remote path used as-is" {
-  run devbox_remote_dir "$CFG" /Users/me/Documents/IDF/x "$RH"
-  [ "$output" = "/opt/idf/x" ]
+  run devbox_remote_dir "$CFG" /Users/me/Documents/Lab/x "$RH"
+  [ "$output" = "/opt/lab/x" ]
 }
 
 @test "pwd outside any synced folder prints nothing" {
@@ -41,12 +41,79 @@ EOF
   [ "$output" = "" ]
 }
 
-@test "prefix false-match is rejected (ATXtra is not under ATX)" {
-  run devbox_remote_dir "$CFG" /Users/me/Documents/ATXtra "$RH"
+@test "prefix false-match is rejected (Workshop is not under Work)" {
+  run devbox_remote_dir "$CFG" /Users/me/Documents/Workshop "$RH"
   [ "$output" = "" ]
 }
 
 @test "no config / no syncs prints nothing" {
-  run devbox_remote_dir /nonexistent /Users/me/Documents/ATX "$RH"
+  run devbox_remote_dir /nonexistent /Users/me/Documents/Work "$RH"
   [ "$output" = "" ]
+}
+
+@test "workspace: a name run from a synced root is a folder under it" {
+  run devbox_workspace_dir "$CFG" /Users/me/Documents/Work proj
+  [ "$output" = "/Users/me/Documents/Work/proj" ]
+}
+
+@test "workspace: below a synced root, or outside one, there is none" {
+  run devbox_workspace_dir "$CFG" /Users/me/Documents/Work/abc proj
+  [ "$output" = "" ]
+  run devbox_workspace_dir "$CFG" /Users/me/Documents/Workshop proj
+  [ "$output" = "" ]
+  run devbox_workspace_dir "$CFG" /Users/me/Downloads proj
+  [ "$output" = "" ]
+}
+
+@test "workspace: anything but a plain folder name is refused" {
+  for name in "" . .. .hidden -x a/b ../x "a b" a.b build env node_modules; do
+    run devbox_workspace_dir "$CFG" /Users/me/Documents/Work "$name"
+    [ "$output" = "" ]
+  done
+}
+
+@test "workspace: a configured root with a trailing slash still matches" {
+  printf 'DEVBOX_SYNCS="\nwork|/Users/me/Documents/Work/|Work\n"\n' >"$CFG"
+  run devbox_workspace_dir "$CFG" /Users/me/Documents/Work proj
+  [ "$output" = "/Users/me/Documents/Work/proj" ]
+  run devbox_remote_dir "$CFG" /Users/me/Documents/Work/abc "$RH"
+  [ "$output" = "/home/me/Work/abc" ]
+}
+
+@test "workspace: a name taken by a file or broken link in the root is refused" {
+  local root="$BATS_TEST_TMPDIR/root"
+  mkdir -p "$root/dir" && touch "$root/Makefile" && ln -s gone "$root/broken"
+  printf 'DEVBOX_SYNCS="\nroot|%s|root\n"\n' "$root" >"$CFG"
+  run devbox_workspace_dir "$CFG" "$root" Makefile
+  [ "$output" = "" ]
+  run devbox_workspace_dir "$CFG" "$root" broken
+  [ "$output" = "" ]
+  run devbox_workspace_dir "$CFG" "$root" dir
+  [ "$output" = "$root/dir" ]
+}
+
+big_config() {
+  {
+    echo 'DEVBOX_SYNCS="'
+    echo "work|/Users/me/Documents/Work|Work"
+    for i in $(seq 1 4000); do echo "s$i|/Users/me/s/$i|s$i"; done
+    echo '"'
+  } >"$BATS_TEST_TMPDIR/big"
+}
+
+@test "lookups read the whole sync list, so an early match never breaks its pipe" {
+  big_config
+  run bash -c 'trap "" PIPE; DEVBOX_CONFIG=/nonexistent . "$1"; devbox_sync_for "$2" /Users/me/Documents/Work/abc' _ "$BATS_TEST_DIRNAME/../lib.sh" "$BATS_TEST_TMPDIR/big"
+  [ "$status" -eq 0 ]
+  [ "$output" = "work|/Users/me/Documents/Work|Work" ]
+  run bash -c 'trap "" PIPE; DEVBOX_CONFIG=/nonexistent . "$1"; devbox_sync_exists "$2" work && echo yes' _ "$BATS_TEST_DIRNAME/../lib.sh" "$BATS_TEST_TMPDIR/big"
+  [ "$output" = "yes" ]
+}
+
+@test "sync ls lists a long config without a broken pipe" {
+  big_config
+  run bash -c 'trap "" PIPE; DEVBOX_CONFIG="$2" "$1" sync ls' _ "$BATS_TEST_DIRNAME/../../bin/devbox" "$BATS_TEST_TMPDIR/big"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Broken pipe"* ]]
+  [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -eq 4002 ]
 }

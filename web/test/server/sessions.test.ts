@@ -89,6 +89,56 @@ describe('createSessionSource', () => {
     await expect(get()).rejects.toBeInstanceOf(RemoteUnreachableError)
   })
 
+  it('invalidate forces the next call to probe again', async () => {
+    let calls = 0
+    const get = createSessionSource('stub-host', async () => {
+      calls += 1
+      return ok(fixture)
+    })
+    await get()
+    await get()
+    expect(calls).toBe(1)
+    get.invalidate()
+    await get()
+    expect(calls).toBe(2)
+  })
+
+  it('a probe started before invalidate does not repopulate the cache', async () => {
+    let calls = 0
+    let release: () => void = () => undefined
+    const get = createSessionSource('stub-host', async () => {
+      calls += 1
+      if (calls === 1) await new Promise<void>((resolve) => (release = resolve))
+      return ok(fixture)
+    })
+    const stale = get()
+    get.invalidate()
+    release()
+    await stale
+    await get()
+    expect(calls).toBe(2)
+  })
+
+  it('an invalidated probe settling does not orphan the newer in-flight probe', async () => {
+    let calls = 0
+    const releases: Array<() => void> = []
+    const get = createSessionSource('stub-host', async () => {
+      calls += 1
+      await new Promise<void>((resolve) => releases.push(resolve))
+      return ok(fixture)
+    })
+    const first = get()
+    get.invalidate()
+    const second = get()
+    releases[0]()
+    await first
+    const third = get()
+    expect(calls).toBe(2)
+    releases[1]()
+    await Promise.all([second, third])
+    expect(calls).toBe(2)
+  })
+
   it('recovers after a failed probe instead of caching the failure', async () => {
     let calls = 0
     const get = createSessionSource('stub-host', async () => {

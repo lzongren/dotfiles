@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
+import type { AgentChoice } from '../src/shared/types.js'
 
 export interface RunResult {
   stdout: string
@@ -8,12 +9,16 @@ export interface RunResult {
   exitCode: number
 }
 
-function run(bin: string, args: string[], timeoutMs: number): Promise<RunResult> {
+function run(bin: string, args: string[], timeoutMs: number, cwd?: string): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     execFile(
       path.join(bin, 'devbox'),
       args,
-      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
+      {
+        timeout: timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
+        ...(cwd === undefined ? {} : { cwd, env: { ...process.env, PWD: cwd } }),
+      },
       (err, stdout, stderr) => {
         if (!err) return resolve({ stdout, stderr, exitCode: 0 })
         const failure = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string }
@@ -33,6 +38,17 @@ export function statusRaw(bin: string, timeoutMs = 15000): Promise<RunResult> {
 
 export function printConfig(bin: string, timeoutMs = 15000): Promise<RunResult> {
   return run(bin, ['web', '--print-config'], timeoutMs)
+}
+
+export function detach(
+  bin: string,
+  agent: AgentChoice,
+  name: string,
+  cwd: string,
+  timeoutMs = 30000,
+): Promise<RunResult> {
+  const args = agent === 'shell' ? ['--detach', name] : ['--detach', `--${agent}`, name]
+  return run(bin, args, timeoutMs, cwd)
 }
 
 export function attachArgv(host: string, name: string): string[] {

@@ -11,7 +11,10 @@ import {
   tokenMatches,
 } from './auth.js'
 import { loadConfig } from './config.js'
-import { spawnAttachPty, statusRaw } from './exec.js'
+import { BodyError, readJson } from './body.js'
+import { detach, spawnAttachPty, statusRaw } from './exec.js'
+import { isAgentChoice, SESSION_NAME_RE } from '../src/shared/validate.js'
+import { listWorkspaces } from './workspaces.js'
 import { createSessionSource, RemoteUnreachableError } from './sessions.js'
 import { attachTerminalServer } from './terminal.js'
 import { serveStatic } from './static.js'
@@ -67,7 +70,49 @@ export async function createApp(opts: AppOptions): Promise<App> {
       if (url.pathname === '/api/health') {
         return sendJson(res, 200, { ok: true, version: opts.version, host: config.host })
       }
-      if (url.pathname === '/api/sessions') {
+      if (url.pathname === '/api/workspaces' && req.method === 'GET') {
+        listWorkspaces(config.syncs, config.ignores)
+          .then((body) => sendJson(res, 200, body))
+          .catch(() => sendJson(res, 500, { error: 'internal', message: 'could not list workspaces' }))
+        return
+      }
+      if (url.pathname === '/api/sessions' && req.method === 'POST') {
+        readJson(req)
+          .then(async (raw) => {
+            const body = (raw ?? {}) as { name?: unknown; root?: unknown; agent?: unknown }
+            const name = typeof body.name === 'string' ? body.name : ''
+            const agent = body.agent ?? 'cc'
+            if (!SESSION_NAME_RE.test(name)) {
+              return sendJson(res, 400, { error: 'bad_name', message: 'invalid session name' })
+            }
+            if (!isAgentChoice(agent)) {
+              return sendJson(res, 400, { error: 'bad_agent', message: 'agent must be cc, codex, or shell' })
+            }
+            const root = config.syncs.find((s) => s.name === body.root)
+            if (!root) return sendJson(res, 400, { error: 'bad_root', message: 'unknown sync root' })
+            const result = await detach(opts.bin, agent, name, root.localPath)
+            const verdict = result.stdout.trim().split('\n').pop() ?? ''
+            if (result.exitCode !== 0 || !/^(created|exists) /.test(verdict)) {
+              return sendJson(res, 502, {
+                error: 'remote_unreachable',
+                message: result.stderr.trim() || 'could not start the session',
+              })
+            }
+            getSessions.invalidate()
+            const created = verdict.startsWith('created ')
+            return sendJson(res, created ? 201 : 200, { name, created })
+          })
+          .catch((err: unknown) => {
+            if (err instanceof BodyError) {
+              if (err.status === 413) res.setHeader('Connection', 'close')
+              sendJson(res, err.status, { error: 'bad_request', message: err.message })
+            } else {
+              sendJson(res, 500, { error: 'internal', message: 'could not start the session' })
+            }
+          })
+        return
+      }
+      if (url.pathname === '/api/sessions' && req.method === 'GET') {
         getSessions()
           .then((body) => sendJson(res, 200, body))
           .catch((err: unknown) => {

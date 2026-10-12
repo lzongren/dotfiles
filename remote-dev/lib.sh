@@ -14,7 +14,7 @@ DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 # Caches into DEVBOX_REMOTE_HOME so callers can use it directly.
 devbox_remote_home() {
   if [ -z "${DEVBOX_REMOTE_HOME:-}" ]; then
-    DEVBOX_REMOTE_HOME="$(ssh "$DEVBOX_HOST" 'echo "$HOME"' 2>/dev/null)"
+    DEVBOX_REMOTE_HOME="$(ssh -o ConnectTimeout=10 "$DEVBOX_HOST" 'echo "$HOME"' 2>/dev/null)"
     [ -n "$DEVBOX_REMOTE_HOME" ] || {
       echo "devbox: cannot resolve remote home on '$DEVBOX_HOST'" >&2
       return 1
@@ -93,12 +93,12 @@ devbox_syncs_list() {
     printf '%s' "${DEVBOX_SYNCS:-}"
   )"
   printf '%s\n' "$syncs" | while IFS='|' read -r n l r; do
-    [ -n "$n" ] && printf '%s|%s|%s\n' "$n" "$l" "$r"
+    [ -n "$n" ] && printf '%s|%s|%s\n' "$n" "${l%/}" "$r"
   done
 }
 
 # True if a sync of this name exists in the config. Args: config-path name.
-devbox_sync_exists() { devbox_syncs_list "$1" | grep -q "^$2|"; }
+devbox_sync_exists() { devbox_syncs_list "$1" | grep "^$2|" >/dev/null; }
 
 # Map a local path to the corresponding remote dir via the synced folders.
 # Args: cfg  local-path  remote-home. Prints the remote dir if local-path is a
@@ -114,17 +114,32 @@ devbox_remote_dir() {
 }
 
 # Prints the "name|local|remote" entry whose root is or contains local-path.
-# The / boundary keeps ATXtra out of ATX. Args: cfg  local-path.
+# The / boundary keeps Workshop out of Work. Args: cfg  local-path.
 devbox_sync_for() {
-  local n l r
+  local n l r found=""
+  # Read to the end: leaving early closes the pipe while devbox_syncs_list
+  # still writes, which prints "Broken pipe" wherever SIGPIPE is ignored.
   while IFS='|' read -r n l r; do
-    [ -n "$l" ] || continue
-    case "$2" in "$l" | "$l"/*)
-      printf '%s|%s|%s' "$n" "$l" "$r"
-      return 0
-      ;;
-    esac
+    [ -z "$found" ] && [ -n "$l" ] || continue
+    case "$2" in "$l" | "$l"/*) found="$n|$l|$r" ;; esac
   done < <(devbox_syncs_list "$1")
+  [ -n "$found" ] && printf '%s' "$found"
+  return 0
+}
+
+# Prints <local-path>/<name> when local-path is a synced root and name is a
+# plain folder name that syncs and is not a file, else nothing.
+# Args: cfg  local-path  name.
+devbox_workspace_dir() {
+  local entry l i
+  [[ "$3" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || return 0
+  { [ -e "$2/$3" ] || [ -L "$2/$3" ]; } && [ ! -d "$2/$3" ] && return 0
+  for i in "${DEVBOX_IGNORES[@]}"; do
+    [ "$i" = "$3/" ] || [ "$i" = "/$3" ] && return 0
+  done
+  entry="$(devbox_sync_for "$1" "$2")"
+  IFS='|' read -r _ l _ <<<"$entry"
+  [ -n "$entry" ] && [ "$2" = "$l" ] && printf '%s/%s' "$2" "$3"
   return 0
 }
 
