@@ -48,7 +48,8 @@ export function buildItems(
     .filter((item) => item.name.toLowerCase().includes(q))
     .sort((a, b) => b.ts - a.ts || a.name.localeCompare(b.name))
     .slice(0, MAX_ITEMS)
-  const exact = items.some((item) => item.name === query.trim())
+  const typed = query.trim().toLowerCase()
+  const exact = items.some((item) => item.name.toLowerCase() === typed)
   if (q !== '' && !exact && createRoot !== null && isValidSessionName(query.trim())) {
     matched.push({ key: 'create', kind: 'create', name: query.trim(), root: createRoot, ts: 0 })
   }
@@ -59,17 +60,19 @@ export function WorkspacePalette({
   sessions,
   now,
   onOpen,
+  onSessionsChanged,
 }: {
   sessions: Session[]
   now: number
   onOpen: (name: string) => void
+  onSessionsChanged?: () => void
 }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [roots, setRoots] = useState<string[]>([])
   const [root, setRoot] = useState<string | null>(null)
   const [agent, setAgent] = useState<AgentChoice>('cc')
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState(0)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -106,7 +109,13 @@ export function WorkspacePalette({
   }, [])
 
   const items = useMemo(() => buildItems(query, sessions, workspaces, root), [query, sessions, workspaces, root])
-  const current = items[Math.min(selected, items.length - 1)]
+  const found = items.findIndex((item) => item.key === selectedKey)
+  const index = found === -1 ? 0 : found
+  const current = items[index]
+  const move = (delta: number) => {
+    const next = items[Math.min(Math.max(index + delta, 0), Math.max(0, items.length - 1))]
+    if (next) setSelectedKey(next.key)
+  }
 
   const activate = async (item: Item) => {
     setError(null)
@@ -124,8 +133,9 @@ export function WorkspacePalette({
     setBusy(null)
     if (result.kind === 'ok') {
       setQuery('')
-      setSelected(0)
+      setSelectedKey(null)
       void refresh()
+      onSessionsChanged?.()
       onOpen(item.name)
     } else if (result.kind === 'unauthorized') {
       setError('server restarted — run devbox web')
@@ -137,16 +147,16 @@ export function WorkspacePalette({
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setSelected((i) => Math.min(i + 1, Math.max(0, items.length - 1)))
+      move(1)
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setSelected((i) => Math.max(0, i - 1))
+      move(-1)
     } else if (event.key === 'Enter') {
       event.preventDefault()
       if (current && busy === null) void activate(current)
     } else if (event.key === 'Escape') {
       setQuery('')
-      setSelected(0)
+      setSelectedKey(null)
     }
   }
 
@@ -166,7 +176,7 @@ export function WorkspacePalette({
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)
-            setSelected(0)
+            setSelectedKey(null)
           }}
           onKeyDown={onKeyDown}
         />
@@ -200,7 +210,7 @@ export function WorkspacePalette({
         </p>
       ) : null}
       <ul id={listId} role="listbox" className="palette-list">
-        {items.map((item, index) => (
+        {items.map((item) => (
           <li
             key={item.key}
             id={`${listId}-${item.key}`}
@@ -208,7 +218,7 @@ export function WorkspacePalette({
             aria-selected={item === current}
             className="palette-item"
             data-kind={item.kind}
-            onMouseEnter={() => setSelected(index)}
+            onMouseEnter={() => setSelectedKey(item.key)}
             onClick={() => {
               if (busy === null) void activate(item)
             }}

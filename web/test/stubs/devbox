@@ -44,6 +44,7 @@ case "${1:-} ${2:-}" in
     printf 'host\tstub-host\n'
     printf 'sync\tdotfiles\t%s\t/home/me/dotfiles\n' "${DEVBOX_STUB_ROOT:-/home/me/dotfiles}"
     printf 'sync\tapi\t/home/me/my api\t/home/me/work/api\n'
+    printf 'ignore\tbuild/\n'
     ;;
   *)
     echo "devbox stub: unsupported: $*" >&2

@@ -1,9 +1,6 @@
 #!/usr/bin/env bats
-# Tests for `devbox --detach` and the ssh transport's remote command string.
-# The ssh stub evaluates the string it receives with bash, the way the remote
-# login shell would, against a tmux stub that records each argv element on its
-# own line, so quoting bugs that split the agent command surface as extra
-# elements instead of passing silently.
+# The ssh stub runs the remote string through a shell, as sshd does, so a
+# command split by missing quoting reaches the tmux stub as extra arguments.
 
 setup() {
   DEVBOX="$BATS_TEST_DIRNAME/../../bin/devbox"
@@ -100,4 +97,30 @@ tmux_args() { sed -n '/^--- tmux$/,$p' "$TMUX_LOG" | sed '1d'; }
   [ "$(printf '%s\n' "$args" | sed -n 1,4p | tr '\n' ' ')" = "new-session -A -s demo " ]
   [ "$(printf '%s\n' "$args" | wc -l | tr -d ' ')" -eq 5 ]
   [[ "$(printf '%s\n' "$args" | sed -n 5p)" == "if command -v claude"* ]]
+}
+
+@test "detach: a name the workspace rules refuse fails instead of starting in the root" {
+  cd "$ROOT"
+  run "$DEVBOX" --detach --cc build
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'build' cannot be a workspace folder"* ]]
+  ! grep -q '^ssh ' "$CALLS"
+  [ ! -e "$ROOT/build" ]
+}
+
+@test "detach: the remote folder is made in the same ssh call as the session" {
+  cd "$ROOT"
+  run "$DEVBOX" --detach --cc proj
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^ssh ' "$CALLS")" -eq 1 ]
+}
+
+@test "detach: a failed remote mkdir fails the call and creates nothing locally" {
+  printf 'not a dir' >"$REMOTE/work"
+  cd "$ROOT"
+  run "$DEVBOX" --detach --cc proj
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not start proj"* ]]
+  [ ! -e "$ROOT/proj" ]
+  [ ! -s "$TMUX_LOG" ]
 }

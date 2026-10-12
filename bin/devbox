@@ -548,6 +548,9 @@ if [[ "$1" == "web" ]]; then
       devbox_syncs_list "$DEVBOX_CONFIG" | while IFS='|' read -r n l r; do
         [ -n "$n" ] && printf 'sync\t%s\t%s\t%s\n' "$n" "$l" "$r"
       done
+      for pattern in "${DEVBOX_IGNORES[@]}"; do
+        printf 'ignore\t%s\n' "$pattern"
+      done
     fi
     exit 0
   fi
@@ -846,6 +849,14 @@ if [ -f "$_lib" ]; then
   # shellcheck source=/dev/null
   . "$_lib"
   WORKSPACE="$(devbox_workspace_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$WORKSPACE_NAME")"
+  if [ "$DETACH" = 1 ] && [ -n "$WORKSPACE_NAME" ] && [ -z "$WORKSPACE" ]; then
+    root_entry="$(devbox_sync_for "$DEVBOX_CONFIG" "$LOCAL_DIR")"
+    IFS='|' read -r _ root_local _ <<<"$root_entry"
+    if [ -n "$root_entry" ] && [ "$root_local" = "$LOCAL_DIR" ]; then
+      echo "devbox: '$WORKSPACE_NAME' cannot be a workspace folder in $LOCAL_DIR" >&2
+      exit 2
+    fi
+  fi
   [ -n "$WORKSPACE" ] && LOCAL_DIR="$WORKSPACE"
   rhome="$(devbox_remote_home 2>/dev/null)" &&
     CDIR="$(devbox_remote_dir "$DEVBOX_CONFIG" "$LOCAL_DIR" "$rhome")"
@@ -854,7 +865,7 @@ if [ -f "$_lib" ]; then
   # zsh expands a bare leading = to a command path.
   # shellcheck disable=SC2029  # CDIR is resolved locally, created remotely
   created=""
-  [ -n "$CDIR" ] && created="$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
+  [ "$DETACH" != 1 ] && [ -n "$CDIR" ] && created="$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$DEVBOX_HOST" \
     "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null || { mkdir -p $(printf '%q' "$CDIR") && echo created; }" </dev/null 2>/dev/null)"
   [ -n "$WORKSPACE" ] && [[ "$created" == *created ]] && mkdir -p "$LOCAL_DIR"
   entry="$(devbox_sync_for "$DEVBOX_CONFIG" "$LOCAL_DIR")"
@@ -881,15 +892,20 @@ TMUX_ARGS=(-s "$SESSION")
 TMUX_CMD=(tmux new-session -A "${TMUX_ARGS[@]}")
 
 if [ "$DETACH" = 1 ]; then
+  remote_mkdir=""
+  [ -n "$CDIR" ] && remote_mkdir="mkdir -p $(printf '%q' "$CDIR") && "
   # shellcheck disable=SC2029  # the command is quoted locally for the remote shell
   detach_out="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$DEVBOX_HOST" \
-    "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null && echo exists || { env LANG=C.UTF-8 $(printf '%q ' tmux new-session -d "${TMUX_ARGS[@]}") && echo created; }" </dev/null)" || {
+    "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null && echo exists || { ${remote_mkdir}env LANG=C.UTF-8 $(printf '%q ' tmux new-session -d "${TMUX_ARGS[@]}") && echo created; }" </dev/null)" || {
     echo "devbox: could not start $SESSION on $DEVBOX_HOST" >&2
     exit 1
   }
   case "$detach_out" in
     *exists) echo "exists $SESSION" ;;
-    *created) echo "created $SESSION" ;;
+    *created)
+      [ -n "$WORKSPACE" ] && mkdir -p "$LOCAL_DIR"
+      echo "created $SESSION"
+      ;;
     *)
       echo "devbox: could not start $SESSION on $DEVBOX_HOST" >&2
       exit 1

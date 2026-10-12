@@ -10,6 +10,7 @@ export interface SyncEntry {
 export interface WebConfig {
   host: string
   syncs: SyncEntry[]
+  ignores: string[]
 }
 
 export async function loadConfig(bin: string): Promise<WebConfig> {
@@ -17,14 +18,17 @@ export async function loadConfig(bin: string): Promise<WebConfig> {
   if (exitCode !== 0) throw new Error(`devbox web --print-config failed: ${stderr.trim()}`)
   let host = ''
   const syncs: SyncEntry[] = []
+  const ignores: string[] = []
   for (const line of stdout.split('\n')) {
     const parts = line.split('\t')
     if (parts[0] === 'host' && parts[1]) {
       host = parts[1]
     } else if (parts[0] === 'sync' && parts.length >= 4) {
       syncs.push({ name: parts[1], localPath: parts[2], remotePath: parts[3] })
+    } else if (parts[0] === 'ignore' && parts[1]) {
+      ignores.push(parts[1])
     }
   }
   if (!isValidHost(host)) throw new Error(`invalid or missing host in devbox config: ${JSON.stringify(host)}`)
-  return { host, syncs }
+  return { host, syncs, ignores }
 }

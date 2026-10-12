@@ -14,7 +14,7 @@ DEVBOX_HOST="${DEVBOX_HOST:-dev}"
 # Caches into DEVBOX_REMOTE_HOME so callers can use it directly.
 devbox_remote_home() {
   if [ -z "${DEVBOX_REMOTE_HOME:-}" ]; then
-    DEVBOX_REMOTE_HOME="$(ssh "$DEVBOX_HOST" 'echo "$HOME"' 2>/dev/null)"
+    DEVBOX_REMOTE_HOME="$(ssh -o ConnectTimeout=10 "$DEVBOX_HOST" 'echo "$HOME"' 2>/dev/null)"
     [ -n "$DEVBOX_REMOTE_HOME" ] || {
       echo "devbox: cannot resolve remote home on '$DEVBOX_HOST'" >&2
       return 1

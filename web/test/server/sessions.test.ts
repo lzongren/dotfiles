@@ -119,6 +119,26 @@ describe('createSessionSource', () => {
     expect(calls).toBe(2)
   })
 
+  it('an invalidated probe settling does not orphan the newer in-flight probe', async () => {
+    let calls = 0
+    const releases: Array<() => void> = []
+    const get = createSessionSource('stub-host', async () => {
+      calls += 1
+      await new Promise<void>((resolve) => releases.push(resolve))
+      return ok(fixture)
+    })
+    const first = get()
+    get.invalidate()
+    const second = get()
+    releases[0]()
+    await first
+    const third = get()
+    expect(calls).toBe(2)
+    releases[1]()
+    await Promise.all([second, third])
+    expect(calls).toBe(2)
+  })
+
   it('recovers after a failed probe instead of caching the failure', async () => {
     let calls = 0
     const get = createSessionSource('stub-host', async () => {

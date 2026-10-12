@@ -41,20 +41,20 @@ export function createSessionSource(host: string, runner: Runner, ttlMs = 3000):
     if (cached && Date.now() - cached.fetchedAt < ttlMs) return cached
     if (inflight) return inflight
     const startedAt = generation
-    inflight = (async () => {
-      try {
-        const res = await runner()
+    const probe: Promise<SessionsResponse> = runner()
+      .then((res) => {
         if (res.exitCode !== 0) {
           throw new RemoteUnreachableError(res.stderr.trim() || 'remote unreachable')
         }
         const fresh = { host, fetchedAt: Date.now(), sessions: parseStatusRaw(res.stdout) }
         if (startedAt === generation) cached = fresh
         return fresh
-      } finally {
-        inflight = null
-      }
-    })()
-    return inflight
+      })
+      .finally(() => {
+        if (inflight === probe) inflight = null
+      })
+    inflight = probe
+    return probe
   } as SessionSource
   get.invalidate = () => {
     cached = null

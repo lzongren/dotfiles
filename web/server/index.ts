@@ -12,8 +12,8 @@ import {
 } from './auth.js'
 import { loadConfig } from './config.js'
 import { BodyError, readJson } from './body.js'
-import { detach, spawnAttachPty, statusRaw, type Agent } from './exec.js'
-import { SESSION_NAME_RE } from '../src/shared/validate.js'
+import { detach, spawnAttachPty, statusRaw } from './exec.js'
+import { isAgentChoice, SESSION_NAME_RE } from '../src/shared/validate.js'
 import { listWorkspaces } from './workspaces.js'
 import { createSessionSource, RemoteUnreachableError } from './sessions.js'
 import { attachTerminalServer } from './terminal.js'
@@ -71,7 +71,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
         return sendJson(res, 200, { ok: true, version: opts.version, host: config.host })
       }
       if (url.pathname === '/api/workspaces' && req.method === 'GET') {
-        return sendJson(res, 200, listWorkspaces(config.syncs))
+        listWorkspaces(config.syncs, config.ignores)
+          .then((body) => sendJson(res, 200, body))
+          .catch(() => sendJson(res, 500, { error: 'internal', message: 'could not list workspaces' }))
+        return
       }
       if (url.pathname === '/api/sessions' && req.method === 'POST') {
         readJson(req)
@@ -82,12 +85,12 @@ export async function createApp(opts: AppOptions): Promise<App> {
             if (!SESSION_NAME_RE.test(name)) {
               return sendJson(res, 400, { error: 'bad_name', message: 'invalid session name' })
             }
-            if (agent !== 'cc' && agent !== 'codex' && agent !== 'shell') {
+            if (!isAgentChoice(agent)) {
               return sendJson(res, 400, { error: 'bad_agent', message: 'agent must be cc, codex, or shell' })
             }
             const root = config.syncs.find((s) => s.name === body.root)
             if (!root) return sendJson(res, 400, { error: 'bad_root', message: 'unknown sync root' })
-            const result = await detach(opts.bin, agent as Agent, name, root.localPath)
+            const result = await detach(opts.bin, agent, name, root.localPath)
             const verdict = result.stdout.trim().split('\n').pop() ?? ''
             if (result.exitCode !== 0 || !/^(created|exists) /.test(verdict)) {
               return sendJson(res, 502, {

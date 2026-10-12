@@ -119,7 +119,14 @@ export function App() {
           </p>
         ) : null}
       </header>
-      <WorkspacePalette sessions={data.sessions} now={now} onOpen={openTerminal} />
+      <WorkspacePalette
+        sessions={data.sessions}
+        now={now}
+        onOpen={openTerminal}
+        onSessionsChanged={() => {
+          void refresh()
+        }}
+      />
       <SessionTable sessions={data.sessions} now={now} onAttach={openTerminal} />
       <TerminalTabs
         tabs={tabs}

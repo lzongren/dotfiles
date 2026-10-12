@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
+import type { AgentChoice } from '../src/shared/types.js'
 
 export interface RunResult {
   stdout: string
@@ -39,9 +40,13 @@ export function printConfig(bin: string, timeoutMs = 15000): Promise<RunResult> 
   return run(bin, ['web', '--print-config'], timeoutMs)
 }
 
-export type Agent = 'cc' | 'codex' | 'shell'
-
-export function detach(bin: string, agent: Agent, name: string, cwd: string, timeoutMs = 30000): Promise<RunResult> {
+export function detach(
+  bin: string,
+  agent: AgentChoice,
+  name: string,
+  cwd: string,
+  timeoutMs = 30000,
+): Promise<RunResult> {
   const args = agent === 'shell' ? ['--detach', name] : ['--detach', `--${agent}`, name]
   return run(bin, args, timeoutMs, cwd)
 }

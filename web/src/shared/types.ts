@@ -28,6 +28,7 @@ export interface WorkspacesResponse {
 
 export type AgentChoice = 'cc' | 'codex' | 'shell'
 
+
 export interface CreateSessionRequest {
   name: string
   root: string

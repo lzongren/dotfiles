@@ -52,12 +52,14 @@ afterEach(() => {
   sessionStorage.clear()
 })
 
-async function renderPalette(onOpen = vi.fn()) {
-  render(<WorkspacePalette sessions={SESSIONS} now={NOW * 1000} onOpen={onOpen} />)
+async function renderPalette(onOpen = vi.fn(), onSessionsChanged = vi.fn()) {
+  const view = render(
+    <WorkspacePalette sessions={SESSIONS} now={NOW * 1000} onOpen={onOpen} onSessionsChanged={onSessionsChanged} />,
+  )
   await act(async () => {
     await Promise.resolve()
   })
-  return onOpen
+  return Object.assign(onOpen, { view, onSessionsChanged })
 }
 
 const input = () => screen.getByRole('combobox', { name: 'search or create a workspace' })
@@ -96,6 +98,11 @@ describe('buildItems', () => {
     expect(buildItems('scratch', SESSIONS, WORKSPACES, 'work').some((i) => i.kind === 'create')).toBe(false)
     expect(buildItems('a b', SESSIONS, WORKSPACES, 'work').some((i) => i.kind === 'create')).toBe(false)
     expect(buildItems('new', SESSIONS, WORKSPACES, null).some((i) => i.kind === 'create')).toBe(false)
+  })
+
+  it('does not offer create for a name that differs only in case', () => {
+    expect(buildItems('Scratch', SESSIONS, WORKSPACES, 'work').some((i) => i.kind === 'create')).toBe(false)
+    expect(buildItems('EVAL-LATENCY', SESSIONS, WORKSPACES, 'work').some((i) => i.kind === 'create')).toBe(false)
   })
 
   it('never offers unattachable sessions', () => {
@@ -159,6 +166,33 @@ describe('WorkspacePalette', () => {
     expect(posts()).toEqual([{ name: 'fresh-idea', root: 'lab', agent: 'cc' }])
     expect(onOpen).toHaveBeenCalledWith('fresh-idea')
     expect(input()).toHaveValue('')
+  })
+
+  it('keeps the highlighted item when a poll re-sorts the list', async () => {
+    const onOpen = await renderPalette()
+    fireEvent.keyDown(input(), { key: 'ArrowDown' })
+    expect(options()[1]).toHaveTextContent('eval-harness')
+    const resorted = [session('eval-latency', NOW - 30), session('scratch', NOW - 1), session('api - ~/work/api', NOW - 5, false)]
+    onOpen.view.rerender(
+      <WorkspacePalette sessions={resorted} now={NOW * 1000} onOpen={onOpen} onSessionsChanged={onOpen.onSessionsChanged} />,
+    )
+    expect(names()[0]).toBe('scratch')
+    const selected = options().find((o) => o.getAttribute('aria-selected') === 'true')
+    expect(selected).toHaveTextContent('eval-harness')
+    expect(input()).toHaveAttribute('aria-activedescendant', selected?.id)
+    await act(async () => {
+      fireEvent.keyDown(input(), { key: 'Enter' })
+    })
+    expect(posts()).toEqual([{ name: 'eval-harness', root: 'lab', agent: 'cc' }])
+  })
+
+  it('refreshes the session list after starting a session', async () => {
+    const onOpen = await renderPalette()
+    fireEvent.change(input(), { target: { value: 'fresh-idea' } })
+    await act(async () => {
+      fireEvent.keyDown(input(), { key: 'Enter' })
+    })
+    expect(onOpen.onSessionsChanged).toHaveBeenCalledTimes(1)
   })
 
   it('shows the server error and does not open a terminal when starting fails', async () => {
