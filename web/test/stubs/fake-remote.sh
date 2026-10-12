@@ -1,8 +1,8 @@
 #!/bin/bash
-trap 'stty size' WINCH
 echo READY
 while IFS= read -r line; do
   case "$line" in
+    size) echo "SIZE $(stty size)" ;;
     burst)
       head -c 2097152 /dev/zero | tr '\0' 'x'
       echo

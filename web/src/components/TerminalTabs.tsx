@@ -4,18 +4,20 @@ import { TerminalPane } from './Terminal'
 export function TerminalTabs({
   tabs,
   active,
+  scrollKey,
   onSelect,
   onClose,
 }: {
   tabs: string[]
   active: string | null
+  scrollKey: number
   onSelect: (name: string) => void
   onClose: (name: string) => void
 }) {
   const sectionRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    if (active !== null) sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
-  }, [active])
+    if (scrollKey > 0) sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  }, [scrollKey])
   if (tabs.length === 0) return null
   return (
     <section className="terminals" ref={sectionRef}>

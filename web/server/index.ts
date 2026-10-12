@@ -103,10 +103,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
     port: boundPort,
     token,
     url: `http://127.0.0.1:${boundPort}/#t=${token}`,
-    close() {
+    async close() {
       removeState(opts.stateDir, process.pid)
-      terminals.closeAll()
-      return new Promise<void>((resolve) => {
+      await terminals.closeAll()
+      await new Promise<void>((resolve) => {
         server.close(() => resolve())
         server.closeAllConnections()
       })

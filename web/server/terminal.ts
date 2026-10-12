@@ -37,17 +37,8 @@ const FRAME_MAX = 64 * 1024
 const CONTROL_MAX = 4096
 
 function refuse(socket: Duplex, status: string): void {
-  socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
-  socket.destroy()
-}
-
-function safeKill(entry: Entry, signal: string): void {
-  if (entry.exited) return
-  try {
-    entry.pty.kill(signal)
-  } catch {
-    entry.exited = true
-  }
+  socket.once('finish', () => socket.destroy())
+  socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
 }
 
 export function attachTerminalServer(server: HttpServer, deps: TerminalDeps) {
@@ -56,7 +47,23 @@ export function attachTerminalServer(server: HttpServer, deps: TerminalDeps) {
   const highWater = deps.highWater ?? 1024 * 1024
   const lowWater = deps.lowWater ?? 256 * 1024
   const registry = new Set<Entry>()
+  const exitWaiters = new Map<Entry, () => void>()
   const wss = new WebSocketServer({ noServer: true, maxPayload: FRAME_MAX })
+
+  const markExited = (entry: Entry) => {
+    entry.exited = true
+    registry.delete(entry)
+    exitWaiters.get(entry)?.()
+    exitWaiters.delete(entry)
+  }
+  const safeKill = (entry: Entry, signal: string) => {
+    if (entry.exited) return
+    try {
+      entry.pty.kill(signal)
+    } catch {
+      markExited(entry)
+    }
+  }
 
   server.on('upgrade', (req, socket, head) => {
     socket.on('error', () => socket.destroy())
@@ -125,8 +132,7 @@ export function attachTerminalServer(server: HttpServer, deps: TerminalDeps) {
       }
     })
     pty.onExit(({ exitCode, signal }) => {
-      entry.exited = true
-      registry.delete(entry)
+      markExited(entry)
       stopDrain()
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ t: 'exit', code: exitCode, signal: signal ?? null }))
@@ -178,7 +184,9 @@ export function attachTerminalServer(server: HttpServer, deps: TerminalDeps) {
 
   const sweep = setInterval(() => {
     for (const entry of registry) {
-      if (entry.wsClosedAt !== null && Date.now() - entry.wsClosedAt > 5000) {
+      if (entry.exited) {
+        registry.delete(entry)
+      } else if (entry.wsClosedAt !== null && Date.now() - entry.wsClosedAt > 5000) {
         safeKill(entry, 'SIGKILL')
         registry.delete(entry)
       }
@@ -190,18 +198,31 @@ export function attachTerminalServer(server: HttpServer, deps: TerminalDeps) {
     count(): number {
       return registry.size
     },
-    closeAll(): void {
+    closeAll(graceMs = 3000): Promise<void> {
       clearInterval(sweep)
       for (const client of wss.clients) {
         client.close(1001, 'server shutting down')
         setTimeout(() => client.terminate(), 1000).unref()
       }
-      const live = [...registry]
-      registry.clear()
+      const live = [...registry].filter((entry) => !entry.exited)
+      const exited = Promise.all(
+        live.map((entry) => new Promise<void>((resolve) => exitWaiters.set(entry, resolve))),
+      )
       for (const entry of live) safeKill(entry, 'SIGHUP')
-      setTimeout(() => {
-        for (const entry of live) safeKill(entry, 'SIGKILL')
-      }, 3000).unref()
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const escalate = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          for (const entry of live) {
+            safeKill(entry, 'SIGKILL')
+            markExited(entry)
+          }
+          resolve()
+        }, graceMs)
+      })
+      return Promise.race([exited.then(() => undefined), escalate]).finally(() => {
+        if (timer !== null) clearTimeout(timer)
+        registry.clear()
+      })
     },
   }
 }

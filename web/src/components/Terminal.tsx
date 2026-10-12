@@ -10,6 +10,9 @@ type Status = 'connecting' | 'connected' | 'closed' | 'rejected'
 const REJECT_CODES = [4401, 4403, 4404, 1011]
 const CHUNK = 16 * 1024
 const SSH_FAILED = 255
+const MAX_RETRIES = 6
+const HEALTHY_MS = 5000
+const QUEUE_MAX = 64 * 1024
 
 export function TerminalPane({ name, active }: { name: string; active: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -43,15 +46,21 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
     let ws: WebSocket | null = null
     let ready = false
     let queued: string[] = []
+    let queuedBytes = 0
     let retry = 0
     let retryTimer: number | null = null
+    let healthyTimer: number | null = null
     let lastExit: number | null = null
     let resumeWhenVisible = false
     let disposed = false
 
     const sendInput = (data: string) => {
-      if (!ws || !ready || ws.readyState !== WebSocket.OPEN) {
-        queued.push(data)
+      if (!ws) return
+      if (!ready || ws.readyState !== WebSocket.OPEN) {
+        if (queuedBytes + data.length <= QUEUE_MAX) {
+          queued.push(data)
+          queuedBytes += data.length
+        }
         return
       }
       const bytes = encoder.encode(data)
@@ -80,6 +89,10 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
     if (containerRef.current) observer.observe(containerRef.current)
 
     const scheduleRetry = () => {
+      if (retry >= MAX_RETRIES) {
+        setStatus('closed')
+        return
+      }
       if (document.visibilityState === 'hidden') {
         resumeWhenVisible = true
         setStatus('closed')
@@ -119,11 +132,14 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
         }
         if (msg.t === 'ready') {
           ready = true
-          retry = 0
           setStatus('connected')
+          healthyTimer = window.setTimeout(() => {
+            retry = 0
+          }, HEALTHY_MS)
           sendResize()
           const pending = queued
           queued = []
+          queuedBytes = 0
           for (const data of pending) sendInput(data)
         } else if (msg.t === 'exit') {
           lastExit = msg.code ?? 0
@@ -135,6 +151,10 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
       socket.onclose = (event: CloseEvent) => {
         if (ws === socket) ws = null
         ready = false
+        queued = []
+        queuedBytes = 0
+        if (healthyTimer !== null) window.clearTimeout(healthyTimer)
+        healthyTimer = null
         if (disposed) return
         if (REJECT_CODES.includes(event.code)) {
           setStatus('rejected')
@@ -168,6 +188,7 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
     return () => {
       disposed = true
       if (retryTimer !== null) window.clearTimeout(retryTimer)
+      if (healthyTimer !== null) window.clearTimeout(healthyTimer)
       if (fitTimer !== null) window.clearTimeout(fitTimer)
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()

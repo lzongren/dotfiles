@@ -17,11 +17,13 @@ export function App() {
   const [now, setNow] = useState(() => Date.now())
   const [tabs, setTabs] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
+  const [openSeq, setOpenSeq] = useState(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
   const openTerminal = useCallback((name: string) => {
     setTabs((prev) => (prev.includes(name) ? prev : [...prev, name]))
     setActiveTab(name)
+    setOpenSeq((n) => n + 1)
   }, [])
   const closeTerminal = useCallback((name: string) => {
     setTabs((prev) => prev.filter((tab) => tab !== name))
@@ -117,7 +119,13 @@ export function App() {
         ) : null}
       </header>
       <SessionTable sessions={data.sessions} now={now} onAttach={openTerminal} />
-      <TerminalTabs tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTerminal} />
+      <TerminalTabs
+        tabs={tabs}
+        active={activeTab}
+        scrollKey={openSeq}
+        onSelect={setActiveTab}
+        onClose={closeTerminal}
+      />
     </main>
   )
 }

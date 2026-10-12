@@ -350,9 +350,52 @@ describe('terminal data plane', () => {
     const ws = connect(h)
     await ready(ws)
     const closed = closedWith(ws)
-    h.terminals.closeAll()
+    await h.terminals.closeAll()
     expect(await closed).toBe(1001)
     expect(h.ptys[0].killed).toContain('SIGHUP')
     expect(h.terminals.count()).toBe(0)
+  })
+
+  it('closeAll escalates to SIGKILL for a pty that ignores SIGHUP, then resolves', async () => {
+    const stubborn: FakePty[] = []
+    const h = await boot({
+      ptyFactory: () => {
+        const pty = new FakePty()
+        pty.kill = (signal?: string) => {
+          pty.killed.push(signal ?? 'SIGTERM')
+          if (signal === 'SIGKILL') pty.emitExit(137)
+        }
+        stubborn.push(pty)
+        return pty
+      },
+    })
+    const ws = connect(h)
+    await ready(ws)
+    const started = Date.now()
+    await h.terminals.closeAll(80)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(70)
+    expect(stubborn[0].killed[0]).toBe('SIGHUP')
+    expect(stubborn[0].killed.at(-1)).toBe('SIGKILL')
+    expect(h.terminals.count()).toBe(0)
+  })
+
+  it('frees the slot at once when killing a pty throws', async () => {
+    const h = await boot({
+      maxPtys: 1,
+      ptyFactory: () => {
+        const pty = new FakePty()
+        pty.kill = () => {
+          throw new Error('ESRCH')
+        }
+        return pty
+      },
+    })
+    const first = connect(h)
+    await ready(first)
+    first.close()
+    await waitFor(() => h.terminals.count() === 0, 1000)
+    const second = connect(h)
+    await ready(second)
+    second.close()
   })
 })

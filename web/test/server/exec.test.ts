@@ -92,14 +92,15 @@ describe('spawn site discipline', () => {
     }
   })
 
-  it('spawns the attach pty with raw bytes, xterm-256color, and a minimal env', () => {
+  it('spawns the attach pty in utf8 mode (so the local pty keeps IUTF8), xterm-256color, and a minimal env', () => {
     ptyCalls.length = 0
     exec.spawnAttachPty('stub-host', 'api', 120, 40)
     expect(ptyCalls).toHaveLength(1)
     const call = ptyCalls[0]
     expect(call.file).toBe('ssh')
     expect(call.args).toEqual(exec.attachArgv('stub-host', 'api').slice(1))
-    expect(call.opts).toMatchObject({ name: 'xterm-256color', cols: 120, rows: 40, encoding: null })
+    expect(call.opts).toMatchObject({ name: 'xterm-256color', cols: 120, rows: 40 })
+    expect(call.opts.encoding).toBeUndefined()
     const env = call.opts.env as Record<string, string>
     expect(env.TERM).toBe('xterm-256color')
     expect(Object.keys(env).every((k) => ['TERM', 'HOME', 'USER', 'PATH', 'SSH_AUTH_SOCK'].includes(k))).toBe(true)

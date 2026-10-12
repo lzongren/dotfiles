@@ -65,5 +65,5 @@ export function spawnAttachPty(host: string, name: string, cols: number, rows: n
     const value = process.env[key]
     if (value !== undefined) env[key] = value
   }
-  return ptySpawn(file, args, { name: 'xterm-256color', cols, rows, env, encoding: null })
+  return ptySpawn(file, args, { name: 'xterm-256color', cols, rows, env })
 }

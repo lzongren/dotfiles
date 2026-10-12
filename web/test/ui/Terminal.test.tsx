@@ -154,6 +154,26 @@ describe('TerminalPane', () => {
     expect(decode(sockets[0].binaryPayloads()[0])).toBe('early')
   })
 
+  it('drops input typed into a closed pane instead of replaying it into the next session', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 0 })))
+    act(() => sockets[0].serverClose(1000))
+    act(() => xterms[0].dataCb?.('make deploy\r'))
+    fireEvent.click(screen.getByRole('button', { name: 'reconnect' }))
+    act(() => sockets[1].serverReady())
+    expect(sockets[1].binaryPayloads()).toHaveLength(0)
+  })
+
+  it('caps input queued while connecting', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => xterms[0].dataCb?.('a'.repeat(60 * 1024)))
+    act(() => xterms[0].dataCb?.('b'.repeat(10 * 1024)))
+    act(() => sockets[0].serverReady())
+    const sent = sockets[0].binaryPayloads().reduce((n, f) => n + f.length, 0)
+    expect(sent).toBe(60 * 1024)
+  })
+
   it('splits a large paste into 16 KiB binary frames', () => {
     render(<TerminalPane name="api" active />)
     act(() => sockets[0].serverReady())
@@ -206,14 +226,15 @@ describe('TerminalPane', () => {
     expect(sockets).toHaveLength(2)
   })
 
-  it('backs off exponentially across failed handshakes and resets only after ready', () => {
+  it('backs off exponentially across failed attempts and resets only after a healthy connection', () => {
     render(<TerminalPane name="api" active />)
     act(() => sockets[0].serverClose(1013))
     act(() => {
       vi.advanceTimersByTime(500)
     })
     expect(sockets).toHaveLength(2)
-    act(() => sockets[1].serverClose(1013))
+    act(() => sockets[1].serverReady())
+    act(() => sockets[1].serverClose(1006))
     act(() => {
       vi.advanceTimersByTime(999)
     })
@@ -223,11 +244,54 @@ describe('TerminalPane', () => {
     })
     expect(sockets).toHaveLength(3)
     act(() => sockets[2].serverReady())
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
     act(() => sockets[2].serverClose(1006))
     act(() => {
       vi.advanceTimersByTime(500)
     })
     expect(sockets).toHaveLength(4)
+  })
+
+  it('stops retrying after repeated failures and offers a manual reconnect', () => {
+    render(<TerminalPane name="api" active />)
+    for (let i = 0; i < 6; i += 1) {
+      act(() => sockets[sockets.length - 1].serverClose(1006))
+      act(() => {
+        vi.advanceTimersByTime(8000)
+      })
+    }
+    expect(sockets).toHaveLength(7)
+    act(() => sockets[6].serverClose(1006))
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(7)
+    expect(screen.getByRole('button', { name: 'reconnect' })).toBeInTheDocument()
+  })
+
+  it('does not hammer a persistently failing ssh: exit 255 right after ready backs off', () => {
+    render(<TerminalPane name="api" active />)
+    const failFast = (i: number) => {
+      act(() => sockets[i].serverReady())
+      act(() => sockets[i].serverMessage(JSON.stringify({ t: 'exit', code: 255 })))
+      act(() => sockets[i].serverClose(1000))
+    }
+    failFast(0)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(2)
+    failFast(1)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(2)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(3)
   })
 
   it('does not retry a rejected attach', () => {
@@ -279,7 +343,7 @@ describe('TerminalPane', () => {
 describe('TerminalTabs', () => {
   it('renders tabs, marks the active one, and keeps inactive panes mounted but hidden', () => {
     const { container } = render(
-      <TerminalTabs tabs={['api', 'main']} active="api" onSelect={() => {}} onClose={() => {}} />,
+      <TerminalTabs tabs={['api', 'main']} active="api" scrollKey={0} onSelect={() => {}} onClose={() => {}} />,
     )
     const tabButtons = screen.getAllByRole('tab')
     expect(tabButtons).toHaveLength(2)
@@ -294,24 +358,28 @@ describe('TerminalTabs', () => {
   it('fires select and close callbacks', () => {
     const onSelect = vi.fn()
     const onClose = vi.fn()
-    render(<TerminalTabs tabs={['api', 'main']} active="api" onSelect={onSelect} onClose={onClose} />)
+    render(<TerminalTabs tabs={['api', 'main']} active="api" scrollKey={0} onSelect={onSelect} onClose={onClose} />)
     fireEvent.click(screen.getAllByRole('tab')[1])
     expect(onSelect).toHaveBeenCalledWith('main')
     fireEvent.click(screen.getByRole('button', { name: 'close api' }))
     expect(onClose).toHaveBeenCalledWith('api')
   })
 
-  it('scrolls the terminal area into view when a tab becomes active', () => {
+  it('scrolls into view when a terminal is opened, not when switching tabs', () => {
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
-    const { rerender } = render(<TerminalTabs tabs={['api']} active={null} onSelect={() => {}} onClose={() => {}} />)
+    const props = { onSelect: () => {}, onClose: () => {} }
+    const { rerender } = render(<TerminalTabs tabs={['api']} active={null} scrollKey={0} {...props} />)
     expect(scroll).not.toHaveBeenCalled()
-    rerender(<TerminalTabs tabs={['api']} active="api" onSelect={() => {}} onClose={() => {}} />)
+    rerender(<TerminalTabs tabs={['api']} active="api" scrollKey={1} {...props} />)
+    expect(scroll).toHaveBeenCalledTimes(1)
+    rerender(<TerminalTabs tabs={['api', 'main']} active="main" scrollKey={1} {...props} />)
+    rerender(<TerminalTabs tabs={['api', 'main']} active="api" scrollKey={1} {...props} />)
     expect(scroll).toHaveBeenCalledTimes(1)
   })
 
   it('renders nothing without tabs', () => {
-    const { container } = render(<TerminalTabs tabs={[]} active={null} onSelect={() => {}} onClose={() => {}} />)
+    const { container } = render(<TerminalTabs tabs={[]} active={null} scrollKey={0} onSelect={() => {}} onClose={() => {}} />)
     expect(container).toBeEmptyDOMElement()
   })
 })

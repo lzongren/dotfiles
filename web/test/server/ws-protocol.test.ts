@@ -37,7 +37,7 @@ async function boot(): Promise<Harness> {
     port: () => h.port,
     sessions: async () => SNAPSHOT,
     ptyFactory: (_name, cols, rows): PtyLike => {
-      const pty = ptySpawn('/bin/bash', [stub], { name: 'xterm-256color', cols, rows, encoding: null })
+      const pty = ptySpawn('/bin/bash', [stub], { name: 'xterm-256color', cols, rows })
       pids.push(pty.pid)
       return pty
     },
@@ -103,7 +103,7 @@ function alive(pid: number): boolean {
 }
 
 describe('real pty bridge', () => {
-  it('echoes bytes through a real pty and resizes via SIGWINCH', async () => {
+  it('echoes bytes through a real pty and resizes the pty window', async () => {
     const h = await boot()
     const ws = connect(h)
     const seen = collector(ws)
@@ -114,7 +114,8 @@ describe('real pty bridge', () => {
     await waitFor(() => seen.output().includes('echo:hello'))
 
     ws.send(JSON.stringify({ t: 'resize', cols: 123, rows: 41 }))
-    await waitFor(() => /41 123/.test(seen.output()))
+    ws.send(Buffer.from('size\r'), { binary: true })
+    await waitFor(() => seen.output().includes('SIZE 41 123'))
 
     const exited = new Promise<number>((resolve) => ws.on('close', (code) => resolve(code)))
     ws.send(Buffer.from('exit\r'), { binary: true })
