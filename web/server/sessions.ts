@@ -10,7 +10,7 @@ export function parseStatusRaw(stdout: string): Session[] {
   const sessions: Session[] = []
   for (const line of trimmed.split('\n')) {
     const parts = line.split('|')
-    if (parts.length < 6) continue
+    if (parts.length < 7) continue
     const clients = Number.parseInt(parts[1], 10) || 0
     sessions.push({
       name: parts[0],
@@ -19,7 +19,8 @@ export function parseStatusRaw(stdout: string): Session[] {
       activityEpoch: Number.parseInt(parts[2], 10) || 0,
       bell: parts[3] === '1',
       cmd: parts[4],
-      path: parts.slice(5).join('|'),
+      title: parts[5],
+      path: parts.slice(6).join('|'),
       attachable: SESSION_NAME_RE.test(parts[0]),
     })
   }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createSession, getWorkspaces } from '../api'
 import type { AgentChoice, Session, Workspace } from '../shared/types'
 import { isValidSessionName } from '../shared/validate'
-import { ago } from './SessionTable'
+import { ago } from '../time'
 
 interface Item {
   key: string
@@ -74,6 +74,7 @@ export function WorkspacePalette({
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listId = useId()
@@ -120,6 +121,9 @@ export function WorkspacePalette({
   const activate = async (item: Item) => {
     setError(null)
     if (item.kind === 'live') {
+      setQuery('')
+      setSelectedKey(null)
+      inputRef.current?.blur()
       onOpen(item.name)
       return
     }
@@ -134,6 +138,7 @@ export function WorkspacePalette({
     if (result.kind === 'ok') {
       setQuery('')
       setSelectedKey(null)
+      inputRef.current?.blur()
       void refresh()
       onSessionsChanged?.()
       onOpen(item.name)
@@ -157,6 +162,7 @@ export function WorkspacePalette({
     } else if (event.key === 'Escape') {
       setQuery('')
       setSelectedKey(null)
+      inputRef.current?.blur()
     }
   }
 
@@ -168,7 +174,7 @@ export function WorkspacePalette({
           className="palette-input"
           type="text"
           role="combobox"
-          aria-expanded={items.length > 0}
+          aria-expanded={open && items.length > 0}
           aria-controls={listId}
           aria-activedescendant={current ? `${listId}-${current.key}` : undefined}
           aria-label="search or create a workspace"
@@ -179,6 +185,8 @@ export function WorkspacePalette({
             setSelectedKey(null)
           }}
           onKeyDown={onKeyDown}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
         />
         <div role="radiogroup" aria-label="agent" className="palette-agents">
           {AGENTS.map((a) => (
@@ -205,11 +213,11 @@ export function WorkspacePalette({
         ) : null}
       </div>
       {error !== null ? (
-        <p role="alert" className="banner">
+        <p role="alert" className="banner palette-error">
           {error}
         </p>
       ) : null}
-      <ul id={listId} role="listbox" className="palette-list">
+      <ul id={listId} role="listbox" className="palette-list" hidden={!open || items.length === 0}>
         {items.map((item) => (
           <li
             key={item.key}
@@ -219,6 +227,7 @@ export function WorkspacePalette({
             className="palette-item"
             data-kind={item.kind}
             onMouseEnter={() => setSelectedKey(item.key)}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (busy === null) void activate(item)
             }}

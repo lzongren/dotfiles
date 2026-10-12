@@ -343,14 +343,14 @@ describe('TerminalPane', () => {
 describe('TerminalTabs', () => {
   it('renders tabs, marks the active one, and keeps inactive panes mounted but hidden', () => {
     const { container } = render(
-      <TerminalTabs tabs={['api', 'main']} active="api" scrollKey={0} onSelect={() => {}} onClose={() => {}} />,
+      <TerminalTabs tabs={['api', 'main']} active="api" onSelect={() => {}} onClose={() => {}} />,
     )
     const tabButtons = screen.getAllByRole('tab')
     expect(tabButtons).toHaveLength(2)
     expect(tabButtons[0]).toHaveAttribute('aria-selected', 'true')
     const panes = container.querySelectorAll('.termpane')
     expect(panes).toHaveLength(2)
-    expect((panes[0] as HTMLElement).style.display).toBe('block')
+    expect((panes[0] as HTMLElement).style.display).toBe('flex')
     expect((panes[1] as HTMLElement).style.display).toBe('none')
     expect(sockets).toHaveLength(2)
   })
@@ -358,28 +358,15 @@ describe('TerminalTabs', () => {
   it('fires select and close callbacks', () => {
     const onSelect = vi.fn()
     const onClose = vi.fn()
-    render(<TerminalTabs tabs={['api', 'main']} active="api" scrollKey={0} onSelect={onSelect} onClose={onClose} />)
+    render(<TerminalTabs tabs={['api', 'main']} active="api" onSelect={onSelect} onClose={onClose} />)
     fireEvent.click(screen.getAllByRole('tab')[1])
     expect(onSelect).toHaveBeenCalledWith('main')
     fireEvent.click(screen.getByRole('button', { name: 'close api' }))
     expect(onClose).toHaveBeenCalledWith('api')
   })
 
-  it('scrolls into view when a terminal is opened, not when switching tabs', () => {
-    const scroll = vi.fn()
-    Element.prototype.scrollIntoView = scroll
-    const props = { onSelect: () => {}, onClose: () => {} }
-    const { rerender } = render(<TerminalTabs tabs={['api']} active={null} scrollKey={0} {...props} />)
-    expect(scroll).not.toHaveBeenCalled()
-    rerender(<TerminalTabs tabs={['api']} active="api" scrollKey={1} {...props} />)
-    expect(scroll).toHaveBeenCalledTimes(1)
-    rerender(<TerminalTabs tabs={['api', 'main']} active="main" scrollKey={1} {...props} />)
-    rerender(<TerminalTabs tabs={['api', 'main']} active="api" scrollKey={1} {...props} />)
-    expect(scroll).toHaveBeenCalledTimes(1)
-  })
-
   it('renders nothing without tabs', () => {
-    const { container } = render(<TerminalTabs tabs={[]} active={null} scrollKey={0} onSelect={() => {}} onClose={() => {}} />)
+    const { container } = render(<TerminalTabs tabs={[]} active={null} onSelect={() => {}} onClose={() => {}} />)
     expect(container).toBeEmptyDOMElement()
   })
 })

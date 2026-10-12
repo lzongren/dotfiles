@@ -1,26 +1,19 @@
-import { useEffect, useRef } from 'react'
 import { TerminalPane } from './Terminal'
 
 export function TerminalTabs({
   tabs,
   active,
-  scrollKey,
   onSelect,
   onClose,
 }: {
   tabs: string[]
   active: string | null
-  scrollKey: number
   onSelect: (name: string) => void
   onClose: (name: string) => void
 }) {
-  const sectionRef = useRef<HTMLElement | null>(null)
-  useEffect(() => {
-    if (scrollKey > 0) sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
-  }, [scrollKey])
   if (tabs.length === 0) return null
   return (
-    <section className="terminals" ref={sectionRef}>
+    <section className="terminals">
       <div className="tabstrip" role="tablist">
         {tabs.map((tab) => (
           <span key={tab} className="tab" data-active={tab === active}>
@@ -34,7 +27,7 @@ export function TerminalTabs({
         ))}
       </div>
       {tabs.map((tab) => (
-        <div key={tab} className="termpane" style={{ display: tab === active ? 'block' : 'none' }}>
+        <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }}>
           <TerminalPane name={tab} active={tab === active} />
         </div>
       ))}

@@ -6,7 +6,7 @@ import type { Session, Workspace, WorkspacesResponse } from '../../src/shared/ty
 const NOW = 1800000000
 
 function session(name: string, activityEpoch: number, attachable = true): Session {
-  return { name, attached: false, clients: 0, activityEpoch, bell: false, cmd: 'zsh', path: '/home/me', attachable }
+  return { name, attached: false, clients: 0, activityEpoch, bell: false, cmd: 'zsh', title: '', path: '/home/me', attachable }
 }
 
 const WORKSPACES: Workspace[] = [
@@ -59,6 +59,7 @@ async function renderPalette(onOpen = vi.fn(), onSessionsChanged = vi.fn()) {
   await act(async () => {
     await Promise.resolve()
   })
+  fireEvent.focus(screen.getByRole('combobox', { name: 'search or create a workspace' }))
   return Object.assign(onOpen, { view, onSessionsChanged })
 }
 
@@ -212,12 +213,23 @@ describe('WorkspacePalette', () => {
     expect(onOpen).toHaveBeenCalledWith('scratch')
   })
 
-  it('Escape clears the query', async () => {
+  it('Escape clears the query and closes the list', async () => {
     await renderPalette()
     fireEvent.change(input(), { target: { value: 'paper' } })
     fireEvent.keyDown(input(), { key: 'Escape' })
+    fireEvent.blur(input())
     expect(input()).toHaveValue('')
+    expect(screen.getByRole('listbox', { hidden: true })).not.toBeVisible()
+    fireEvent.focus(input())
     expect(options()).toHaveLength(4)
+  })
+
+  it('shows the list only while the search box is in use', async () => {
+    await renderPalette()
+    expect(input()).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.blur(input())
+    expect(input()).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('listbox', { hidden: true })).not.toBeVisible()
   })
 
   it('"/" focuses the search when nothing else has focus, but not while typing elsewhere', async () => {

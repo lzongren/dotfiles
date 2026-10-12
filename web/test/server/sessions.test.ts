@@ -23,16 +23,24 @@ describe('parseStatusRaw', () => {
       activityEpoch: 1791700000,
       bell: false,
       cmd: 'zsh',
+      title: '',
       path: '/home/me',
       attachable: true,
     })
-    expect(rows[1]).toMatchObject({ name: 'cc-atx', attached: true, clients: 2, bell: true, cmd: 'claude' })
+    expect(rows[1]).toMatchObject({
+      name: 'cc-atx',
+      attached: true,
+      clients: 2,
+      bell: true,
+      cmd: 'claude',
+      title: '✳ Fix the flaky retry test',
+    })
     expect(rows[2]).toMatchObject({ name: 'api - ~/work/api', attachable: false, attached: true, clients: 1 })
-    expect(rows[3]).toMatchObject({ name: 'logs', path: '/home/me/logs|archive' })
+    expect(rows[3]).toMatchObject({ name: 'logs', title: 'Review the work ¦ logs', path: '/home/me/logs|archive' })
   })
 
   it('rejoins a path containing pipes instead of dropping fields', () => {
-    const rows = parseStatusRaw('x|1|5|0|zsh|/home/me/a|b')
+    const rows = parseStatusRaw('x|1|5|0|zsh|t|/home/me/a|b')
     expect(rows[0].path).toBe('/home/me/a|b')
   })
 
@@ -42,7 +50,7 @@ describe('parseStatusRaw', () => {
   })
 
   it('skips malformed lines', () => {
-    expect(parseStatusRaw('garbage\nx|1|5|0|zsh|/p')).toHaveLength(1)
+    expect(parseStatusRaw('garbage\nx|1|5|0|zsh|/p\nx|1|5|0|zsh||/p')).toHaveLength(1)
   })
 })
 

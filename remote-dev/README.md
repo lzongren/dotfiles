@@ -123,10 +123,15 @@ browser ──HTTP + WebSocket──► node server on 127.0.0.1:7733 (per-run t
                                  └─ terminal tab  ◄── ssh -t HOST tmux attach
 ```
 
-Click a session to open it in a terminal tab; each tab is an ordinary tmux
-client, so closing the tab detaches without touching the session. Rows whose
-names don't match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached
-from the web. The server binds 127.0.0.1 only; the token arrives in the URL
+The sidebar lists every session, most recent first, with a headline: the
+title the agent gives its terminal (Claude Code and Codex keep it current).
+Click one to open it in a terminal tab beside the list; each tab is an
+ordinary tmux client, so closing the tab detaches without touching the
+session. Press `/` to search: Enter attaches a running session, starts the
+chosen agent in an existing workspace folder, or creates a new one with the
+same rules as `devbox --cc <name>` from a synced root. Rows whose names don't
+match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached from the
+web. The server binds 127.0.0.1 only; the token arrives in the URL
 fragment and every request must carry it. Override the port with
 `DEVBOX_WEB_PORT` or `--port`.
 

@@ -5,6 +5,7 @@ export interface Session {
   activityEpoch: number
   bell: boolean
   cmd: string
+  title: string
   path: string
   attachable: boolean
 }

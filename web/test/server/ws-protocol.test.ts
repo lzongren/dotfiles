@@ -13,7 +13,7 @@ const SNAPSHOT: SessionsResponse = {
   host: 'stub-host',
   fetchedAt: 0,
   sessions: [
-    { name: 'api', attached: false, clients: 0, activityEpoch: 0, bell: false, cmd: 'zsh', path: '/home/me', attachable: true },
+    { name: 'api', attached: false, clients: 0, activityEpoch: 0, bell: false, cmd: 'zsh', title: '', path: '/home/me', attachable: true },
   ],
 }
 

@@ -48,7 +48,7 @@ class FakePty implements PtyLike {
 }
 
 function session(name: string, attachable = true) {
-  return { name, attached: false, clients: 0, activityEpoch: 0, bell: false, cmd: 'zsh', path: '/home/me', attachable }
+  return { name, attached: false, clients: 0, activityEpoch: 0, bell: false, cmd: 'zsh', title: '', path: '/home/me', attachable }
 }
 
 const SNAPSHOT: SessionsResponse = {

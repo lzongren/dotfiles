@@ -43,7 +43,7 @@ if [ -z "$raw" ]; then
   exit 0
 fi
 
-# Raw format: name|attached|activity|bell|cmd|path (see lib.sh devbox_status_lines).
+# Raw format: name|attached|activity|bell|cmd|title|path (see lib.sh devbox_status_lines).
 # attached can be >1 (multiple clients), so compare against 0, not 1.
 total="$(wc -l <<<"$raw" | tr -d ' ')"
 attached="$(awk -F'|' '$2 != 0' <<<"$raw" | wc -l | tr -d ' ')"
@@ -60,7 +60,7 @@ fi
 echo "---"
 
 now="$(date +%s)"
-while IFS='|' read -r name att act bell cmd path; do
+while IFS='|' read -r name att act bell cmd _title path; do
   [ -n "$name" ] || continue
 
   # Compact idle time
