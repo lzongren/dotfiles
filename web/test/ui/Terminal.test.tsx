@@ -28,10 +28,23 @@ const hoisted = vi.hoisted(() => {
       return { dispose: vi.fn() }
     }
   }
-  return { FakeXTerm }
+  class FakeWebgl {
+    static instances: FakeWebgl[] = []
+    dispose = vi.fn()
+    lossCb: (() => void) | null = null
+    constructor() {
+      FakeWebgl.instances.push(this)
+    }
+    onContextLoss(cb: () => void) {
+      this.lossCb = cb
+      return { dispose: vi.fn() }
+    }
+  }
+  return { FakeXTerm, FakeWebgl }
 })
 
 const xterms = hoisted.FakeXTerm.instances
+const webgls = hoisted.FakeWebgl.instances
 
 vi.mock('@xterm/xterm', () => ({ Terminal: hoisted.FakeXTerm }))
 vi.mock('@xterm/addon-fit', () => ({
@@ -39,19 +52,17 @@ vi.mock('@xterm/addon-fit', () => ({
     fit = vi.fn()
   },
 }))
-vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }))
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: hoisted.FakeWebgl }))
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
 
 const sockets: FakeWebSocket[] = []
 
 class FakeWebSocket {
   static OPEN = 1
-  static instances = sockets
   url: string
   binaryType = 'blob'
-  readyState = 0
-  send = vi.fn()
-  onopen: (() => void) | null = null
+  readyState = 1
+  sent: Array<string | Uint8Array> = []
   onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null
   onclose: ((event: { code: number }) => void) | null = null
 
@@ -59,21 +70,32 @@ class FakeWebSocket {
     this.url = url
     sockets.push(this)
   }
+  send(data: string | Uint8Array) {
+    this.sent.push(typeof data === 'string' ? data : Uint8Array.from(data))
+  }
   close(code = 1005) {
     this.serverClose(code)
   }
-  serverOpen() {
-    this.readyState = 1
-    this.onopen?.()
+  serverReady() {
+    this.onmessage?.({ data: JSON.stringify({ t: 'ready' }) })
   }
   serverMessage(data: string | ArrayBuffer) {
     this.onmessage?.({ data })
   }
   serverClose(code: number) {
+    if (this.readyState === 3) return
     this.readyState = 3
     this.onclose?.({ code })
   }
+  binaryPayloads(): Uint8Array[] {
+    return this.sent.filter((d): d is Uint8Array => typeof d !== 'string')
+  }
+  controls(): Array<Record<string, unknown>> {
+    return this.sent.filter((d): d is string => typeof d === 'string').map((d) => JSON.parse(d) as Record<string, unknown>)
+  }
 }
+
+let visibility: DocumentVisibilityState = 'visible'
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -86,7 +108,10 @@ beforeEach(() => {
       disconnect() {}
     },
   )
+  visibility = 'visible'
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility })
   xterms.length = 0
+  webgls.length = 0
   sockets.length = 0
 })
 
@@ -95,6 +120,8 @@ afterEach(() => {
   vi.useRealTimers()
   sessionStorage.clear()
 })
+
+const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 
 describe('TerminalPane', () => {
   it('opens a websocket with the token, session, and initial size', () => {
@@ -109,44 +136,84 @@ describe('TerminalPane', () => {
     expect(sockets[0].binaryType).toBe('arraybuffer')
   })
 
-  it('writes binary frames into the terminal and forwards keystrokes', () => {
+  it('sends keystrokes as binary frames, never as text', () => {
     render(<TerminalPane name="api" active />)
-    act(() => sockets[0].serverOpen())
+    act(() => sockets[0].serverReady())
+    act(() => xterms[0].dataCb?.('ls\r'))
+    const binary = sockets[0].binaryPayloads()
+    expect(binary).toHaveLength(1)
+    expect(decode(binary[0])).toBe('ls\r')
+    expect(sockets[0].sent.filter((d) => d === 'ls\r')).toHaveLength(0)
+  })
+
+  it('queues input typed before ready and flushes it after ready', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => xterms[0].dataCb?.('early'))
+    expect(sockets[0].binaryPayloads()).toHaveLength(0)
+    act(() => sockets[0].serverReady())
+    expect(decode(sockets[0].binaryPayloads()[0])).toBe('early')
+  })
+
+  it('splits a large paste into 16 KiB binary frames', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => xterms[0].dataCb?.('x'.repeat(40 * 1024)))
+    const frames = sockets[0].binaryPayloads()
+    expect(frames.map((f) => f.length)).toEqual([16384, 16384, 8192])
+  })
+
+  it('writes binary frames from the server into the terminal', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
     act(() => sockets[0].serverMessage(new TextEncoder().encode('hi').buffer as ArrayBuffer))
     expect(xterms[0].write).toHaveBeenCalledWith(new Uint8Array([104, 105]))
-    act(() => xterms[0].dataCb?.('ls'))
-    expect(sockets[0].send).toHaveBeenCalledWith('ls')
   })
 
-  it('sends resize control frames from terminal resizes', () => {
+  it('sends its current size on ready and on every resize', () => {
     render(<TerminalPane name="api" active />)
-    act(() => sockets[0].serverOpen())
+    act(() => sockets[0].serverReady())
+    expect(sockets[0].controls()).toEqual([{ t: 'resize', cols: 80, rows: 24 }])
     act(() => xterms[0].resizeCb?.({ cols: 120, rows: 40 }))
-    expect(sockets[0].send).toHaveBeenCalledWith(JSON.stringify({ t: 'resize', cols: 120, rows: 40 }))
+    xterms[0].cols = 120
+    xterms[0].rows = 40
+    act(() => xterms[0].resizeCb?.({ cols: 120, rows: 40 }))
+    expect(sockets[0].controls().at(-1)).toEqual({ t: 'resize', cols: 120, rows: 40 })
   })
 
-  it('shows the exit note and reconnects manually on the same terminal instance', () => {
+  it('treats a clean session exit as final and reconnects manually on the same terminal', () => {
     render(<TerminalPane name="api" active />)
-    act(() => sockets[0].serverOpen())
+    act(() => sockets[0].serverReady())
     act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 0 })))
     act(() => sockets[0].serverClose(1000))
     expect(xterms[0].writeln).toHaveBeenCalledWith(expect.stringContaining('session ended'))
-    const button = screen.getByRole('button', { name: 'reconnect' })
-    fireEvent.click(button)
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'reconnect' }))
     expect(sockets).toHaveLength(2)
     expect(xterms).toHaveLength(1)
   })
 
-  it('auto-reconnects with exponential backoff after an unexpected close', () => {
+  it('auto-reconnects when ssh itself failed (exit 255)', () => {
     render(<TerminalPane name="api" active />)
-    act(() => sockets[0].serverOpen())
-    act(() => sockets[0].serverClose(1006))
-    expect(sockets).toHaveLength(1)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 255 })))
+    act(() => sockets[0].serverClose(1000))
     act(() => {
       vi.advanceTimersByTime(500)
     })
     expect(sockets).toHaveLength(2)
-    act(() => sockets[1].serverClose(1006))
+  })
+
+  it('backs off exponentially across failed handshakes and resets only after ready', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverClose(1013))
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(2)
+    act(() => sockets[1].serverClose(1013))
     act(() => {
       vi.advanceTimersByTime(999)
     })
@@ -155,6 +222,12 @@ describe('TerminalPane', () => {
       vi.advanceTimersByTime(1)
     })
     expect(sockets).toHaveLength(3)
+    act(() => sockets[2].serverReady())
+    act(() => sockets[2].serverClose(1006))
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(sockets).toHaveLength(4)
   })
 
   it('does not retry a rejected attach', () => {
@@ -167,9 +240,32 @@ describe('TerminalPane', () => {
     expect(screen.getByText('attach rejected')).toBeInTheDocument()
   })
 
+  it('waits for the tab to be visible again instead of retrying in the background', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    visibility = 'hidden'
+    act(() => sockets[0].serverClose(1006))
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(sockets).toHaveLength(1)
+    visibility = 'visible'
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(sockets).toHaveLength(2)
+  })
+
+  it('drops the WebGL renderer when its context is lost', () => {
+    render(<TerminalPane name="api" active />)
+    expect(webgls).toHaveLength(1)
+    act(() => webgls[0].lossCb?.())
+    expect(webgls[0].dispose).toHaveBeenCalled()
+  })
+
   it('closes the socket and disposes the terminal on unmount without reconnecting', () => {
     const { unmount } = render(<TerminalPane name="api" active />)
-    act(() => sockets[0].serverOpen())
+    act(() => sockets[0].serverReady())
     unmount()
     expect(sockets[0].readyState).toBe(3)
     expect(xterms[0].dispose).toHaveBeenCalled()
@@ -203,6 +299,15 @@ describe('TerminalTabs', () => {
     expect(onSelect).toHaveBeenCalledWith('main')
     fireEvent.click(screen.getByRole('button', { name: 'close api' }))
     expect(onClose).toHaveBeenCalledWith('api')
+  })
+
+  it('scrolls the terminal area into view when a tab becomes active', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const { rerender } = render(<TerminalTabs tabs={['api']} active={null} onSelect={() => {}} onClose={() => {}} />)
+    expect(scroll).not.toHaveBeenCalled()
+    rerender(<TerminalTabs tabs={['api']} active="api" onSelect={() => {}} onClose={() => {}} />)
+    expect(scroll).toHaveBeenCalledTimes(1)
   })
 
   it('renders nothing without tabs', () => {

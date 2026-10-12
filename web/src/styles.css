@@ -47,6 +47,7 @@ h1 {
 
 table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -68,6 +69,23 @@ th {
 td {
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+th.state,
+th.idle,
+th.bell {
+  width: 72px;
+}
+
+th.name {
+  width: 32%;
+}
+
+th.cmd {
+  width: 110px;
 }
 
 tbody tr:last-child td {
@@ -106,6 +124,12 @@ tbody tr:hover {
 
 .path {
   color: var(--dim);
+}
+
+.path span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bell-badge {
@@ -153,6 +177,11 @@ tbody tr:hover {
   font-weight: 600;
   cursor: pointer;
   padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .name .attach:hover {

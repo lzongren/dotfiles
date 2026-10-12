@@ -94,6 +94,13 @@ describe('App', () => {
     expect(regions[0]).toHaveTextContent('cc-atx needs attention')
   })
 
+  it('truncates long paths visually but keeps the full path in a tooltip', async () => {
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    render(<App />)
+    await flush()
+    expect(screen.getByText('/home/me/work/atx')).toHaveAttribute('title', '/home/me/work/atx')
+  })
+
   it('dims an unattachable row and explains it in a tooltip', async () => {
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)

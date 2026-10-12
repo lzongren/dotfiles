@@ -37,7 +37,7 @@ async function boot(): Promise<Harness> {
     port: () => h.port,
     sessions: async () => SNAPSHOT,
     ptyFactory: (_name, cols, rows): PtyLike => {
-      const pty = ptySpawn('/bin/bash', [stub], { name: 'xterm-256color', cols, rows })
+      const pty = ptySpawn('/bin/bash', [stub], { name: 'xterm-256color', cols, rows, encoding: null })
       pids.push(pty.pid)
       return pty
     },

@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http'
+import { connect as netConnect } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { WebSocket } from 'ws'
 import { attachTerminalServer, type PtyLike, type TerminalDeps } from '../../server/terminal.js'
@@ -6,15 +7,15 @@ import type { SessionsResponse } from '../../src/shared/types.js'
 
 class FakePty implements PtyLike {
   pid = 1
-  writes: string[] = []
+  writes: Array<string | Buffer> = []
   resizes: Array<[number, number]> = []
   killed: string[] = []
   pauseCount = 0
   resumeCount = 0
-  private dataCb: ((data: string) => void) | null = null
+  private dataCb: ((data: string | Buffer) => void) | null = null
   private exitCb: ((event: { exitCode: number; signal?: number }) => void) | null = null
 
-  write(data: string): void {
+  write(data: string | Buffer): void {
     this.writes.push(data)
   }
   resize(cols: number, rows: number): void {
@@ -30,13 +31,13 @@ class FakePty implements PtyLike {
   resume(): void {
     this.resumeCount += 1
   }
-  onData(listener: (data: string) => void): void {
+  onData(listener: (data: string | Buffer) => void): void {
     this.dataCb = listener
   }
   onExit(listener: (event: { exitCode: number; signal?: number }) => void): void {
     this.exitCb = listener
   }
-  emitData(data: string): void {
+  emitData(data: string | Buffer): void {
     this.dataCb?.(data)
   }
   emitExit(exitCode: number): void {
@@ -117,6 +118,32 @@ function closedWith(ws: WebSocket): Promise<number> {
   return new Promise((resolve) => ws.on('close', (code) => resolve(code)))
 }
 
+function refusedWith(ws: WebSocket): Promise<number> {
+  return new Promise((resolve) =>
+    ws.on('unexpected-response', (req, res) => {
+      req.destroy()
+      resolve(res.statusCode ?? 0)
+    }),
+  )
+}
+
+function rawUpgrade(port: number, target: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const sock = netConnect(port, '127.0.0.1', () => {
+      sock.write(
+        `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n',
+      )
+    })
+    let data = ''
+    sock.on('data', (chunk: Buffer) => {
+      data += chunk.toString()
+    })
+    sock.on('close', () => resolve(data))
+    sock.on('error', reject)
+  })
+}
+
 function nextMessage(ws: WebSocket): Promise<{ data: Buffer; isBinary: boolean }> {
   return new Promise((resolve) =>
     ws.once('message', (data, isBinary) => resolve({ data: data as Buffer, isBinary })),
@@ -143,14 +170,55 @@ describe('terminal upgrade gate', () => {
     expect(h.ptys).toHaveLength(0)
   })
 
-  it('rejects a bad Host header with 4403', async () => {
+  it('refuses a bad Host header before the handshake', async () => {
     const h = await boot()
-    expect(await closedWith(connect(h, {}, { Host: 'evil.example:1' }))).toBe(4403)
+    expect(await refusedWith(connect(h, {}, { Host: 'evil.example:1' }))).toBe(403)
   })
 
-  it('rejects a bad Origin with 4403', async () => {
+  it('refuses a bad Origin before the handshake', async () => {
     const h = await boot()
-    expect(await closedWith(connect(h, {}, { Origin: 'http://evil.example' }))).toBe(4403)
+    expect(await refusedWith(connect(h, {}, { Origin: 'http://evil.example' }))).toBe(403)
+  })
+
+  it('answers a malformed upgrade target with 400 and keeps serving', async () => {
+    const h = await boot()
+    expect(await rawUpgrade(h.port, 'http://[')).toMatch(/^HTTP\/1\.1 400/)
+    const ws = connect(h)
+    await ready(ws)
+    ws.close()
+  })
+
+  it('survives an invalid frame from a client without crashing', async () => {
+    const h = await boot({
+      sessions: () => new Promise((resolve) => setTimeout(() => resolve(SNAPSHOT), 100)),
+    })
+    const bad = connect(h)
+    await new Promise<void>((resolve) => bad.on('open', () => resolve()))
+    const socket = (bad as unknown as { _socket: { write(b: Buffer): void } })._socket
+    socket.write(Buffer.from([0x83, 0x80, 0, 0, 0, 0]))
+    await closedWith(bad)
+    const ws = connect(h)
+    await ready(ws)
+    ws.close()
+  })
+
+  it('does not spawn a pty when the client leaves while the gate is still checking', async () => {
+    const h = await boot({
+      sessions: () => new Promise((resolve) => setTimeout(() => resolve(SNAPSHOT), 150)),
+    })
+    const ws = connect(h)
+    await new Promise<void>((resolve) => ws.on('open', () => resolve()))
+    ws.close()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(h.ptys).toHaveLength(0)
+    expect(h.terminals.count()).toBe(0)
+  })
+
+  it('asks the client to retry later when the session list is unavailable', async () => {
+    const h = await boot({
+      sessions: () => Promise.reject(new Error('remote down')),
+    })
+    expect(await closedWith(connect(h))).toBe(1013)
   })
 
   it('rejects invalid, unknown, and unattachable session names with 4404', async () => {
@@ -198,7 +266,13 @@ describe('terminal data plane', () => {
 
     ws.send(Buffer.from('ls -la\r'), { binary: true })
     await waitFor(() => pty.writes.length === 1)
-    expect(pty.writes[0]).toBe('ls -la\r')
+    expect(Buffer.from(pty.writes[0]).toString()).toBe('ls -la\r')
+
+    ws.send('not a control message')
+    ws.send(JSON.stringify({ t: 'resize', cols: 100, rows: 30 }))
+    await waitFor(() => pty.resizes.length === 1)
+    expect(pty.writes).toHaveLength(1)
+    pty.resizes.length = 0
 
     ws.send(JSON.stringify({ t: 'resize', cols: 9999, rows: 0 }))
     await waitFor(() => pty.resizes.length === 1)
@@ -236,6 +310,17 @@ describe('terminal data plane', () => {
     ws.send(Buffer.alloc(64 * 1024 + 1), { binary: true })
     expect(await closedWith(ws)).toBe(1009)
     expect(h.ptys[0].writes).toHaveLength(0)
+  })
+
+  it('forwards raw non-UTF-8 output bytes unchanged', async () => {
+    const h = await boot()
+    const ws = connect(h)
+    await ready(ws)
+    const incoming = nextMessage(ws)
+    h.ptys[0].emitData(Buffer.from([0xff, 0xfe, 0x41]))
+    const got = await incoming
+    expect([...got.data]).toEqual([0xff, 0xfe, 0x41])
+    ws.close()
   })
 
   it('pauses the pty above the high-water mark and resumes after the client drains', async () => {

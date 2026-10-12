@@ -8,14 +8,11 @@ import { getToken } from '../token'
 type Status = 'connecting' | 'connected' | 'closed' | 'rejected'
 
 const REJECT_CODES = [4401, 4403, 4404, 1011]
+const CHUNK = 16 * 1024
+const SSH_FAILED = 255
 
 export function TerminalPane({ name, active }: { name: string; active: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const termRef = useRef<XTerm | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
-  const retryRef = useRef(0)
-  const timerRef = useRef<number | null>(null)
-  const closedByUs = useRef(false)
   const reconnectRef = useRef<() => void>(() => undefined)
   const [status, setStatus] = useState<Status>('connecting')
 
@@ -28,10 +25,11 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
-    termRef.current = term
     if (containerRef.current) term.open(containerRef.current)
     try {
-      term.loadAddon(new WebglAddon())
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => webgl.dispose())
+      term.loadAddon(webgl)
     } catch {
       void 0
     }
@@ -41,14 +39,32 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
       void 0
     }
 
-    const dataSub = term.onData((data) => {
-      const ws = wsRef.current
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data)
-    })
-    const resizeSub = term.onResize(({ cols, rows }) => {
-      const ws = wsRef.current
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'resize', cols, rows }))
-    })
+    const encoder = new TextEncoder()
+    let ws: WebSocket | null = null
+    let ready = false
+    let queued: string[] = []
+    let retry = 0
+    let retryTimer: number | null = null
+    let lastExit: number | null = null
+    let resumeWhenVisible = false
+    let disposed = false
+
+    const sendInput = (data: string) => {
+      if (!ws || !ready || ws.readyState !== WebSocket.OPEN) {
+        queued.push(data)
+        return
+      }
+      const bytes = encoder.encode(data)
+      for (let i = 0; i < bytes.length; i += CHUNK) ws.send(bytes.subarray(i, i + CHUNK))
+    }
+    const sendResize = () => {
+      if (ws && ready && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows }))
+      }
+    }
+
+    const dataSub = term.onData(sendInput)
+    const resizeSub = term.onResize(sendResize)
 
     let fitTimer: number | null = null
     const observer = new ResizeObserver(() => {
@@ -63,7 +79,22 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
     })
     if (containerRef.current) observer.observe(containerRef.current)
 
-    const connect = () => {
+    const scheduleRetry = () => {
+      if (document.visibilityState === 'hidden') {
+        resumeWhenVisible = true
+        setStatus('closed')
+        return
+      }
+      setStatus('connecting')
+      const delay = Math.min(8000, 500 * 2 ** retry)
+      retry += 1
+      retryTimer = window.setTimeout(connect, delay)
+    }
+
+    function connect() {
+      retryTimer = null
+      ready = false
+      lastExit = null
       setStatus('connecting')
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
       const params = new URLSearchParams({
@@ -72,64 +103,78 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
         cols: String(term.cols),
         rows: String(term.rows),
       })
-      const ws = new WebSocket(`${proto}://${window.location.host}/ws/terminal?${params.toString()}`)
-      ws.binaryType = 'arraybuffer'
-      wsRef.current = ws
-      ws.onopen = () => {
-        retryRef.current = 0
-        setStatus('connected')
-      }
-      ws.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
-        if (typeof event.data === 'string') {
-          let msg: { t?: string; code?: number; msg?: string }
-          try {
-            msg = JSON.parse(event.data) as typeof msg
-          } catch {
-            return
-          }
-          if (msg.t === 'exit') term.writeln(`\r\n[session ended (exit ${msg.code ?? 0})]`)
-          if (msg.t === 'error') term.writeln(`\r\n[${msg.msg ?? 'error'}]`)
-        } else {
+      const socket = new WebSocket(`${proto}://${window.location.host}/ws/terminal?${params.toString()}`)
+      socket.binaryType = 'arraybuffer'
+      ws = socket
+      socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
+        if (typeof event.data !== 'string') {
           term.write(new Uint8Array(event.data))
+          return
+        }
+        let msg: { t?: string; code?: number; msg?: string }
+        try {
+          msg = JSON.parse(event.data) as typeof msg
+        } catch {
+          return
+        }
+        if (msg.t === 'ready') {
+          ready = true
+          retry = 0
+          setStatus('connected')
+          sendResize()
+          const pending = queued
+          queued = []
+          for (const data of pending) sendInput(data)
+        } else if (msg.t === 'exit') {
+          lastExit = msg.code ?? 0
+          term.writeln(`\r\n[session ended (exit ${lastExit})]`)
+        } else if (msg.t === 'error') {
+          term.writeln(`\r\n[${msg.msg ?? 'error'}]`)
         }
       }
-      ws.onclose = (event: CloseEvent) => {
-        wsRef.current = null
-        if (closedByUs.current) return
+      socket.onclose = (event: CloseEvent) => {
+        if (ws === socket) ws = null
+        ready = false
+        if (disposed) return
         if (REJECT_CODES.includes(event.code)) {
           setStatus('rejected')
           return
         }
-        if (event.code === 1000 || event.code === 1001) {
+        if (event.code === 1001 || (event.code === 1000 && lastExit !== SSH_FAILED)) {
           setStatus('closed')
           return
         }
-        if (document.visibilityState === 'hidden') {
-          setStatus('closed')
-          return
-        }
-        setStatus('connecting')
-        const delay = Math.min(8000, 500 * 2 ** retryRef.current)
-        retryRef.current += 1
-        timerRef.current = window.setTimeout(connect, delay)
+        scheduleRetry()
       }
     }
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && resumeWhenVisible) {
+        resumeWhenVisible = false
+        retry = 0
+        connect()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     reconnectRef.current = () => {
-      retryRef.current = 0
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
+      resumeWhenVisible = false
+      retry = 0
       connect()
     }
     connect()
 
     return () => {
-      closedByUs.current = true
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current)
+      disposed = true
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
       if (fitTimer !== null) window.clearTimeout(fitTimer)
+      document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()
-      wsRef.current?.close()
+      ws?.close()
       dataSub.dispose()
       resizeSub.dispose()
       term.dispose()
-      termRef.current = null
     }
   }, [name])
 

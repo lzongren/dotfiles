@@ -1,7 +1,15 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+const ptyCalls = vi.hoisted(() => [] as Array<{ file: string; args: string[]; opts: Record<string, unknown> }>)
+vi.mock('node-pty', () => ({
+  spawn: (file: string, args: string[], opts: Record<string, unknown>) => {
+    ptyCalls.push({ file, args, opts })
+    return { pid: 1 }
+  },
+}))
 import * as exec from '../../server/exec.js'
 import { isValidHost, isValidSessionName } from '../../src/shared/validate.js'
 
@@ -82,6 +90,19 @@ describe('spawn site discipline', () => {
         expect(source, `${file} must not spawn ptys`).not.toContain('node-pty')
       }
     }
+  })
+
+  it('spawns the attach pty with raw bytes, xterm-256color, and a minimal env', () => {
+    ptyCalls.length = 0
+    exec.spawnAttachPty('stub-host', 'api', 120, 40)
+    expect(ptyCalls).toHaveLength(1)
+    const call = ptyCalls[0]
+    expect(call.file).toBe('ssh')
+    expect(call.args).toEqual(exec.attachArgv('stub-host', 'api').slice(1))
+    expect(call.opts).toMatchObject({ name: 'xterm-256color', cols: 120, rows: 40, encoding: null })
+    const env = call.opts.env as Record<string, string>
+    expect(env.TERM).toBe('xterm-256color')
+    expect(Object.keys(env).every((k) => ['TERM', 'HOME', 'USER', 'PATH', 'SSH_AUTH_SOCK'].includes(k))).toBe(true)
   })
 
   it('builds the frozen attach argv with keepalives and exact-match quoting', () => {

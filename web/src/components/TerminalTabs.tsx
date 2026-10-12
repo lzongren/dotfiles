@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { TerminalPane } from './Terminal'
 
 export function TerminalTabs({
@@ -11,9 +12,13 @@ export function TerminalTabs({
   onSelect: (name: string) => void
   onClose: (name: string) => void
 }) {
+  const sectionRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (active !== null) sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  }, [active])
   if (tabs.length === 0) return null
   return (
-    <section className="terminals">
+    <section className="terminals" ref={sectionRef}>
       <div className="tabstrip" role="tablist">
         {tabs.map((tab) => (
           <span key={tab} className="tab" data-active={tab === active}>
