@@ -3,11 +3,13 @@ import { TerminalPane } from './Terminal'
 export function TerminalTabs({
   tabs,
   active,
+  focusSignal = 0,
   onSelect,
   onClose,
 }: {
   tabs: string[]
   active: string | null
+  focusSignal?: number
   onSelect: (name: string) => void
   onClose: (name: string) => void
 }) {
@@ -28,7 +30,7 @@ export function TerminalTabs({
       </div>
       {tabs.map((tab) => (
         <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }}>
-          <TerminalPane name={tab} active={tab === active} />
+          <TerminalPane name={tab} active={tab === active} focusSignal={tab === active ? focusSignal : 0} />
         </div>
       ))}
     </section>

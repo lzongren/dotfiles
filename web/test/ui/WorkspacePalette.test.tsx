@@ -245,6 +245,20 @@ describe('WorkspacePalette', () => {
     expect(input()).not.toHaveAttribute('aria-activedescendant')
   })
 
+  it('keeps the list visible beside a start error, so the selection and ARIA stay truthful', async () => {
+    postReply = () => json({ error: 'remote_unreachable', message: 'could not start x' }, 502)
+    await renderPalette()
+    fireEvent.change(input(), { target: { value: 'fresh-idea' } })
+    await act(async () => {
+      fireEvent.keyDown(input(), { key: 'Enter' })
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('could not start x')
+    expect(screen.getByRole('listbox', { hidden: true })).toBeVisible()
+    expect(input()).toHaveAttribute('aria-expanded', 'true')
+    const pointed = document.getElementById(input().getAttribute('aria-activedescendant') ?? '')
+    expect(pointed).toBeVisible()
+  })
+
   it('clears a start error as soon as the query changes or the palette closes', async () => {
     postReply = () => json({ error: 'remote_unreachable', message: 'could not start x' }, 502)
     await renderPalette()

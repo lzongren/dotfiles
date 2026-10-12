@@ -328,6 +328,24 @@ describe('TerminalPane', () => {
     expect(xterms[0].focus).toHaveBeenCalled()
   })
 
+  it('does not grab focus on a reconnect while the user is typing elsewhere', () => {
+    render(<TerminalPane name="api" active />)
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+    xterms[0].focus.mockClear()
+    act(() => sockets[0].serverReady())
+    expect(xterms[0].focus).not.toHaveBeenCalled()
+    elsewhere.remove()
+  })
+
+  it('focuses again on every open request for the active tab', () => {
+    const { rerender } = render(<TerminalPane name="api" active focusSignal={1} />)
+    xterms[0].focus.mockClear()
+    rerender(<TerminalPane name="api" active focusSignal={2} />)
+    expect(xterms[0].focus).toHaveBeenCalledTimes(1)
+  })
+
   it('does not steal focus for a background tab, but takes it when activated', () => {
     const { rerender } = render(<TerminalPane name="api" active={false} />)
     act(() => sockets[0].serverReady())

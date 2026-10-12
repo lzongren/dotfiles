@@ -226,7 +226,8 @@ export function WorkspacePalette({
           </select>
         ) : null}
       </div>
-      {open && error !== null ? (
+      <div className="palette-pop" hidden={!open || (items.length === 0 && error === null)}>
+      {error !== null ? (
         <p role="alert" className="banner palette-error">
           {error}
         </p>
@@ -235,7 +236,7 @@ export function WorkspacePalette({
         id={listId}
         role="listbox"
         className="palette-list"
-        hidden={!open || items.length === 0 || error !== null}
+        hidden={items.length === 0}
         onMouseDown={(event) => event.preventDefault()}
       >
         {items.map((item) => (
@@ -263,6 +264,7 @@ export function WorkspacePalette({
           </li>
         ))}
       </ul>
+      </div>
     </section>
   )
 }

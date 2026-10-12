@@ -1,16 +1,16 @@
-import { useRef, useState } from 'react'
+import { useReducer, useRef } from 'react'
 import type { Session } from '../shared/types'
 import { ago } from '../time'
 
-const AGENT_COMMANDS = ['claude', 'codex']
+const SHELLS = ['zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh']
 
 export function headline(session: Session): string {
   return (session.title || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
 }
 
-export function describe(session: Session): { text: string; live: boolean } {
+export function sessionSummary(session: Session): { text: string; live: boolean } {
   const title = headline(session)
-  if (title && AGENT_COMMANDS.includes(session.cmd)) return { text: title, live: true }
+  if (title && !SHELLS.includes(session.cmd)) return { text: title, live: true }
   if (title) return { text: `last: ${title}`, live: false }
   return { text: [session.cmd, session.path].filter(Boolean).join(' · '), live: false }
 }
@@ -32,46 +32,43 @@ export function SessionList({
   active: string | null
   onAttach: (name: string) => void
 }) {
-  const [frozen, setFrozen] = useState<string[] | null>(null)
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  const navRef = useRef<HTMLElement | null>(null)
   const pointerInside = useRef(false)
-  const focusInside = useRef(false)
+  const held = useRef<string[]>([])
 
   if (sessions.length === 0) {
+    pointerInside.current = false
+    held.current = []
     return <p className="empty">No sessions yet. Type a name above to start one.</p>
   }
 
   const byName = new Map(sessions.map((s) => [s.name, s]))
   const live = byRecency(sessions)
-  const order = frozen === null ? live : [...frozen.filter((n) => byName.has(n)), ...live.filter((n) => !frozen.includes(n))]
+  const focusInside = navRef.current?.contains(document.activeElement) ?? false
+  const holding = pointerInside.current || focusInside
+  if (!holding) held.current = live
+  const order = holding
+    ? [...held.current.filter((n) => byName.has(n)), ...live.filter((n) => !held.current.includes(n))]
+    : live
   const ringing = sessions
     .filter((s) => s.bell)
     .map((s) => s.name)
     .sort()
 
-  const hold = () => setFrozen((prev) => prev ?? live)
-  const release = () => {
-    if (!pointerInside.current && !focusInside.current) setFrozen(null)
-  }
-
   return (
     <nav
+      ref={navRef}
       aria-label="sessions"
       onMouseEnter={() => {
         pointerInside.current = true
-        hold()
       }}
       onMouseLeave={() => {
         pointerInside.current = false
-        release()
-      }}
-      onFocus={() => {
-        focusInside.current = true
-        hold()
+        rerender()
       }}
       onBlur={(event) => {
-        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
-        focusInside.current = false
-        release()
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) rerender()
       }}
     >
       <div aria-live="polite" className="visually-hidden">
@@ -81,7 +78,7 @@ export function SessionList({
         {order.map((name) => {
           const s = byName.get(name)
           if (!s) return null
-          const info = describe(s)
+          const info = sessionSummary(s)
           return (
             <li key={s.name}>
               <button

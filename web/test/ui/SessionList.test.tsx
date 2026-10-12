@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { describe as describeSession, headline, SessionList } from '../../src/components/SessionList'
+import { headline, SessionList, sessionSummary } from '../../src/components/SessionList'
 import type { Session } from '../../src/shared/types'
 import { ago } from '../../src/time'
 
@@ -140,9 +140,37 @@ describe('SessionList ordering while in use', () => {
     const a = session({ name: 'a', activityEpoch: NOW - 10 })
     const b = session({ name: 'b', activityEpoch: NOW - 20 })
     const { rerender } = render(<SessionList sessions={[a, b]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
-    fireEvent.focus(screen.getAllByRole('button')[1])
+    act(() => {
+      screen.getAllByRole('button')[1].focus()
+    })
     rerender(<SessionList sessions={[a, { ...b, activityEpoch: NOW - 1 }]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
     expect(names()).toEqual(['a', 'b'])
+  })
+
+  it('stops holding once the focused row disappears, even though no blur reaches the list', () => {
+    const a = session({ name: 'a', activityEpoch: NOW - 10 })
+    const b = session({ name: 'b', activityEpoch: NOW - 20 })
+    const c = session({ name: 'c', activityEpoch: NOW - 30 })
+    const { rerender } = render(<SessionList sessions={[a, b, c]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    act(() => {
+      screen.getAllByRole('button')[0].focus()
+    })
+    rerender(<SessionList sessions={[b, c]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    act(() => {
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    })
+    rerender(<SessionList sessions={[b, { ...c, activityEpoch: NOW - 1 }]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    expect(names()).toEqual(['c', 'b'])
+  })
+
+  it('stops holding after the list empties under the pointer', () => {
+    const a = session({ name: 'a', activityEpoch: NOW - 10 })
+    const b = session({ name: 'b', activityEpoch: NOW - 20 })
+    const { rerender } = render(<SessionList sessions={[a, b]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    fireEvent.mouseEnter(screen.getByRole('navigation'))
+    rerender(<SessionList sessions={[]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    rerender(<SessionList sessions={[a, { ...b, activityEpoch: NOW - 1 }]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    expect(names()).toEqual(['b', 'a'])
   })
 
   it('keeps new sessions visible while frozen, after the held ones', () => {
@@ -174,12 +202,15 @@ describe('SessionList ordering while in use', () => {
   })
 })
 
-describe('describe', () => {
-  it('uses the title as the headline only while an agent runs in the pane', () => {
-    expect(describeSession(session({ cmd: 'claude', title: '✳ Fix it' }))).toEqual({ text: 'Fix it', live: true })
-    expect(describeSession(session({ cmd: 'codex', title: 'Review | x' }))).toEqual({ text: 'Review | x', live: true })
-    expect(describeSession(session({ cmd: 'zsh', title: '✳ Fix it' }))).toEqual({ text: 'last: Fix it', live: false })
-    expect(describeSession(session({ cmd: 'vim', title: '', path: '/home/me/x' }))).toEqual({
+describe('sessionSummary', () => {
+  it('treats the title as live while a program runs, and as left over at a shell prompt', () => {
+    expect(sessionSummary(session({ cmd: 'claude', title: '✳ Fix it' }))).toEqual({ text: 'Fix it', live: true })
+    expect(sessionSummary(session({ cmd: 'codex', title: 'Review | x' }))).toEqual({ text: 'Review | x', live: true })
+    expect(sessionSummary(session({ cmd: 'node', title: 'Review | x' }))).toEqual({ text: 'Review | x', live: true })
+    expect(sessionSummary(session({ cmd: 'vim', title: 'notes.md' }))).toEqual({ text: 'notes.md', live: true })
+    expect(sessionSummary(session({ cmd: 'zsh', title: '✳ Fix it' }))).toEqual({ text: 'last: Fix it', live: false })
+    expect(sessionSummary(session({ cmd: 'bash', title: '✳ Fix it' }))).toEqual({ text: 'last: Fix it', live: false })
+    expect(sessionSummary(session({ cmd: 'vim', title: '', path: '/home/me/x' }))).toEqual({
       text: 'vim · /home/me/x',
       live: false,
     })

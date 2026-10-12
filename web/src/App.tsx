@@ -18,11 +18,13 @@ export function App() {
   const [now, setNow] = useState(() => Date.now())
   const [tabs, setTabs] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
+  const [openCount, setOpenCount] = useState(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
   const openTerminal = useCallback((name: string) => {
     setTabs((prev) => (prev.includes(name) ? prev : [...prev, name]))
     setActiveTab(name)
+    setOpenCount((n) => n + 1)
   }, [])
   const closeTerminal = useCallback(
     (name: string) => {
@@ -141,7 +143,13 @@ export function App() {
             Pick a session on the left, or press <kbd>/</kbd> to find or start one.
           </div>
         ) : (
-          <TerminalTabs tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTerminal} />
+          <TerminalTabs
+            tabs={tabs}
+            active={activeTab}
+            focusSignal={openCount}
+            onSelect={setActiveTab}
+            onClose={closeTerminal}
+          />
         )}
       </main>
     </div>
