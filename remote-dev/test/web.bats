@@ -180,6 +180,38 @@ EOF
   [ "${lines[2]}" = "$(printf 'sync\tapi\t/home/me/my api\tapi')" ]
 }
 
+@test "web: an unresponsive server is replaced, not leaked" {
+  run "$DEVBOX" web --no-open
+  old_pid="$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$DEVBOX_WEB_STATE/state.json")"
+  CURL_EXIT=7 run "$DEVBOX" web --no-open
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"replacing unresponsive server"* ]]
+  ! kill -0 "$old_pid" 2>/dev/null
+  [ "$(grep -c 'dist-server/server/index.js' "$CALLS")" -eq 2 ]
+}
+
+@test "web: url with a dead pid errors instead of printing a dead URL" {
+  printf '{"pid":99999999,"port":7733,"token":"old","version":"0.0.0"}' >"$DEVBOX_WEB_STATE/state.json"
+  run "$DEVBOX" web url
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not running"* ]]
+}
+
+@test "web: --port rejects non-numeric and out-of-range values" {
+  run "$DEVBOX" web --no-open --port abc
+  [ "$status" -eq 2 ]
+  run "$DEVBOX" web --no-open --port 0
+  [ "$status" -eq 2 ]
+  run "$DEVBOX" web --no-open --port 70000
+  [ "$status" -eq 2 ]
+}
+
+@test "web: --help prints usage and exits zero" {
+  run "$DEVBOX" web --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"usage: devbox web"* ]]
+}
+
 @test "web: help mentions the web subcommand" {
   run "$REPO/bin/devbox" --help
   [[ "$output" == *"devbox web"* ]]

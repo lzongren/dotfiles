@@ -1,4 +1,4 @@
 main|0|1791700000|0|zsh|/home/me
 cc-atx|2|1791741000|1|claude|/home/me/work/atx
 api - ~/work/api|1|1791740000|0|vim|/home/me/work/api
-logs|0|1791730000|0|tail|/home/me/logs
+logs|0|1791730000|0|tail|/home/me/logs|archive

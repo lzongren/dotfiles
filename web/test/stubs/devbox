@@ -15,6 +15,9 @@ case "${1:-} ${2:-}" in
       empty)
         echo 'No sessions.'
         ;;
+      hang)
+        sleep 5
+        ;;
       *)
         cat "$(dirname "$0")/../fixtures/status-raw.txt"
         ;;

@@ -91,7 +91,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     token,
     url: `http://127.0.0.1:${boundPort}/#t=${token}`,
     close() {
-      removeState(opts.stateDir)
+      removeState(opts.stateDir, process.pid)
       return new Promise<void>((resolve) => {
         server.close(() => resolve())
       })
@@ -108,7 +108,16 @@ if (isMain) {
     console.error('devbox-web: DEVBOX_BIN and DEVBOX_WEB_STATE are required')
     process.exit(1)
   }
-  const port = Number.parseInt(process.env.DEVBOX_WEB_PORT ?? '', 10) || 7733
+  const rawPort = process.env.DEVBOX_WEB_PORT
+  let port = 7733
+  if (rawPort !== undefined && rawPort !== '') {
+    const parsed = Number(rawPort)
+    if (!/^[0-9]+$/.test(rawPort) || parsed < 1 || parsed > 65535) {
+      console.error(`devbox-web: invalid DEVBOX_WEB_PORT: ${rawPort}`)
+      process.exit(1)
+    }
+    port = parsed
+  }
   const here = path.dirname(fileURLToPath(import.meta.url))
   let version = '0.0.0'
   try {

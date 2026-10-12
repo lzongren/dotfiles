@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 export interface ServerState {
@@ -16,6 +16,13 @@ export function writeState(dir: string, state: ServerState): void {
   renameSync(tmp, file)
 }
 
-export function removeState(dir: string): void {
-  rmSync(path.join(dir, 'state.json'), { force: true })
+export function removeState(dir: string, ownPid: number): void {
+  const file = path.join(dir, 'state.json')
+  let recordedPid: number | null = null
+  try {
+    recordedPid = (JSON.parse(readFileSync(file, 'utf8')) as { pid?: number }).pid ?? null
+  } catch {
+    recordedPid = null
+  }
+  if (recordedPid === null || recordedPid === ownPid) rmSync(file, { force: true })
 }

@@ -165,6 +165,25 @@ describe('App', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/as of [3-9]s ago/)
   })
 
+  it('blames the dashboard server, not the host, when the local fetch fails', async () => {
+    fetchMock.mockImplementationOnce(async () => response(okBody(ROWS)))
+    fetchMock.mockImplementation(() => Promise.reject(new TypeError('fetch failed')))
+    render(<App />)
+    await flush()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100)
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(/dashboard server stopped — run devbox web/)
+    expect(screen.getByText('cc-atx')).toBeInTheDocument()
+  })
+
+  it('shows the dashboard-server hint when the local fetch fails before any data', async () => {
+    fetchMock.mockImplementation(() => Promise.reject(new TypeError('fetch failed')))
+    render(<App />)
+    await flush()
+    expect(screen.getByRole('alert')).toHaveTextContent('dashboard server unreachable — run devbox web')
+  })
+
   it('shows an unreachable notice when the host is down before any data', async () => {
     fetchMock.mockImplementation(async () => response({ error: 'remote_unreachable', message: 'ssh failed' }, 502))
     render(<App />)

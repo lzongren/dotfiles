@@ -28,7 +28,7 @@ describe('parseStatusRaw', () => {
     })
     expect(rows[1]).toMatchObject({ name: 'cc-atx', attached: true, clients: 2, bell: true, cmd: 'claude' })
     expect(rows[2]).toMatchObject({ name: 'api - ~/work/api', attachable: false, attached: true, clients: 1 })
-    expect(rows[3]).toMatchObject({ name: 'logs', path: '/home/me/logs' })
+    expect(rows[3]).toMatchObject({ name: 'logs', path: '/home/me/logs|archive' })
   })
 
   it('rejoins a path containing pipes instead of dropping fields', () => {

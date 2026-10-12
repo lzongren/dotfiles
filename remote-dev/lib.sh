@@ -151,7 +151,12 @@ devbox_status_lines() {
   awk -F'|' '
     $1 == "S" { order[++n] = $2; att[$2] = $3; act[$2] = $4 }
     $1 == "P" && $5 == 1 { bell[$2] = 1 }
-    $1 == "P" && $3 == 1 && $4 == 1 { cmd[$2] = $6; path[$2] = $7 }
+    $1 == "P" && $3 == 1 && $4 == 1 {
+      cmd[$2] = $6
+      p = $7
+      for (i = 8; i <= NF; i++) p = p "|" $i
+      path[$2] = p
+    }
     END {
       for (i = 1; i <= n; i++) {
         s = order[i]

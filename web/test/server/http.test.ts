@@ -128,6 +128,17 @@ describe('http server', () => {
     }
   })
 
+  it('leaves a newer instance\'s state file alone when an old instance exits', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'devbox-web-state4.'))
+    const { writeState, removeState } = await import('../../server/state.js')
+    writeState(dir, { pid: process.pid + 1, port: 1, token: 'newer', version: '0' })
+    removeState(dir, process.pid)
+    expect(existsSync(path.join(dir, 'state.json'))).toBe(true)
+    removeState(dir, process.pid + 1)
+    expect(existsSync(path.join(dir, 'state.json'))).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('writes a 0600 state file on start and removes it on close', async () => {
     const file = path.join(stateDir, 'state.json')
     const mode = statSync(file).mode & 0o777

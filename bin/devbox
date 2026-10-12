@@ -508,16 +508,20 @@ if [[ "$1" == "web" ]]; then
       stop | status | url) WEB_ACTION="$1" ;;
       --print-config) WEB_ACTION=print-config ;;
       --port)
-        [ "$#" -ge 2 ] || {
-          echo "devbox web: --port needs a value" >&2
+        if [ "$#" -lt 2 ] || ! [[ "$2" =~ ^[0-9]+$ ]] || [ "$2" -lt 1 ] || [ "$2" -gt 65535 ]; then
+          echo "devbox web: --port needs a number between 1 and 65535" >&2
           exit 2
-        }
+        fi
         WEB_PORT="$2"
         shift
         ;;
       --no-open) WEB_OPEN=0 ;;
       --foreground) WEB_FOREGROUND=1 ;;
       --rebuild) WEB_REBUILD=1 ;;
+      -h | --help)
+        echo "usage: devbox web [stop|status|url] [--port N] [--no-open] [--foreground] [--rebuild]"
+        exit 0
+        ;;
       *)
         echo "usage: devbox web [stop|status|url] [--port N] [--no-open] [--foreground] [--rebuild]" >&2
         exit 2
@@ -580,10 +584,10 @@ if [[ "$1" == "web" ]]; then
       exit 1
       ;;
     url)
-      [ -f "$WEB_STATE" ] || {
+      if [ ! -f "$WEB_STATE" ] || ! web_pid_matches "$(web_state_field pid)"; then
         echo "devbox web: not running" >&2
         exit 1
-      }
+      fi
       web_url
       exit 0
       ;;
@@ -634,14 +638,22 @@ if [[ "$1" == "web" ]]; then
 
   if [ -f "$WEB_STATE" ]; then
     web_pid="$(web_state_field pid)"
-    if web_pid_matches "$web_pid" &&
-      curl -fsS -m 3 -H "Authorization: Bearer $(web_state_field token)" \
+    if web_pid_matches "$web_pid"; then
+      if curl -fsS -m 3 -H "Authorization: Bearer $(web_state_field token)" \
         "http://127.0.0.1:$(web_state_field port)/api/health" >/dev/null 2>&1; then
-      web_url
-      if [ "$WEB_OPEN" = 1 ] && command -v open >/dev/null 2>&1; then
-        open "$(web_url)"
+        web_url
+        if [ "$WEB_OPEN" = 1 ] && command -v open >/dev/null 2>&1; then
+          open "$(web_url)"
+        fi
+        exit 0
       fi
-      exit 0
+      echo "devbox web: replacing unresponsive server (pid $web_pid)" >&2
+      kill "$web_pid" 2>/dev/null
+      for _ in 1 2 3 4 5 6; do
+        web_pid_matches "$web_pid" || break
+        sleep 0.5
+      done
+      web_pid_matches "$web_pid" && kill -9 "$web_pid" 2>/dev/null
     fi
     rm -f "$WEB_STATE"
   fi

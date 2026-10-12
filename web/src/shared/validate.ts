@@ -10,8 +10,3 @@ export function isValidHost(host: string): boolean {
   return HOST_RE.test(host)
 }
 
-export function clampInt(value: unknown, min: number, max: number, fallback: number): number {
-  const n = typeof value === 'string' ? Number.parseInt(value, 10) : NaN
-  if (!Number.isInteger(n)) return fallback
-  return Math.min(max, Math.max(min, n))
-}

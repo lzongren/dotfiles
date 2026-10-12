@@ -15,11 +15,6 @@ export interface SessionsResponse {
   sessions: Session[]
 }
 
-export interface Health {
-  ok: true
-  version: string
-  host: string
-}
 
 export interface ApiError {
   error: string

@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, statSync } from 'node:fs'
 import path from 'node:path'
 import type { ServerResponse } from 'node:http'
 
@@ -18,7 +18,15 @@ export function serveStatic(root: string, urlPath: string, res: ServerResponse):
   const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '')
   const resolved = path.resolve(absRoot, rel)
   const inside = resolved === absRoot || resolved.startsWith(absRoot + path.sep)
-  if (!inside || !existsSync(resolved) || !statSync(resolved).isFile()) {
+  let isFile = false
+  if (inside) {
+    try {
+      isFile = statSync(resolved).isFile()
+    } catch {
+      isFile = false
+    }
+  }
+  if (!isFile) {
     res.statusCode = 404
     res.setHeader('Content-Type', 'text/plain')
     res.end('not found')
@@ -27,5 +35,14 @@ export function serveStatic(root: string, urlPath: string, res: ServerResponse):
   const ext = path.extname(resolved)
   res.setHeader('Content-Type', CONTENT_TYPES[ext] ?? 'application/octet-stream')
   if (ext === '.html') res.setHeader('Cache-Control', 'no-store')
-  createReadStream(resolved).pipe(res)
+  const stream = createReadStream(resolved)
+  stream.on('error', () => {
+    if (res.headersSent) {
+      res.destroy()
+    } else {
+      res.statusCode = 500
+      res.end('read error')
+    }
+  })
+  stream.pipe(res)
 }
