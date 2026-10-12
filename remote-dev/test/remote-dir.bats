@@ -91,3 +91,29 @@ EOF
   run devbox_workspace_dir "$CFG" "$root" dir
   [ "$output" = "$root/dir" ]
 }
+
+big_config() {
+  {
+    echo 'DEVBOX_SYNCS="'
+    echo "work|/Users/me/Documents/Work|Work"
+    for i in $(seq 1 4000); do echo "s$i|/Users/me/s/$i|s$i"; done
+    echo '"'
+  } >"$BATS_TEST_TMPDIR/big"
+}
+
+@test "lookups read the whole sync list, so an early match never breaks its pipe" {
+  big_config
+  run bash -c 'trap "" PIPE; DEVBOX_CONFIG=/nonexistent . "$1"; devbox_sync_for "$2" /Users/me/Documents/Work/abc' _ "$BATS_TEST_DIRNAME/../lib.sh" "$BATS_TEST_TMPDIR/big"
+  [ "$status" -eq 0 ]
+  [ "$output" = "work|/Users/me/Documents/Work|Work" ]
+  run bash -c 'trap "" PIPE; DEVBOX_CONFIG=/nonexistent . "$1"; devbox_sync_exists "$2" work && echo yes' _ "$BATS_TEST_DIRNAME/../lib.sh" "$BATS_TEST_TMPDIR/big"
+  [ "$output" = "yes" ]
+}
+
+@test "sync ls lists a long config without a broken pipe" {
+  big_config
+  run bash -c 'trap "" PIPE; DEVBOX_CONFIG="$2" "$1" sync ls' _ "$BATS_TEST_DIRNAME/../../bin/devbox" "$BATS_TEST_TMPDIR/big"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Broken pipe"* ]]
+  [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -eq 4002 ]
+}

@@ -98,7 +98,7 @@ devbox_syncs_list() {
 }
 
 # True if a sync of this name exists in the config. Args: config-path name.
-devbox_sync_exists() { devbox_syncs_list "$1" | grep -q "^$2|"; }
+devbox_sync_exists() { devbox_syncs_list "$1" | grep "^$2|" >/dev/null; }
 
 # Map a local path to the corresponding remote dir via the synced folders.
 # Args: cfg  local-path  remote-home. Prints the remote dir if local-path is a
@@ -116,15 +116,14 @@ devbox_remote_dir() {
 # Prints the "name|local|remote" entry whose root is or contains local-path.
 # The / boundary keeps Workshop out of Work. Args: cfg  local-path.
 devbox_sync_for() {
-  local n l r
+  local n l r found=""
+  # Read to the end: leaving early closes the pipe while devbox_syncs_list
+  # still writes, which prints "Broken pipe" wherever SIGPIPE is ignored.
   while IFS='|' read -r n l r; do
-    [ -n "$l" ] || continue
-    case "$2" in "$l" | "$l"/*)
-      printf '%s|%s|%s' "$n" "$l" "$r"
-      return 0
-      ;;
-    esac
+    [ -z "$found" ] && [ -n "$l" ] || continue
+    case "$2" in "$l" | "$l"/*) found="$n|$l|$r" ;; esac
   done < <(devbox_syncs_list "$1")
+  [ -n "$found" ] && printf '%s' "$found"
   return 0
 }
 

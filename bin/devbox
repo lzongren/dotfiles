@@ -381,7 +381,7 @@ if [[ "$1" == "sync" ]]; then
 
   case "${2:-ls}" in
     ls | list | "")
-      if ! devbox_syncs_list "$DEVBOX_CONFIG" | grep -q .; then
+      if [ -z "$(devbox_syncs_list "$DEVBOX_CONFIG")" ]; then
         echo "No synced folders configured."
         exit 0
       fi
