@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: No tracked files that .gitignore excludes
+        run: if git ls-files -ci --exclude-standard | grep .; then exit 1; fi
+
       # ubuntu's `bats` package IS bats-core (>=1.10); `lua-check` is luacheck.
       - name: Install tools (Ubuntu)
         if: runner.os == 'Linux'
