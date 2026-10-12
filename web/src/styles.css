@@ -267,3 +267,130 @@ tbody tr:hover {
   height: 440px;
   padding: 6px;
 }
+
+.palette {
+  margin: 0 0 20px;
+}
+
+.palette-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.palette-input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  padding: 10px 14px;
+}
+
+.palette-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.palette-agents {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.palette-agent {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.palette-agent[data-checked='true'] {
+  background: #242834;
+  color: var(--text);
+}
+
+.palette-agent input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.palette-agent:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.palette select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  padding: 8px 10px;
+}
+
+.palette-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.palette-list:empty {
+  display: none;
+}
+
+.palette-item {
+  display: grid;
+  grid-template-columns: 24px 1fr 90px 60px 110px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.palette-item:last-child {
+  border-bottom: none;
+}
+
+.palette-item[aria-selected='true'] {
+  background: #242834;
+}
+
+.palette-dot {
+  color: var(--accent);
+}
+
+.palette-item[data-kind='folder'] .palette-dot {
+  color: var(--dim);
+}
+
+.palette-item[data-kind='create'] .palette-name {
+  color: var(--accent);
+}
+
+.palette-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-root,
+.palette-age,
+.palette-hint {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.palette-hint {
+  text-align: right;
+}

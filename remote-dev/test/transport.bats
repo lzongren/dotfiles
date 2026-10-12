@@ -12,7 +12,16 @@ setup() {
 
   STUBS="$BATS_TEST_TMPDIR/stubs"
   mkdir -p "$STUBS"
-  printf '#!/bin/bash\necho "ssh $*"\n' > "$STUBS/ssh"
+  cat >"$STUBS/ssh" <<'SH'
+#!/bin/bash
+echo "ssh $*"
+case "${!#}" in
+  "env LANG=C.UTF-8 "*)
+    eval "set -- ${!#}"
+    printf 'argv: %s\n' "$@"
+    ;;
+esac
+SH
   printf '#!/bin/bash\necho "mosh $*"\n' > "$STUBS/mosh"
   # nc = the direct TCP:22 reachability probe.
   printf '#!/bin/bash\nexit "${NC_EXIT:-0}"\n' > "$STUBS/nc"
@@ -143,6 +152,7 @@ SH
 @test "agent=cc continues the folder's conversation, or starts one if there is none" {
   cat >"$STUBS/ssh" <<SH
 #!/bin/bash
+eval "set -- \${!#}"
 [[ "\$*" == *"tmux new-session"* ]] && printf '%s' "\${!#}" >"$BATS_TEST_TMPDIR/cmd"
 exit 0
 SH

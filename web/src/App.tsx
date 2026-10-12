@@ -3,6 +3,7 @@ import { getSessions } from './api'
 import type { SessionsResponse } from './shared/types'
 import { SessionTable } from './components/SessionTable'
 import { TerminalTabs } from './components/TerminalTabs'
+import { WorkspacePalette } from './components/WorkspacePalette'
 
 type View =
   | { phase: 'loading' }
@@ -118,6 +119,7 @@ export function App() {
           </p>
         ) : null}
       </header>
+      <WorkspacePalette sessions={data.sessions} now={now} onOpen={openTerminal} />
       <SessionTable sessions={data.sessions} now={now} onAttach={openTerminal} />
       <TerminalTabs
         tabs={tabs}

@@ -28,28 +28,38 @@ export function parseStatusRaw(stdout: string): Session[] {
 
 type Runner = () => Promise<RunResult>
 
-export function createSessionSource(
-  host: string,
-  runner: Runner,
-  ttlMs = 3000,
-): () => Promise<SessionsResponse> {
+export interface SessionSource {
+  (): Promise<SessionsResponse>
+  invalidate(): void
+}
+
+export function createSessionSource(host: string, runner: Runner, ttlMs = 3000): SessionSource {
   let cached: SessionsResponse | null = null
   let inflight: Promise<SessionsResponse> | null = null
-  return async function get(): Promise<SessionsResponse> {
+  let generation = 0
+  const get = async function get(): Promise<SessionsResponse> {
     if (cached && Date.now() - cached.fetchedAt < ttlMs) return cached
     if (inflight) return inflight
+    const startedAt = generation
     inflight = (async () => {
       try {
         const res = await runner()
         if (res.exitCode !== 0) {
           throw new RemoteUnreachableError(res.stderr.trim() || 'remote unreachable')
         }
-        cached = { host, fetchedAt: Date.now(), sessions: parseStatusRaw(res.stdout) }
-        return cached
+        const fresh = { host, fetchedAt: Date.now(), sessions: parseStatusRaw(res.stdout) }
+        if (startedAt === generation) cached = fresh
+        return fresh
       } finally {
         inflight = null
       }
     })()
     return inflight
+  } as SessionSource
+  get.invalidate = () => {
+    cached = null
+    inflight = null
+    generation += 1
   }
+  return get
 }

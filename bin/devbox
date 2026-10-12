@@ -12,6 +12,7 @@
 # Usage: devbox [session-name]            (remote shell; default session: main)
 #        devbox --cc [session-name] [path]  (Claude Code on remote)
 #        devbox --codex [session-name] [path]  (Codex on remote)
+#        devbox --detach [--cc|--codex] [name]  (start it remotely, don't attach)
 #        devbox list                     (show running sessions, don't connect)
 #        devbox status                   (session table: state, idle, cmd, path)
 #        devbox doctor [--require-agent cc|codex]  (readiness checks)
@@ -789,6 +790,12 @@ if [[ "$1" == "--raw" ]]; then
   exec ssh -t "$DEVBOX_HOST"
 fi
 
+DETACH=0
+if [[ "${1:-}" == "--detach" ]]; then
+  DETACH=1
+  shift
+fi
+
 AGENT_MODE=""
 LOCAL_DIR="$PWD"
 WORKSPACE_NAME=""
@@ -868,9 +875,28 @@ if [ -f "$_lib" ]; then
 fi
 
 # tmux args as an array so both transports run the identical remote command.
-TMUX_CMD=(tmux new-session -A -s "$SESSION")
-[ -n "$CDIR" ] && TMUX_CMD+=(-c "$CDIR")
-[ -n "$AGENT_MODE" ] && TMUX_CMD+=("$(devbox_agent_command "$AGENT_MODE")")
+TMUX_ARGS=(-s "$SESSION")
+[ -n "$CDIR" ] && TMUX_ARGS+=(-c "$CDIR")
+[ -n "$AGENT_MODE" ] && TMUX_ARGS+=("$(devbox_agent_command "$AGENT_MODE")")
+TMUX_CMD=(tmux new-session -A "${TMUX_ARGS[@]}")
+
+if [ "$DETACH" = 1 ]; then
+  # shellcheck disable=SC2029  # the command is quoted locally for the remote shell
+  detach_out="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$DEVBOX_HOST" \
+    "tmux has-session -t '='$(printf '%q' "$SESSION") 2>/dev/null && echo exists || { env LANG=C.UTF-8 $(printf '%q ' tmux new-session -d "${TMUX_ARGS[@]}") && echo created; }" </dev/null)" || {
+    echo "devbox: could not start $SESSION on $DEVBOX_HOST" >&2
+    exit 1
+  }
+  case "$detach_out" in
+    *exists) echo "exists $SESSION" ;;
+    *created) echo "created $SESSION" ;;
+    *)
+      echo "devbox: could not start $SESSION on $DEVBOX_HOST" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
 
 if [ "$(devbox_transport)" = mosh ]; then
   exec mosh "$DEVBOX_HOST" -- "${TMUX_CMD[@]}"
@@ -880,4 +906,5 @@ fi
 # Force UTF-8 locale: mosh validates this at protocol level, but plain ssh
 # inherits the remote's bare POSIX locale, making tmux render unicode as '_'.
 echo "devbox: direct mosh route unavailable; using ssh + tmux" >&2
-exec ssh -t "$DEVBOX_HOST" env LANG=C.UTF-8 "${TMUX_CMD[@]}"
+# shellcheck disable=SC2029  # the command is quoted locally for the remote shell
+exec ssh -t "$DEVBOX_HOST" "env LANG=C.UTF-8 $(printf '%q ' "${TMUX_CMD[@]}")"

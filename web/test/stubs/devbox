@@ -5,6 +5,20 @@ if [ -n "${STUB_LOG:-}" ]; then
   printf '%s\n' "$*" >>"$STUB_LOG"
 fi
 
+if [ "${1:-}" = --detach ]; then
+  [ -n "${STUB_LOG:-}" ] && printf 'PWD=%s\n' "$PWD" >>"$STUB_LOG"
+  name="${!#}"
+  case "${DEVBOX_STUB_DETACH:-created}" in
+    created) echo "created $name" ;;
+    exists) echo "exists $name" ;;
+    *)
+      echo "devbox: could not start $name on stub-host" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+
 case "${1:-} ${2:-}" in
   'status --raw')
     case "${DEVBOX_STUB_MODE:-}" in
@@ -28,7 +42,7 @@ case "${1:-} ${2:-}" in
     ;;
   'web --print-config')
     printf 'host\tstub-host\n'
-    printf 'sync\tdotfiles\t/home/me/dotfiles\t/home/me/dotfiles\n'
+    printf 'sync\tdotfiles\t%s\t/home/me/dotfiles\n' "${DEVBOX_STUB_ROOT:-/home/me/dotfiles}"
     printf 'sync\tapi\t/home/me/my api\t/home/me/work/api\n'
     ;;
   *)
