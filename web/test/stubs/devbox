@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -n "${STUB_LOG:-}" ]; then
+  printf '%s\n' "$*" >>"$STUB_LOG"
+fi
+
+case "${1:-} ${2:-}" in
+  'status --raw')
+    case "${DEVBOX_STUB_MODE:-}" in
+      unreachable)
+        echo 'devbox: cannot reach stub-host' >&2
+        exit 1
+        ;;
+      empty)
+        echo 'No sessions.'
+        ;;
+      hang)
+        sleep 5
+        ;;
+      crash)
+        kill -SEGV $$
+        ;;
+      *)
+        cat "$(dirname "$0")/../fixtures/status-raw.txt"
+        ;;
+    esac
+    ;;
+  'web --print-config')
+    printf 'host\tstub-host\n'
+    printf 'sync\tdotfiles\t/home/me/dotfiles\t/home/me/dotfiles\n'
+    printf 'sync\tapi\t/home/me/my api\t/home/me/work/api\n'
+    ;;
+  *)
+    echo "devbox stub: unsupported: $*" >&2
+    exit 64
+    ;;
+esac

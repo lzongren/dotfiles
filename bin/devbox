@@ -14,6 +14,7 @@
 #        devbox status                   (session table: state, idle, cmd, path)
 #        devbox doctor [--require-agent cc|codex]  (readiness checks)
 #        devbox sync [ls|add|rm|reset]   (manage synced folders)
+#        devbox web [stop|status|url]    (local dashboard; --port N --no-open --rebuild)
 #        devbox --raw                    (plain mosh, no tmux)
 #        devbox --version                (release + commit identity)
 
@@ -86,7 +87,7 @@ devbox_agent_command() {
 }
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-  sed -n '2,18p' "$_DEVBOX_SOURCE" | sed 's/^# \{0,1\}//'
+  sed -n '2,19p' "$_DEVBOX_SOURCE" | sed 's/^# \{0,1\}//'
   echo "  host: $DEVBOX_HOST  (config: $DEVBOX_CONFIG)"
   if [[ -n "${DEVBOX_SYNCS:-}" ]]; then
     echo "  synced folders (Mutagen):"
@@ -489,6 +490,215 @@ if [[ "$1" == "sync" ]]; then
       exit 1
       ;;
   esac
+  exit 0
+fi
+
+if [[ "$1" == "web" ]]; then
+  shift
+  WEB_DIR="$_DEVBOX_BIN_DIR/../web"
+  WEB_STATE_DIR="${DEVBOX_WEB_STATE:-${XDG_CACHE_HOME:-$HOME/.cache}/devbox/web}"
+  WEB_STATE="$WEB_STATE_DIR/state.json"
+  WEB_PORT="${DEVBOX_WEB_PORT:-7733}"
+  WEB_ACTION=start
+  WEB_OPEN=1
+  WEB_FOREGROUND=0
+  WEB_REBUILD=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      stop | status | url) WEB_ACTION="$1" ;;
+      --print-config) WEB_ACTION=print-config ;;
+      --port)
+        [ "$#" -ge 2 ] || {
+          echo "devbox web: --port needs a value" >&2
+          exit 2
+        }
+        WEB_PORT="$2"
+        shift
+        ;;
+      --no-open) WEB_OPEN=0 ;;
+      --foreground) WEB_FOREGROUND=1 ;;
+      --rebuild) WEB_REBUILD=1 ;;
+      -h | --help)
+        echo "usage: devbox web [stop|status|url] [--port N] [--no-open] [--foreground] [--rebuild]"
+        exit 0
+        ;;
+      *)
+        echo "usage: devbox web [stop|status|url] [--port N] [--no-open] [--foreground] [--rebuild]" >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+  if ! [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || [ "$WEB_PORT" -lt 1 ] || [ "$WEB_PORT" -gt 65535 ]; then
+    echo "devbox web: port must be a number between 1 and 65535 (got $WEB_PORT)" >&2
+    exit 2
+  fi
+
+  if [ "$WEB_ACTION" = print-config ]; then
+    printf 'host\t%s\n' "$DEVBOX_HOST"
+    _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
+    if [ -f "$_lib" ]; then
+      # shellcheck source=/dev/null
+      . "$_lib"
+      devbox_syncs_list "$DEVBOX_CONFIG" | while IFS='|' read -r n l r; do
+        [ -n "$n" ] && printf 'sync\t%s\t%s\t%s\n' "$n" "$l" "$r"
+      done
+    fi
+    exit 0
+  fi
+
+  web_state_field() {
+    sed -n 's/.*"'"$1"'":"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' "$WEB_STATE" 2>/dev/null | head -1
+  }
+  web_pid_matches() {
+    [ -n "$1" ] && kill -0 "$1" 2>/dev/null &&
+      ps -p "$1" -o command= 2>/dev/null | grep -q 'dist-server/server/index\.js'
+  }
+  web_url() {
+    printf 'http://127.0.0.1:%s/#t=%s\n' "$(web_state_field port)" "$(web_state_field token)"
+  }
+  web_kill_server() {
+    kill "$1" 2>/dev/null
+    for _ in 1 2 3 4 5 6; do
+      web_pid_matches "$1" || return 0
+      sleep 0.5
+    done
+    kill -9 "$1" 2>/dev/null
+    for _ in 1 2 3 4; do
+      web_pid_matches "$1" || return 0
+      sleep 0.5
+    done
+    return 1
+  }
+
+  case "$WEB_ACTION" in
+    stop)
+      [ -f "$WEB_STATE" ] || {
+        echo "devbox web: not running"
+        exit 0
+      }
+      web_pid="$(web_state_field pid)"
+      if web_pid_matches "$web_pid"; then
+        web_kill_server "$web_pid" || {
+          echo "devbox web: could not kill server (pid $web_pid)" >&2
+          exit 1
+        }
+        echo "devbox web: stopped (pid $web_pid)"
+      else
+        echo "devbox web: no matching server process; removing stale state" >&2
+      fi
+      rm -f "$WEB_STATE"
+      exit 0
+      ;;
+    status)
+      if [ -f "$WEB_STATE" ] && web_pid_matches "$(web_state_field pid)"; then
+        echo "devbox web: running (pid $(web_state_field pid), port $(web_state_field port))"
+        exit 0
+      fi
+      echo "devbox web: not running"
+      exit 1
+      ;;
+    url)
+      if [ ! -f "$WEB_STATE" ] || ! web_pid_matches "$(web_state_field pid)"; then
+        echo "devbox web: not running" >&2
+        exit 1
+      fi
+      web_url
+      exit 0
+      ;;
+  esac
+
+  [ -d "$WEB_DIR" ] || {
+    echo "devbox: devbox web requires the web/ sources (clone the dotfiles repo; releases do not include web yet)" >&2
+    exit 1
+  }
+  command -v node >/dev/null 2>&1 || {
+    echo "devbox: node >=22 is required for devbox web" >&2
+    exit 1
+  }
+  command -v npm >/dev/null 2>&1 || {
+    echo "devbox: npm is required for devbox web" >&2
+    exit 1
+  }
+  web_node_ver="$(node --version 2>/dev/null)"
+  web_node_major="${web_node_ver#v}"
+  web_node_major="${web_node_major%%.*}"
+  case "$web_node_major" in
+    '' | *[!0-9]*) web_node_major=0 ;;
+  esac
+  [ "$web_node_major" -ge 22 ] || {
+    echo "devbox: node >=22 required for devbox web (found ${web_node_ver:-none})" >&2
+    exit 1
+  }
+
+  mkdir -p "$WEB_STATE_DIR"
+  web_stamp="$WEB_DIR/dist-server/.stamp"
+  web_build="$WEB_REBUILD"
+  [ -f "$web_stamp" ] || web_build=1
+  if [ "$web_build" = 0 ]; then
+    web_changed="$(find "$WEB_DIR/src" "$WEB_DIR/server" "$WEB_DIR/index.html" \
+      "$WEB_DIR/package.json" "$WEB_DIR/package-lock.json" "$WEB_DIR/vite.config.ts" \
+      "$WEB_DIR/tsconfig.json" "$WEB_DIR/tsconfig.server.json" \
+      -newer "$web_stamp" -print 2>/dev/null | head -1)"
+    [ -n "$web_changed" ] && web_build=1
+  fi
+  if [ "$web_build" != 0 ]; then
+    (cd "$WEB_DIR" && npm ci && npm run build) || {
+      echo "devbox: web build failed" >&2
+      exit 1
+    }
+    mkdir -p "$WEB_DIR/dist-server"
+    touch "$web_stamp"
+  fi
+
+  if [ -f "$WEB_STATE" ]; then
+    web_pid="$(web_state_field pid)"
+    if web_pid_matches "$web_pid"; then
+      if curl -fsS -m 3 -H "Authorization: Bearer $(web_state_field token)" \
+        "http://127.0.0.1:$(web_state_field port)/api/health" >/dev/null 2>&1; then
+        web_url
+        if [ "$WEB_OPEN" = 1 ] && command -v open >/dev/null 2>&1; then
+          open "$(web_url)"
+        fi
+        exit 0
+      fi
+      echo "devbox web: replacing unresponsive server (pid $web_pid)" >&2
+      web_kill_server "$web_pid" || {
+        echo "devbox web: could not kill unresponsive server (pid $web_pid)" >&2
+        exit 1
+      }
+    fi
+    rm -f "$WEB_STATE"
+  fi
+
+  if [ "$WEB_FOREGROUND" = 1 ]; then
+    exec env DEVBOX_BIN="$_DEVBOX_BIN_DIR" DEVBOX_WEB_STATE="$WEB_STATE_DIR" \
+      DEVBOX_WEB_PORT="$WEB_PORT" node "$WEB_DIR/dist-server/server/index.js"
+  fi
+  env DEVBOX_BIN="$_DEVBOX_BIN_DIR" DEVBOX_WEB_STATE="$WEB_STATE_DIR" \
+    DEVBOX_WEB_PORT="$WEB_PORT" nohup node "$WEB_DIR/dist-server/server/index.js" \
+    >>"$WEB_STATE_DIR/server.log" 2>&1 &
+  web_started=0
+  for ((_i = 0; _i < 100; _i++)); do
+    [ -f "$WEB_STATE" ] && {
+      web_started=1
+      break
+    }
+    sleep 0.1
+  done
+  [ "$web_started" = 1 ] || {
+    echo "devbox: web server did not start; see $WEB_STATE_DIR/server.log:" >&2
+    tail -n 5 "$WEB_STATE_DIR/server.log" >&2 2>/dev/null
+    exit 1
+  }
+  web_url
+  if [ "$WEB_OPEN" = 1 ]; then
+    if command -v open >/dev/null 2>&1; then
+      open "$(web_url)"
+    elif command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "$(web_url)"
+    fi
+  fi
   exit 0
 fi
 
