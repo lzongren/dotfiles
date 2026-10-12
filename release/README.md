@@ -11,7 +11,7 @@ to a file keeps the bootstrap inspectable instead of piping network content
 directly into a shell:
 
 ```bash
-version=0.1.0
+version=0.2.0
 curl -fsSLo /tmp/dotfiles-tools \
   "https://raw.githubusercontent.com/lzongren/dotfiles/tools-v${version}/bin/dotfiles-tools"
 chmod +x /tmp/dotfiles-tools
