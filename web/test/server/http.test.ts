@@ -1,4 +1,5 @@
 import { get as httpGet } from 'node:http'
+import { connect } from 'node:net'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -98,6 +99,23 @@ describe('http server', () => {
     const res = await rawGet(app.port, '/api/sessions', { ...host() })
     expect(res.headers['content-security-policy']).toContain("default-src 'self'")
     expect(res.headers['cache-control']).toBe('no-store')
+  })
+
+  it('answers a malformed absolute-form request target with 400 and keeps serving', async () => {
+    const reply = await new Promise<string>((resolve, reject) => {
+      const sock = connect(app.port, '127.0.0.1', () => {
+        sock.write(`GET http://[ HTTP/1.1\r\nHost: 127.0.0.1:${app.port}\r\nConnection: close\r\n\r\n`)
+      })
+      let data = ''
+      sock.on('data', (chunk: Buffer) => {
+        data += chunk.toString()
+      })
+      sock.on('end', () => resolve(data))
+      sock.on('error', reject)
+    })
+    expect(reply).toMatch(/^HTTP\/1\.1 400/)
+    const health = await rawGet(app.port, '/api/health', { ...auth(), ...host() })
+    expect(health.status).toBe(200)
   })
 
   it('blocks path traversal out of the dist root', async () => {

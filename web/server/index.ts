@@ -53,7 +53,12 @@ export async function createApp(opts: AppOptions): Promise<App> {
     if (req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req.headers.origin, boundPort)) {
       return sendJson(res, 403, { error: 'bad_origin', message: 'unexpected Origin header' })
     }
-    const url = new URL(req.url ?? '/', `http://127.0.0.1:${boundPort}`)
+    let url: URL
+    try {
+      url = new URL(req.url ?? '/', `http://127.0.0.1:${boundPort}`)
+    } catch {
+      return sendJson(res, 400, { error: 'bad_request', message: 'malformed request target' })
+    }
     if (url.pathname.startsWith('/api/')) {
       if (!tokenMatches(token, bearerToken(req.headers.authorization))) {
         return sendJson(res, 401, { error: 'unauthorized', message: 'missing or invalid token' })
