@@ -307,6 +307,7 @@ your attention. Three surfaces answer that, all fed by the same pipeline:
                │              │  probe (1 ssh):│◄──┼───│                   │
                │              │  S|name|att|act│   │   │  #{session_*}     │
                │              │  P|…|bell|cmd|path    │  #{window_bell_flag}
+               │              │  T|…|host|title│   │   │  #{pane_title}    │
                │              └───────┬────────┘   │   └───────────────────┘
                │                      │            │        ▲          ▲
                │                      ▼            │        │          │
@@ -314,11 +315,11 @@ your attention. Three surfaces answer that, all fed by the same pipeline:
                │              │ lib.sh (awk)   │   │     by claude   "devbox:#S"
                │              │ devbox_status_ │   │     (\a on      (set-titles
                │              │ lines: merge   │   │     finish/     in tmux.conf)
-               │              │ S+P → 1 line   │   │     input)      │
+               │              │ S+P+T → 1 line │   │     input)      │
                │              │ per session    │   │        │        │
                │              └───────┬────────┘   │   ┌────┴────────┴────┐
                │                      │            │   │ claude / zsh /…  │
-               │       name|att|act|bell|cmd|path  │   │ (your sessions)  │
+               │ name|att|act|bell|cmd|title|path  │   │ (your sessions)  │
                │                      │            │   └──────────────────┘
                │                      ▼            │
                │            back to widget → draw  │
@@ -339,8 +340,9 @@ your attention. Three surfaces answer that, all fed by the same pipeline:
 Three loops tie it together:
 
 1. **Status loop (every 30s):** widget → `devbox status --raw` → one ssh probe
-   → tmux formats (`S|` session lines + `P|` pane lines with the bell flag) →
-   awk merge in `lib.sh` → `name|attached|activity|bell|cmd|path` → the widget
+   → tmux formats (`S|` session lines, `P|` pane lines with the bell flag, `T|`
+   pane titles) → awk merge in `lib.sh` → `name|attached|activity|bell|cmd|title|path`
+   → the widget
    colors each row (🔔 yellow / ● green / ● orange / ○ gray).
 2. **Attention loop (event-driven):** a command finishes and rings the bell
    (`\a`) → tmux sets `window_bell_flag` on that window → the next probe picks

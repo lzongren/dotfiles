@@ -13,6 +13,7 @@ const hoisted = vi.hoisted(() => {
     loadAddon = vi.fn()
     open = vi.fn()
     dispose = vi.fn()
+    focus = vi.fn()
     dataCb: ((data: string) => void) | null = null
     resizeCb: ((size: { cols: number; rows: number }) => void) | null = null
 
@@ -318,6 +319,21 @@ describe('TerminalPane', () => {
       document.dispatchEvent(new Event('visibilitychange'))
     })
     expect(sockets).toHaveLength(2)
+  })
+
+  it('takes keyboard focus once attached when it is the active tab', () => {
+    render(<TerminalPane name="api" active />)
+    xterms[0].focus.mockClear()
+    act(() => sockets[0].serverReady())
+    expect(xterms[0].focus).toHaveBeenCalled()
+  })
+
+  it('does not steal focus for a background tab, but takes it when activated', () => {
+    const { rerender } = render(<TerminalPane name="api" active={false} />)
+    act(() => sockets[0].serverReady())
+    expect(xterms[0].focus).not.toHaveBeenCalled()
+    rerender(<TerminalPane name="api" active />)
+    expect(xterms[0].focus).toHaveBeenCalled()
   })
 
   it('drops the WebGL renderer when its context is lost', () => {

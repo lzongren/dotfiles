@@ -100,8 +100,8 @@ export function WorkspacePalette({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
-      const active = document.activeElement
-      if (active && active !== document.body) return
+      const active = document.activeElement as HTMLElement | null
+      if (active && (active.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName))) return
       event.preventDefault()
       inputRef.current?.focus()
     }
@@ -162,12 +162,21 @@ export function WorkspacePalette({
     } else if (event.key === 'Escape') {
       setQuery('')
       setSelectedKey(null)
+      setError(null)
       inputRef.current?.blur()
     }
   }
 
   return (
-    <section className="palette" aria-label="workspaces">
+    <section
+      className="palette"
+      aria-label="workspaces"
+      onBlur={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        setOpen(false)
+        setError(null)
+      }}
+    >
       <div className="palette-bar">
         <input
           ref={inputRef}
@@ -176,19 +185,24 @@ export function WorkspacePalette({
           role="combobox"
           aria-expanded={open && items.length > 0}
           aria-controls={listId}
-          aria-activedescendant={current ? `${listId}-${current.key}` : undefined}
+          aria-activedescendant={open && current ? `${listId}-${current.key}` : undefined}
           aria-label="search or create a workspace"
           placeholder="search or create a workspace  ( / )"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)
             setSelectedKey(null)
+            setError(null)
           }}
           onKeyDown={onKeyDown}
           onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
         />
-        <div role="radiogroup" aria-label="agent" className="palette-agents">
+        <div
+          role="radiogroup"
+          aria-label="agent"
+          className="palette-agents"
+          onMouseDown={(event) => event.preventDefault()}
+        >
           {AGENTS.map((a) => (
             <label key={a.value} className="palette-agent" data-checked={agent === a.value}>
               <input
@@ -212,12 +226,18 @@ export function WorkspacePalette({
           </select>
         ) : null}
       </div>
-      {error !== null ? (
+      {open && error !== null ? (
         <p role="alert" className="banner palette-error">
           {error}
         </p>
       ) : null}
-      <ul id={listId} role="listbox" className="palette-list" hidden={!open || items.length === 0}>
+      <ul
+        id={listId}
+        role="listbox"
+        className="palette-list"
+        hidden={!open || items.length === 0 || error !== null}
+        onMouseDown={(event) => event.preventDefault()}
+      >
         {items.map((item) => (
           <li
             key={item.key}
@@ -227,7 +247,6 @@ export function WorkspacePalette({
             className="palette-item"
             data-kind={item.kind}
             onMouseEnter={() => setSelectedKey(item.key)}
-            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (busy === null) void activate(item)
             }}

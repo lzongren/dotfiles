@@ -187,10 +187,8 @@ kbd {
   white-space: nowrap;
 }
 
-.session-headline-empty {
+.session-headline-dim {
   color: var(--dim);
-  font-family: var(--mono);
-  font-size: 11.5px;
 }
 
 .bell-badge {

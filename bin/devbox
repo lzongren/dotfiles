@@ -661,7 +661,13 @@ if [[ "$1" == "web" ]]; then
 
   if [ -f "$WEB_STATE" ]; then
     web_pid="$(web_state_field pid)"
-    if web_pid_matches "$web_pid"; then
+    if web_pid_matches "$web_pid" && [ "$web_build" != 0 ]; then
+      echo "devbox web: restarting the server for the new build (pid $web_pid)" >&2
+      web_kill_server "$web_pid" || {
+        echo "devbox web: could not stop the old server (pid $web_pid)" >&2
+        exit 1
+      }
+    elif web_pid_matches "$web_pid"; then
       if curl -fsS -m 3 -H "Authorization: Bearer $(web_state_field token)" \
         "http://127.0.0.1:$(web_state_field port)/api/health" >/dev/null 2>&1; then
         web_url
@@ -730,7 +736,7 @@ if [[ "$1" == "list" || "$1" == "ls" ]]; then
 fi
 
 if [[ "$1" == "status" ]]; then
-  # Status: one line per session (name|attached|activity|bell|cmd|path).
+  # Status: one line per session (name|attached|activity|bell|cmd|title|path).
   # --raw: skip the pretty table, emit raw pipe-delimited lines for scripts.
   _lib="$_DEVBOX_BIN_DIR/../remote-dev/lib.sh"
   # shellcheck source=/dev/null

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { headline, SessionList } from '../../src/components/SessionList'
+import { describe as describeSession, headline, SessionList } from '../../src/components/SessionList'
 import type { Session } from '../../src/shared/types'
 import { ago } from '../../src/time'
 
@@ -61,6 +61,11 @@ describe('SessionList', () => {
     expect(row).not.toHaveTextContent('✳')
   })
 
+  it('marks a title left behind by an agent that has exited as the last task', () => {
+    renderList([session({ name: 'done', cmd: 'zsh', title: '✳ Ship the release' })])
+    expect(screen.getByRole('button')).toHaveTextContent('last: Ship the release')
+  })
+
   it('falls back to the command and path when there is no title', () => {
     renderList()
     expect(screen.getByRole('button', { name: /old/ })).toHaveTextContent('zsh · /home/me')
@@ -112,6 +117,72 @@ describe('SessionList', () => {
       rerender(<SessionList sessions={[ROWS[1]]} now={(NOW + 3600) * 1000} active={null} onAttach={vi.fn()} />)
     })
     expect(screen.getByRole('button')).toHaveTextContent('1h')
+  })
+})
+
+describe('SessionList ordering while in use', () => {
+  const names = () => screen.getAllByRole('button').map((r) => r.querySelector('.session-name')?.textContent)
+
+  it('holds its order while the pointer is over it, and re-sorts after it leaves', () => {
+    const a = session({ name: 'a', activityEpoch: NOW - 10 })
+    const b = session({ name: 'b', activityEpoch: NOW - 20 })
+    const { rerender } = render(<SessionList sessions={[a, b]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    expect(names()).toEqual(['a', 'b'])
+    fireEvent.mouseEnter(screen.getByRole('navigation'))
+    const bumped = [a, { ...b, activityEpoch: NOW - 1 }]
+    rerender(<SessionList sessions={bumped} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    expect(names()).toEqual(['a', 'b'])
+    fireEvent.mouseLeave(screen.getByRole('navigation'))
+    expect(names()).toEqual(['b', 'a'])
+  })
+
+  it('holds its order while a row has keyboard focus', () => {
+    const a = session({ name: 'a', activityEpoch: NOW - 10 })
+    const b = session({ name: 'b', activityEpoch: NOW - 20 })
+    const { rerender } = render(<SessionList sessions={[a, b]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    fireEvent.focus(screen.getAllByRole('button')[1])
+    rerender(<SessionList sessions={[a, { ...b, activityEpoch: NOW - 1 }]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    expect(names()).toEqual(['a', 'b'])
+  })
+
+  it('keeps new sessions visible while frozen, after the held ones', () => {
+    const a = session({ name: 'a', activityEpoch: NOW - 10 })
+    const { rerender } = render(<SessionList sessions={[a]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    fireEvent.mouseEnter(screen.getByRole('navigation'))
+    rerender(
+      <SessionList sessions={[a, session({ name: 'new', activityEpoch: NOW })]} now={NOW * 1000} active={null} onAttach={vi.fn()} />,
+    )
+    expect(names()).toEqual(['a', 'new'])
+  })
+
+  it('announces ringing sessions in a stable order regardless of activity', () => {
+    render(
+      <SessionList
+        sessions={[session({ name: 'zeta', bell: true, activityEpoch: NOW }), session({ name: 'alpha', bell: true, activityEpoch: NOW - 99 })]}
+        now={NOW * 1000}
+        active={null}
+        onAttach={vi.fn()}
+      />,
+    )
+    expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent('alpha, zeta needs attention')
+  })
+
+  it('renders sessions from an older server that sends no title', () => {
+    const legacy = { ...session({ name: 'legacy' }), title: undefined } as unknown as Session
+    render(<SessionList sessions={[legacy]} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    expect(screen.getByRole('button')).toHaveTextContent('zsh · /home/me')
+  })
+})
+
+describe('describe', () => {
+  it('uses the title as the headline only while an agent runs in the pane', () => {
+    expect(describeSession(session({ cmd: 'claude', title: '✳ Fix it' }))).toEqual({ text: 'Fix it', live: true })
+    expect(describeSession(session({ cmd: 'codex', title: 'Review | x' }))).toEqual({ text: 'Review | x', live: true })
+    expect(describeSession(session({ cmd: 'zsh', title: '✳ Fix it' }))).toEqual({ text: 'last: Fix it', live: false })
+    expect(describeSession(session({ cmd: 'vim', title: '', path: '/home/me/x' }))).toEqual({
+      text: 'vim · /home/me/x',
+      live: false,
+    })
   })
 })
 

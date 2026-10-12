@@ -17,6 +17,9 @@ const QUEUE_MAX = 64 * 1024
 export function TerminalPane({ name, active }: { name: string; active: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const reconnectRef = useRef<() => void>(() => undefined)
+  const focusRef = useRef<() => void>(() => undefined)
+  const activeRef = useRef(active)
+  activeRef.current = active
   const [status, setStatus] = useState<Status>('connecting')
 
   useEffect(() => {
@@ -29,6 +32,7 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
     const fit = new FitAddon()
     term.loadAddon(fit)
     if (containerRef.current) term.open(containerRef.current)
+    focusRef.current = () => term.focus()
     try {
       const webgl = new WebglAddon()
       webgl.onContextLoss(() => webgl.dispose())
@@ -133,6 +137,7 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
         if (msg.t === 'ready') {
           ready = true
           setStatus('connected')
+          if (activeRef.current) term.focus()
           healthyTimer = window.setTimeout(() => {
             retry = 0
           }, HEALTHY_MS)
@@ -198,6 +203,10 @@ export function TerminalPane({ name, active }: { name: string; active: boolean }
       term.dispose()
     }
   }, [name])
+
+  useEffect(() => {
+    if (active) focusRef.current()
+  }, [active])
 
   return (
     <div className="terminal" data-active={active}>

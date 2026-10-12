@@ -224,6 +224,56 @@ describe('WorkspacePalette', () => {
     expect(options()).toHaveLength(4)
   })
 
+  it('stays open while choosing an agent with the mouse, and closes when focus leaves the palette', async () => {
+    await renderPalette()
+    const codexLabel = screen.getByText('codex').closest('label') as HTMLElement
+    expect(fireEvent.mouseDown(codexLabel)).toBe(false)
+    fireEvent.click(codexLabel)
+    expect(screen.getByRole('radio', { name: 'codex' })).toBeChecked()
+    expect(screen.getByRole('listbox', { hidden: true })).toBeVisible()
+    const rootPicker = screen.getByRole('combobox', { name: 'sync root' })
+    fireEvent.blur(input(), { relatedTarget: rootPicker })
+    expect(screen.getByRole('listbox', { hidden: true })).toBeVisible()
+    fireEvent.blur(rootPicker, { relatedTarget: document.body })
+    expect(screen.getByRole('listbox', { hidden: true })).not.toBeVisible()
+  })
+
+  it('does not point aria-activedescendant into a closed list', async () => {
+    await renderPalette()
+    expect(input()).toHaveAttribute('aria-activedescendant')
+    fireEvent.blur(input())
+    expect(input()).not.toHaveAttribute('aria-activedescendant')
+  })
+
+  it('clears a start error as soon as the query changes or the palette closes', async () => {
+    postReply = () => json({ error: 'remote_unreachable', message: 'could not start x' }, 502)
+    await renderPalette()
+    fireEvent.change(input(), { target: { value: 'fresh-idea' } })
+    await act(async () => {
+      fireEvent.keyDown(input(), { key: 'Enter' })
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('could not start x')
+    fireEvent.change(input(), { target: { value: 'fresh-idea2' } })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await act(async () => {
+      fireEvent.keyDown(input(), { key: 'Enter' })
+    })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    fireEvent.blur(input())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('"/" also works from a focused button, never from inside a text field', async () => {
+    await renderPalette()
+    fireEvent.blur(input())
+    const button = document.createElement('button')
+    document.body.appendChild(button)
+    button.focus()
+    fireEvent.keyDown(button, { key: '/' })
+    expect(document.activeElement).toBe(input())
+    button.remove()
+  })
+
   it('shows the list only while the search box is in use', async () => {
     await renderPalette()
     expect(input()).toHaveAttribute('aria-expanded', 'true')
