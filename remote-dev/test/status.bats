@@ -34,7 +34,7 @@ setup() {
   [ "$output" = "0s" ]
 }
 
-# --- devbox_status_lines: S/P probe -> name|attached|activity|bell|cmd|path --
+# --- devbox_status_lines: S/P/T probe -> name|attached|activity|bell|cmd|title|path
 
 probe() {
   cat <<'EOF'
@@ -44,17 +44,20 @@ P|main|1|1|0|claude|/home/me/proj/abc
 P|main|1|0|0|zsh|/home/me
 P|api|0|1|1|vim|/home/me/other
 P|api|1|1|0|zsh|/home/me/proj/x
+T|main|1|1|box.example|✳ Fix the flaky test
+T|main|1|0|box.example|other pane
+T|api|1|1|box.example|box.example
 EOF
 }
 
 @test "status: session merged with its active pane (active window + pane)" {
   out="$(probe | devbox_status_lines)"
-  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|0|claude|/home/me/proj/abc" ]
+  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|0|claude|✳ Fix the flaky test|/home/me/proj/abc" ]
 }
 
 @test "status: inactive-window pane is ignored" {
   out="$(probe | devbox_status_lines)"
-  [ "$(sed -n 2p <<<"$out")" = "api|0|1751890000|1|zsh|/home/me/proj/x" ]
+  [ "$(sed -n 2p <<<"$out")" = "api|0|1751890000|1|zsh||/home/me/proj/x" ]
 }
 
 @test "status: bell on an inactive window still flags the session" {
@@ -73,15 +76,30 @@ EOF
 @test "status: sessions keep probe order" {
   out="$(probe | devbox_status_lines)"
   [ "$(wc -l <<<"$out" | tr -d ' ')" = "2" ]
-  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|0|claude|/home/me/proj/abc" ]
+  [ "$(sed -n 1p <<<"$out")" = "main|1|1751900000|0|claude|✳ Fix the flaky test|/home/me/proj/abc" ]
 }
 
 @test "status: session with no pane lines still listed (empty cmd/path)" {
   out="$(printf 'S|lone|0|123\n' | devbox_status_lines)"
-  [ "$out" = "lone|0|123|0||" ]
+  [ "$out" = "lone|0|123|0|||" ]
 }
 
 @test "status: empty probe yields empty output" {
   out="$(printf '' | devbox_status_lines)"
   [ -z "$out" ]
+}
+
+@test "status: the default title (the host name) counts as no title" {
+  out="$(probe | devbox_status_lines)"
+  [ "$(sed -n 2p <<<"$out" | cut -d'|' -f6)" = "" ]
+}
+
+@test "status: pipes in a title are replaced so the path stays the last field" {
+  out="$(printf '%s\n' 'S|x|0|5' 'P|x|1|1|0|codex|/home/me/a|b' 'T|x|1|1|h|Review the work | x' | devbox_status_lines)"
+  [ "$out" = "x|0|5|0|codex|Review the work ¦ x|/home/me/a|b" ]
+}
+
+@test "status: a probe without T records yields an empty title" {
+  out="$(printf '%s\n' 'S|x|0|5' 'P|x|1|1|0|zsh|/home/me' | devbox_status_lines)"
+  [ "$out" = "x|0|5|0|zsh||/home/me" ]
 }

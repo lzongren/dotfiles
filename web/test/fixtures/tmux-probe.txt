@@ -7,3 +7,8 @@ P|cc-atx|1|1|1|claude|/home/me/work/atx
 P|cc-atx|0|1|0|zsh|/home/me
 P|api - ~/work/api|1|1|0|vim|/home/me/work/api
 P|logs|1|1|0|tail|/home/me/logs|archive
+T|main|1|1|stub-host.example|stub-host.example
+T|cc-atx|1|1|stub-host.example|✳ Fix the flaky retry test
+T|cc-atx|0|1|stub-host.example|stub-host.example
+T|api - ~/work/api|1|1|stub-host.example|api - ~/work/api
+T|logs|1|1|stub-host.example|Review the work | logs

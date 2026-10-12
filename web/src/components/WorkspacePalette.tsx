@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createSession, getWorkspaces } from '../api'
 import type { AgentChoice, Session, Workspace } from '../shared/types'
 import { isValidSessionName } from '../shared/validate'
-import { ago } from './SessionTable'
+import { ago } from '../time'
 
 interface Item {
   key: string
@@ -74,6 +74,7 @@ export function WorkspacePalette({
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listId = useId()
@@ -99,8 +100,8 @@ export function WorkspacePalette({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
-      const active = document.activeElement
-      if (active && active !== document.body) return
+      const active = document.activeElement as HTMLElement | null
+      if (active && (active.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName))) return
       event.preventDefault()
       inputRef.current?.focus()
     }
@@ -120,6 +121,9 @@ export function WorkspacePalette({
   const activate = async (item: Item) => {
     setError(null)
     if (item.kind === 'live') {
+      setQuery('')
+      setSelectedKey(null)
+      inputRef.current?.blur()
       onOpen(item.name)
       return
     }
@@ -134,6 +138,7 @@ export function WorkspacePalette({
     if (result.kind === 'ok') {
       setQuery('')
       setSelectedKey(null)
+      inputRef.current?.blur()
       void refresh()
       onSessionsChanged?.()
       onOpen(item.name)
@@ -157,30 +162,47 @@ export function WorkspacePalette({
     } else if (event.key === 'Escape') {
       setQuery('')
       setSelectedKey(null)
+      setError(null)
+      inputRef.current?.blur()
     }
   }
 
   return (
-    <section className="palette" aria-label="workspaces">
+    <section
+      className="palette"
+      aria-label="workspaces"
+      onBlur={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        setOpen(false)
+        setError(null)
+      }}
+    >
       <div className="palette-bar">
         <input
           ref={inputRef}
           className="palette-input"
           type="text"
           role="combobox"
-          aria-expanded={items.length > 0}
+          aria-expanded={open && items.length > 0}
           aria-controls={listId}
-          aria-activedescendant={current ? `${listId}-${current.key}` : undefined}
+          aria-activedescendant={open && current ? `${listId}-${current.key}` : undefined}
           aria-label="search or create a workspace"
           placeholder="search or create a workspace  ( / )"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)
             setSelectedKey(null)
+            setError(null)
           }}
           onKeyDown={onKeyDown}
+          onFocus={() => setOpen(true)}
         />
-        <div role="radiogroup" aria-label="agent" className="palette-agents">
+        <div
+          role="radiogroup"
+          aria-label="agent"
+          className="palette-agents"
+          onMouseDown={(event) => event.preventDefault()}
+        >
           {AGENTS.map((a) => (
             <label key={a.value} className="palette-agent" data-checked={agent === a.value}>
               <input
@@ -204,12 +226,19 @@ export function WorkspacePalette({
           </select>
         ) : null}
       </div>
+      <div className="palette-pop" hidden={!open || (items.length === 0 && error === null)}>
       {error !== null ? (
-        <p role="alert" className="banner">
+        <p role="alert" className="banner palette-error">
           {error}
         </p>
       ) : null}
-      <ul id={listId} role="listbox" className="palette-list">
+      <ul
+        id={listId}
+        role="listbox"
+        className="palette-list"
+        hidden={items.length === 0}
+        onMouseDown={(event) => event.preventDefault()}
+      >
         {items.map((item) => (
           <li
             key={item.key}
@@ -235,6 +264,7 @@ export function WorkspacePalette({
           </li>
         ))}
       </ul>
+      </div>
     </section>
   )
 }

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getSessions } from './api'
 import type { SessionsResponse } from './shared/types'
-import { SessionTable } from './components/SessionTable'
+import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
 import { WorkspacePalette } from './components/WorkspacePalette'
+
+type Cause = 'remote' | 'local' | 'probe'
 
 type View =
   | { phase: 'loading' }
@@ -11,25 +13,28 @@ type View =
   | { phase: 'down'; cause: Cause; message: string }
   | { phase: 'ready'; data: SessionsResponse; staleSince: number | null; staleCause: Cause | null }
 
-type Cause = 'remote' | 'local' | 'probe'
-
 export function App() {
   const [view, setView] = useState<View>({ phase: 'loading' })
   const [now, setNow] = useState(() => Date.now())
   const [tabs, setTabs] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
-  const [openSeq, setOpenSeq] = useState(0)
+  const [openCount, setOpenCount] = useState(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
   const openTerminal = useCallback((name: string) => {
     setTabs((prev) => (prev.includes(name) ? prev : [...prev, name]))
     setActiveTab(name)
-    setOpenSeq((n) => n + 1)
+    setOpenCount((n) => n + 1)
   }, [])
-  const closeTerminal = useCallback((name: string) => {
-    setTabs((prev) => prev.filter((tab) => tab !== name))
-    setActiveTab((prev) => (prev === name ? null : prev))
-  }, [])
+  const closeTerminal = useCallback(
+    (name: string) => {
+      const index = tabs.indexOf(name)
+      const next = tabs.filter((tab) => tab !== name)
+      setTabs(next)
+      if (activeTab === name) setActiveTab(next[Math.min(index, next.length - 1)] ?? null)
+    },
+    [tabs, activeTab],
+  )
 
   const refresh = useCallback(async () => {
     const result = await getSessions()
@@ -105,9 +110,19 @@ export function App() {
 
   const { data, staleSince, staleCause } = view
   return (
-    <main>
-      <header>
-        <h1>devbox — {data.host}</h1>
+    <div className="app">
+      <header className="topbar">
+        <h1>
+          devbox <span className="host">{data.host}</span>
+        </h1>
+        <WorkspacePalette
+          sessions={data.sessions}
+          now={now}
+          onOpen={openTerminal}
+          onSessionsChanged={() => {
+            void refresh()
+          }}
+        />
         {staleSince !== null ? (
           <p role="alert" className="banner">
             {staleCause === 'local'
@@ -119,22 +134,24 @@ export function App() {
           </p>
         ) : null}
       </header>
-      <WorkspacePalette
-        sessions={data.sessions}
-        now={now}
-        onOpen={openTerminal}
-        onSessionsChanged={() => {
-          void refresh()
-        }}
-      />
-      <SessionTable sessions={data.sessions} now={now} onAttach={openTerminal} />
-      <TerminalTabs
-        tabs={tabs}
-        active={activeTab}
-        scrollKey={openSeq}
-        onSelect={setActiveTab}
-        onClose={closeTerminal}
-      />
-    </main>
+      <aside className="sidebar">
+        <SessionList sessions={data.sessions} now={now} active={activeTab} onAttach={openTerminal} />
+      </aside>
+      <main className="workspace">
+        {tabs.length === 0 ? (
+          <div className="workspace-empty">
+            Pick a session on the left, or press <kbd>/</kbd> to find or start one.
+          </div>
+        ) : (
+          <TerminalTabs
+            tabs={tabs}
+            active={activeTab}
+            focusSignal={openCount}
+            onSelect={setActiveTab}
+            onClose={closeTerminal}
+          />
+        )}
+      </main>
+    </div>
   )
 }

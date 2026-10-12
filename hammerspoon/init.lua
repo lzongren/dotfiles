@@ -51,7 +51,8 @@ local function fetchSessions()
   if not status or not out or out == "" then return {} end
   local sessions = {}
   for line in out:gmatch("[^\n]+") do
-    local name, att, act, bell, cmd_s, path = line:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
+    local name, att, act, bell, cmd_s, title, path =
+      line:match("^([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.*)$")
     if name and name ~= "" then
       table.insert(sessions, {
         name = name,
@@ -59,6 +60,7 @@ local function fetchSessions()
         activity = tonumber(act) or 0,
         bell = (bell == "1"),
         cmd = cmd_s or "",
+        title = title or "",
         path = path or ""
       })
     end

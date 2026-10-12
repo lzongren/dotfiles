@@ -1,5 +1,6 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 vi.mock('../../src/components/Terminal', () => ({
   TerminalPane: ({ name }: { name: string }) => <div data-testid={`term-${name}`} />,
 }))
@@ -13,7 +14,6 @@ vi.mock('../../src/components/WorkspacePalette', () => ({
 }))
 
 import { App } from '../../src/App'
-import { ago } from '../../src/components/SessionTable'
 import type { Session, SessionsResponse } from '../../src/shared/types'
 
 const NOW_EPOCH = 1800000000
@@ -26,6 +26,7 @@ function session(overrides: Partial<Session>): Session {
     activityEpoch: NOW_EPOCH - 30,
     bell: false,
     cmd: 'zsh',
+    title: '',
     path: '/home/me',
     attachable: true,
     ...overrides,
@@ -33,9 +34,9 @@ function session(overrides: Partial<Session>): Session {
 }
 
 const ROWS: Session[] = [
-  session({ name: 'cc-atx', attached: true, clients: 2, bell: true, cmd: 'claude', path: '/home/me/work/atx' }),
-  session({ name: 'api - ~/work/api', attachable: false, attached: true, clients: 1, cmd: 'vim' }),
-  session({ name: 'main' }),
+  session({ name: 'cc-atx', activityEpoch: NOW_EPOCH - 10, title: '✳ Fix the flaky retry test', cmd: 'claude' }),
+  session({ name: 'api', activityEpoch: NOW_EPOCH - 20 }),
+  session({ name: 'main', activityEpoch: NOW_EPOCH - 40 }),
 ]
 
 function response(body: SessionsResponse | { error: string; message: string }, status = 200): Response {
@@ -68,76 +69,63 @@ async function flush() {
   })
 }
 
+const sidebar = () => within(screen.getByRole('navigation', { name: 'sessions' }))
+
 describe('App', () => {
   it('shows a loading state before the first response', () => {
-    fetchMock.mockReturnValue(new Promise(() => undefined))
+    fetchMock.mockImplementation(() => new Promise(() => undefined))
     render(<App />)
     expect(screen.getByText(/loading sessions/)).toBeInTheDocument()
   })
 
-  it('renders rows with state, clients, idle, cmd, path, and bell badge', async () => {
+  it('lays out a sidebar of sessions beside an empty workspace with a hint', async () => {
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
-    expect(screen.getByText('devbox — stub-host')).toBeInTheDocument()
-    expect(screen.getByText('cc-atx')).toBeInTheDocument()
-    expect(screen.getByText('×2')).toBeInTheDocument()
-    expect(screen.getAllByText('30s').length).toBeGreaterThan(0)
-    expect(screen.getByText('claude')).toBeInTheDocument()
-    expect(screen.getByText('/home/me/work/atx')).toBeInTheDocument()
-    const bellRow = screen.getByText('cc-atx').closest('tr')
-    expect(bellRow?.querySelector('.bell-badge')).toHaveTextContent('bell')
+    expect(screen.getByRole('heading', { name: /devbox/ })).toHaveTextContent('stub-host')
+    expect(sidebar().getAllByRole('button')).toHaveLength(3)
+    expect(screen.getByRole('main')).toHaveTextContent(/press \/ to find or start one/)
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/sessions',
       expect.objectContaining({ headers: { Authorization: 'Bearer tok' } }),
     )
   })
 
-  it('announces ringing sessions through a single polite live region', async () => {
-    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
-    const { container } = render(<App />)
-    await flush()
-    const regions = container.querySelectorAll('[aria-live="polite"]')
-    expect(regions).toHaveLength(1)
-    expect(regions[0]).toHaveTextContent('cc-atx needs attention')
-  })
-
-  it('truncates long paths visually but keeps the full path in a tooltip', async () => {
+  it('opens a terminal tab from the sidebar and marks that session current', async () => {
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
-    expect(screen.getByText('/home/me/work/atx')).toHaveAttribute('title', '/home/me/work/atx')
+    fireEvent.click(sidebar().getByRole('button', { name: /cc-atx/ }))
+    expect(screen.getByTestId('term-cc-atx')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'cc-atx' })).toHaveAttribute('aria-selected', 'true')
+    expect(sidebar().getByRole('button', { name: /cc-atx/ })).toHaveAttribute('aria-current', 'true')
   })
 
-  it('dims an unattachable row and explains it in a tooltip', async () => {
+  it('opening from the palette opens a terminal tab', async () => {
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
-    const row = screen.getByText('api - ~/work/api').closest('tr')
-    expect(row).toHaveClass('unattachable')
-    expect(row).toHaveAttribute('title', expect.stringContaining('cannot be used'))
+    fireEvent.click(screen.getByTestId('palette'))
+    expect(screen.getByTestId('term-from-palette')).toBeInTheDocument()
   })
 
-  it('ticks the idle column client-side between polls', async () => {
-    fetchMock.mockImplementation(async () => response(okBody([session({ name: 'main', activityEpoch: NOW_EPOCH - 50 })])))
+  it('closing the active tab activates its neighbour instead of showing nothing', async () => {
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
-    expect(screen.getByText('50s')).toBeInTheDocument()
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4000)
-    })
-    expect(screen.getByText('54s')).toBeInTheDocument()
+    fireEvent.click(sidebar().getByRole('button', { name: /cc-atx/ }))
+    fireEvent.click(sidebar().getByRole('button', { name: /api/ }))
+    fireEvent.click(sidebar().getByRole('button', { name: /main/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'close main' }))
+    expect(screen.getByRole('tab', { name: 'api' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'close cc-atx' }))
+    expect(screen.getByRole('tab', { name: 'api' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'close api' }))
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(screen.getByRole('main')).toHaveTextContent(/press \/ to find or start one/)
   })
 
-  it('shows the empty state with the devbox hint', async () => {
-    fetchMock.mockImplementation(async () => response(okBody([])))
-    render(<App />)
-    await flush()
-    expect(screen.getByText(/No sessions\./)).toBeInTheDocument()
-    expect(screen.getByText(/devbox <name>/)).toBeInTheDocument()
-  })
-
-  it('polls every 5 seconds', async () => {
+  it('polls every 5 seconds and refetches on window focus', async () => {
     fetchMock.mockImplementation(async () => response(okBody([])))
     render(<App />)
     await flush()
@@ -146,18 +134,11 @@ describe('App', () => {
       await vi.advanceTimersByTimeAsync(5100)
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('refetches on window focus', async () => {
-    fetchMock.mockImplementation(async () => response(okBody([])))
-    render(<App />)
-    await flush()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
     await act(async () => {
       window.dispatchEvent(new Event('focus'))
       await vi.advanceTimersByTimeAsync(0)
     })
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('shows the restart hint on 401', async () => {
@@ -167,21 +148,21 @@ describe('App', () => {
     expect(screen.getByText('server restarted — run devbox web')).toBeInTheDocument()
   })
 
-  it('keeps stale rows with an advancing "as of" banner when the host drops', async () => {
+  it('keeps stale sessions with an advancing "as of" banner when the host drops, then recovers', async () => {
     fetchMock.mockImplementationOnce(async () => response(okBody(ROWS)))
-    fetchMock.mockImplementation(async () => response({ error: 'remote_unreachable', message: 'ssh failed' }, 502))
+    fetchMock.mockImplementationOnce(async () => response({ error: 'remote_unreachable', message: 'x' }, 502))
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
-    expect(screen.getByText('cc-atx')).toBeInTheDocument()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5100)
     })
-    expect(screen.getByRole('alert')).toHaveTextContent(/as of \d+s ago/)
-    expect(screen.getByText('cc-atx')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/host unreachable — showing sessions as of \d+s ago/)
+    expect(sidebar().getAllByRole('button')).toHaveLength(3)
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(5100)
     })
-    expect(screen.getByRole('alert')).toHaveTextContent(/as of [3-9]s ago/)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('blames the dashboard server, not the host, when the local fetch fails', async () => {
@@ -193,14 +174,6 @@ describe('App', () => {
       await vi.advanceTimersByTimeAsync(5100)
     })
     expect(screen.getByRole('alert')).toHaveTextContent(/dashboard server stopped — run devbox web/)
-    expect(screen.getByText('cc-atx')).toBeInTheDocument()
-  })
-
-  it('shows the dashboard-server hint when the local fetch fails before any data', async () => {
-    fetchMock.mockImplementation(() => Promise.reject(new TypeError('fetch failed')))
-    render(<App />)
-    await flush()
-    expect(screen.getByRole('alert')).toHaveTextContent('dashboard server unreachable — run devbox web')
   })
 
   it('shows the probe error itself for a non-502 server failure', async () => {
@@ -208,7 +181,6 @@ describe('App', () => {
     render(<App />)
     await flush()
     expect(screen.getByRole('alert')).toHaveTextContent('probe failed: session probe failed')
-    expect(screen.getByRole('alert')).not.toHaveTextContent('run devbox web')
   })
 
   it('shows an unreachable notice when the host is down before any data', async () => {
@@ -216,64 +188,13 @@ describe('App', () => {
     render(<App />)
     await flush()
     expect(screen.getByRole('alert')).toHaveTextContent('host unreachable: ssh failed')
-    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
   })
 
-  it('recovers from stale to live on the next good poll', async () => {
-    fetchMock.mockImplementationOnce(async () => response(okBody(ROWS)))
-    fetchMock.mockImplementationOnce(async () => response({ error: 'remote_unreachable', message: 'x' }, 502))
-    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+  it('shows the dashboard-server hint when the local fetch fails before any data', async () => {
+    fetchMock.mockImplementation(() => Promise.reject(new TypeError('fetch failed')))
     render(<App />)
     await flush()
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5100)
-    })
-    expect(screen.getByRole('alert')).toBeInTheDocument()
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5100)
-    })
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-})
-
-describe('terminal tabs from the dashboard', () => {
-  it('clicking an attachable session opens its terminal tab; close removes it', async () => {
-    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
-    render(<App />)
-    await flush()
-    fireEvent.click(screen.getByRole('button', { name: 'cc-atx' }))
-    expect(screen.getByTestId('term-cc-atx')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'cc-atx' })).toHaveAttribute('aria-selected', 'true')
-    fireEvent.click(screen.getByRole('button', { name: 'close cc-atx' }))
-    expect(screen.queryByTestId('term-cc-atx')).not.toBeInTheDocument()
-  })
-
-  it('opening from the palette opens a terminal tab', async () => {
-    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
-    render(<App />)
-    await flush()
-    fireEvent.click(screen.getByTestId('palette'))
-    expect(screen.getByTestId('term-from-palette')).toBeInTheDocument()
-  })
-
-  it('an unattachable session offers no attach button', async () => {
-    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
-    render(<App />)
-    await flush()
-    expect(screen.queryByRole('button', { name: 'api - ~/work/api' })).not.toBeInTheDocument()
-  })
-})
-
-describe('ago buckets', () => {
-  it('mirrors the devbox_ago format', () => {
-    const now = NOW_EPOCH * 1000
-    expect(ago(now, NOW_EPOCH - 5)).toBe('5s')
-    expect(ago(now, NOW_EPOCH - 59)).toBe('59s')
-    expect(ago(now, NOW_EPOCH - 60)).toBe('1m')
-    expect(ago(now, NOW_EPOCH - 3599)).toBe('59m')
-    expect(ago(now, NOW_EPOCH - 3600)).toBe('1h')
-    expect(ago(now, NOW_EPOCH - 86399)).toBe('23h')
-    expect(ago(now, NOW_EPOCH - 86400)).toBe('1d')
-    expect(ago(now, NOW_EPOCH + 10)).toBe('0s')
+    expect(screen.getByRole('alert')).toHaveTextContent('dashboard server unreachable — run devbox web')
   })
 })

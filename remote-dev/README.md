@@ -123,10 +123,15 @@ browser ──HTTP + WebSocket──► node server on 127.0.0.1:7733 (per-run t
                                  └─ terminal tab  ◄── ssh -t HOST tmux attach
 ```
 
-Click a session to open it in a terminal tab; each tab is an ordinary tmux
-client, so closing the tab detaches without touching the session. Rows whose
-names don't match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached
-from the web. The server binds 127.0.0.1 only; the token arrives in the URL
+The sidebar lists every session, most recent first, with a headline: the
+title the agent gives its terminal (Claude Code and Codex keep it current).
+Click one to open it in a terminal tab beside the list; each tab is an
+ordinary tmux client, so closing the tab detaches without touching the
+session. Press `/` to search: Enter attaches a running session, starts the
+chosen agent in an existing workspace folder, or creates a new one with the
+same rules as `devbox --cc <name>` from a synced root. Rows whose names don't
+match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached from the
+web. The server binds 127.0.0.1 only; the token arrives in the URL
 fragment and every request must carry it. Override the port with
 `DEVBOX_WEB_PORT` or `--port`.
 
@@ -302,6 +307,7 @@ your attention. Three surfaces answer that, all fed by the same pipeline:
                │              │  probe (1 ssh):│◄──┼───│                   │
                │              │  S|name|att|act│   │   │  #{session_*}     │
                │              │  P|…|bell|cmd|path    │  #{window_bell_flag}
+               │              │  T|…|host|title│   │   │  #{pane_title}    │
                │              └───────┬────────┘   │   └───────────────────┘
                │                      │            │        ▲          ▲
                │                      ▼            │        │          │
@@ -309,11 +315,11 @@ your attention. Three surfaces answer that, all fed by the same pipeline:
                │              │ lib.sh (awk)   │   │     by claude   "devbox:#S"
                │              │ devbox_status_ │   │     (\a on      (set-titles
                │              │ lines: merge   │   │     finish/     in tmux.conf)
-               │              │ S+P → 1 line   │   │     input)      │
+               │              │ S+P+T → 1 line │   │     input)      │
                │              │ per session    │   │        │        │
                │              └───────┬────────┘   │   ┌────┴────────┴────┐
                │                      │            │   │ claude / zsh /…  │
-               │       name|att|act|bell|cmd|path  │   │ (your sessions)  │
+               │ name|att|act|bell|cmd|title|path  │   │ (your sessions)  │
                │                      │            │   └──────────────────┘
                │                      ▼            │
                │            back to widget → draw  │
@@ -334,8 +340,9 @@ your attention. Three surfaces answer that, all fed by the same pipeline:
 Three loops tie it together:
 
 1. **Status loop (every 30s):** widget → `devbox status --raw` → one ssh probe
-   → tmux formats (`S|` session lines + `P|` pane lines with the bell flag) →
-   awk merge in `lib.sh` → `name|attached|activity|bell|cmd|path` → the widget
+   → tmux formats (`S|` session lines, `P|` pane lines with the bell flag, `T|`
+   pane titles) → awk merge in `lib.sh` → `name|attached|activity|bell|cmd|title|path`
+   → the widget
    colors each row (🔔 yellow / ● green / ● orange / ○ gray).
 2. **Attention loop (event-driven):** a command finishes and rings the bell
    (`\a`) → tmux sets `window_bell_flag` on that window → the next probe picks

@@ -211,6 +211,18 @@ EOF
   [[ "$output" == *"between 1 and 65535"* ]]
 }
 
+@test "web: a rebuild restarts a running server so it never serves a newer page" {
+  run "$DEVBOX" web --no-open
+  old_pid="$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$DEVBOX_WEB_STATE/state.json")"
+  sleep 1
+  touch "$TREE/web/src/changed.ts"
+  run "$DEVBOX" web --no-open
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"restarting the server for the new build"* ]]
+  ! kill -0 "$old_pid" 2>/dev/null
+  [ "$(grep -c 'dist-server/server/index.js' "$CALLS")" -eq 2 ]
+}
+
 @test "web: --help prints usage and exits zero" {
   run "$DEVBOX" web --help
   [ "$status" -eq 0 ]
