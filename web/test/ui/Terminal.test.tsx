@@ -373,15 +373,19 @@ describe('TerminalPane', () => {
     expect(xterms[0].focus).toHaveBeenCalled()
   })
 
-  it('puts text a remote program copies (OSC 52) on the clipboard, says so, and never reads it back', async () => {
+  it('copies a selection tmux sends back (OSC 52) only right after a mouse release, says whether it worked, and never reads the clipboard', async () => {
     const writeText = vi.fn(async () => undefined)
     const readText = vi.fn(async () => 'secret')
     vi.stubGlobal('navigator', { clipboard: { writeText, readText } })
     vi.useFakeTimers()
     try {
-      render(<TerminalPane name="api" active />)
+      const { container } = render(<TerminalPane name="api" active />)
       const osc = xterms[0].osc.get(52)!
       expect(xterms[0].options.macOptionClickForcesSelection).toBe(true)
+      expect(osc(';aGk=')).toBe(true)
+      expect(writeText).not.toHaveBeenCalled()
+      fireEvent.pointerDown(container.querySelector('.terminal-screen')!)
+      fireEvent.pointerUp(document.body)
       await act(async () => {
         expect(osc('c;aMOpbGxvIOKckw==')).toBe(true)
       })
@@ -392,8 +396,20 @@ describe('TerminalPane', () => {
       })
       expect(screen.getByRole('status')).toHaveTextContent('')
       osc('c;?')
-      expect(writeText).toHaveBeenCalledTimes(1)
       expect(readText).not.toHaveBeenCalled()
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+      osc(';aGk=')
+      expect(writeText).toHaveBeenCalledTimes(1)
+
+      writeText.mockRejectedValueOnce(new Error('NotAllowedError'))
+      fireEvent.pointerDown(container.querySelector('.terminal-screen')!)
+      fireEvent.pointerUp(document.body)
+      await act(async () => {
+        osc(';aGk=')
+      })
+      expect(screen.getByRole('status')).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
     } finally {
       vi.useRealTimers()
       vi.unstubAllGlobals()
@@ -403,7 +419,7 @@ describe('TerminalPane', () => {
   it('decodes OSC 52 payloads and ignores queries and garbage', () => {
     expect(clipboardText('c;aGVsbG8=')).toBe('hello')
     expect(clipboardText(';aGk=')).toBe('hi')
-    for (const bad of ['c;?', 'c;', 'c;***', '']) expect(clipboardText(bad)).toBeNull()
+    for (const bad of ['c;?', 'c;', 'c;***', '', 'aGk=']) expect(clipboardText(bad)).toBeNull()
   })
 
   it('drops the WebGL renderer when its context is lost', () => {

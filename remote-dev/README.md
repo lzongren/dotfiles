@@ -182,9 +182,11 @@ The sidebar lists every session, most recent first, with a headline: the
 title the agent gives its terminal (Claude Code and Codex keep it current).
 Click one to open it in a terminal tab beside the list; each tab is an
 ordinary tmux client, so closing the tab detaches without touching the
-session. Dragging over text copies it to the laptop clipboard (tmux sends
-the selection back, and the tab flashes "copied"); in an app that takes the
-mouse, hold Option while dragging and press ⌘C. Press `/` to search: Enter attaches a running session, starts the
+session. Dragging over text copies it to the laptop clipboard: tmux sends
+the selection back and the tab flashes "copied". Only a copy that follows a
+mouse release in that tab is accepted, so output alone can't replace the
+clipboard. In an app that takes the mouse, or a browser that refuses (Safari
+may), hold Option (Shift off macOS) while dragging, then press ⌘C. Press `/` to search: Enter attaches a running session, starts the
 chosen agent in an existing workspace folder, or creates a new one with the
 same rules as `devbox --cc <name>` from a synced root. Rows whose names don't
 match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached from the
