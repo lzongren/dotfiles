@@ -58,6 +58,7 @@ beforeAll(() => {
     ['%9', 'busyerr', '1', '1', 'claude', '1', '/work/busyerr'],
     ['%10', 'stopped', '1', '1', 'claude', '1', '/work/stopped'],
   ]
+  write('work/fix/plan.md', '# plan\n')
   write('bin/tmux', `#!/bin/sh\nprintf '%s\\n' ${panes.map((p) => `'${p.join('\t')}'`).join(' ')}\n`)
   chmodSync(path.join(home, 'bin/tmux'), 0o755)
 
@@ -145,6 +146,11 @@ beforeAll(() => {
         },
       }),
       line({ type: 'pr-link', prUrl: 'https://github.com/o/r/pull/31', prNumber: 31, timestamp: at(4) }),
+      line({ type: 'user', timestamp: at(3), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { filePath: '/work/fix/src/retry.ts', oldString: 'a', newString: 'b' } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'create', filePath: path.join(home, 'work/fix/plan.md') } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'update', filePath: path.join(home, 'work/fix/plan.md') } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'create', filePath: path.join(home, '.claude/plans/p.md') } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'create', filePath: 'relative.txt' } }),
       line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { stdout: PLACEHOLDER } }),
       line({ type: 'user', timestamp: at(5), message: { role: 'user', content: 'merge it once CI is green' } }),
       line({ type: 'user', timestamp: at(5), isCompactSummary: true, message: { content: 'This session is being continued from a previous conversation.' } }),
@@ -201,6 +207,15 @@ beforeAll(() => {
         type: 'response_item',
         timestamp: at(32),
         payload: { type: 'function_call', name: 'update_plan', arguments: JSON.stringify({ plan: [{ step: 'Read', status: 'completed' }, { step: 'Write', status: 'in_progress' }] }) },
+      }),
+      line({
+        type: 'response_item',
+        timestamp: at(32),
+        payload: {
+          type: 'custom_tool_call',
+          name: 'apply_patch',
+          input: '*** Begin Patch\n*** Add File: /work/cdx/src/lib.rs\n+fn main() {}\n*** Update File: src/parser.rs\n@@\n-a\n+b\n*** Delete File: /work/cdx/old.py\n*** End Patch',
+        },
       }),
     ].join(''),
   )
@@ -285,6 +300,19 @@ describe('agent probe', () => {
     const agents = run()
     expect(agents.notes).toBeUndefined()
     expect(Object.keys(agents).sort()).toEqual(['broken', 'busyerr', 'cdx', 'eval', 'fix-retry', 'longrun', 'messy', 'stopped'])
+  })
+
+  it('lists the files each agent wrote, newest first, resolving codex paths against its folder', () => {
+    const agents = run()
+    expect(agents['fix-retry'].files).toEqual([
+      { path: path.join(home, 'work/fix/plan.md'), action: 'created', at: Date.parse(at(4)) / 1000, count: 2, gone: false },
+      { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
+    ])
+    expect(agents.cdx.files).toEqual([
+      { path: '/work/cdx/src/lib.rs', action: 'created', at: Date.parse(at(32)) / 1000, count: 1, gone: true },
+      { path: '/work/cdx/src/parser.rs', action: 'edited', at: Date.parse(at(32)) / 1000, count: 1, gone: true },
+      { path: '/work/cdx/old.py', action: 'deleted', at: Date.parse(at(32)) / 1000, count: 1, gone: true },
+    ])
   })
 
   it('keeps a title written long before the tail it reads, and sees a finished turn without a registry', () => {

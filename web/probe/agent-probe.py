@@ -19,13 +19,16 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 6
+CACHE_VERSION = 7
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
 SCAN_MAX = 32 * 1024 * 1024
 TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
+KEEP_FILES = 40
+SHOW_FILES = 20
+PATCH_RE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$", re.M)
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -321,10 +324,10 @@ def compile_patterns():
     return patterns
 
 
-def scan_history(path, size, ino, cache, patterns):
+def scan_history(path, size, ino, cache, patterns, cwd=None):
     entry = cache.get(path)
     if not isinstance(entry, dict) or entry.get("ino") != ino or entry.get("off", 0) > size:
-        entry = {"ino": ino, "off": max(0, size - SCAN_MAX), "artifacts": {}, "commits": 0, "tasks": {}}
+        entry = {"ino": ino, "off": max(0, size - SCAN_MAX), "artifacts": {}, "commits": 0, "tasks": {}, "files": {}}
     offset = entry["off"]
     data = read_range(path, offset, min(size - offset, SCAN_MAX)) if size > offset else b""
     end = data.rfind(b"\n") + 1
@@ -338,6 +341,8 @@ def scan_history(path, size, ino, cache, patterns):
             and b"gitOperation" not in line
             and b'"task' not in line.lower()
             and b"-title" not in line
+            and b"filePath" not in line
+            and b"apply_patch" not in line
             and not (links and any(regex.search(line.decode("utf-8", "replace")) for _, regex, link in patterns if link))
         ):
             continue
@@ -364,6 +369,7 @@ def scan_history(path, size, ino, cache, patterns):
             if isinstance(pr, dict) and pr.get("url"):
                 found[pr["url"]] = ("PR", pr.get("action"), True)
         track_tasks(entry["tasks"], rec)
+        track_files(entry["files"], rec, at, cwd)
         if rec.get("type") == "pr-link" and rec.get("prUrl"):
             found.setdefault(rec["prUrl"], ("PR", None, True))
         for text in strings(rec):
@@ -377,9 +383,40 @@ def scan_history(path, size, ino, cache, patterns):
         rank = lambda kv: (kv[1].get("said", False), kv[1].get("hits", 1), kv[1]["at"])
         keep = sorted(artifacts.items(), key=rank)[-KEEP_ARTIFACTS:]
         entry["artifacts"] = artifacts = dict(keep)
+    if len(entry["files"]) > KEEP_FILES:
+        entry["files"] = dict(sorted(entry["files"].items(), key=lambda kv: kv[1]["at"])[-KEEP_FILES:])
     cache[path] = entry
     SCANNED.add(path)
     return entry
+
+
+def track_files(files, rec, at, cwd):
+    result = rec.get("toolUseResult")
+    if isinstance(result, dict) and isinstance(result.get("filePath"), str):
+        touch(files, result["filePath"], "created" if result.get("type") == "create" else "edited", at)
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    patch = payload.get("input")
+    if payload.get("type") == "custom_tool_call" and payload.get("name") == "apply_patch" and isinstance(patch, str):
+        for match in PATCH_RE.finditer(patch):
+            name = match.group(2).strip()
+            full = name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
+            touch(files, full, {"Add": "created", "Update": "edited", "Delete": "deleted"}[match.group(1)], at)
+
+
+def touch(files, path, action, at):
+    path = os.path.normpath(path)
+    if not os.path.isabs(path) or "/.claude/" in path or "/.codex/" in path:
+        return
+    seen = files.setdefault(path, {"action": action, "at": at, "count": 0})
+    seen["count"] += 1
+    seen["at"] = max(seen["at"], at)
+    if action != "edited" or seen["action"] == "deleted":
+        seen["action"] = action
+
+
+def files_out(files):
+    ranked = sorted(files.items(), key=lambda kv: -kv[1]["at"])[:SHOW_FILES]
+    return [dict(f, path=p, gone=not os.path.exists(p)) for p, f in ranked]
 
 
 def track_tasks(tasks, rec):
@@ -449,6 +486,7 @@ def claude_insight(pane, reg, cache, patterns):
     out["tasks"] = claude_tasks(session_id) or task_counts(tracked) or info.get("tasks")
     out["artifacts"] = sorted(entry["artifacts"].values(), key=lambda a: -a["at"])
     out["commits"] = entry["commits"]
+    out["files"] = files_out(entry["files"])
     return out
 
 
@@ -534,9 +572,10 @@ def codex_insight(pane, rollouts, children, cache, patterns):
             out["tasks"] = task_counts([{"status": p.get("status"), "activeForm": p.get("step")} for p in plan])
     out["since"] = state_at
     out["title"] = clip(codex_title(os.path.basename(rollout)), 120)
-    entry = scan_history(rollout, stat.st_size, stat.st_ino, cache, patterns)
+    entry = scan_history(rollout, stat.st_size, stat.st_ino, cache, patterns, real)
     out["artifacts"] = sorted(entry["artifacts"].values(), key=lambda a: -a["at"])
     out["commits"] = entry["commits"]
+    out["files"] = files_out(entry["files"])
     return out
 
 
@@ -613,7 +652,7 @@ def main():
         insight["session"] = session
         agents.append({k: v for k, v in insight.items() if v is not None})
     save_cache(cache_path, cache, key)
-    print(json.dumps({"v": 1, "now": int(time.time()), "agents": agents}))
+    print(json.dumps({"v": 1, "now": int(time.time()), "home": HOME, "agents": agents}))
 
 
 main()

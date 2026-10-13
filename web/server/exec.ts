@@ -84,6 +84,11 @@ export function spawnAttachPty(host: string, name: string, cols: number, rows: n
   return ptySpawn(file, args, { name: 'xterm-256color', cols, rows, env })
 }
 
+export function openLocal(file: string): void {
+  const opener = process.platform === 'darwin' ? 'open' : 'xdg-open'
+  spawn(opener, [file], { detached: true, stdio: 'ignore' }).on('error', () => undefined).unref()
+}
+
 export function runAgentProbe(host: string, script: string, timeoutMs = 30000): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, 'python3', '-I', '-'], {

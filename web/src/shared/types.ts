@@ -46,12 +46,33 @@ export interface AgentInsight {
   tasks?: { done: number; total: number; current?: string }
   artifacts: Artifact[]
   commits: number
+  files?: FileTouch[]
   error?: string
+}
+
+export interface FileTouch {
+  path: string
+  action: 'created' | 'edited' | 'deleted'
+  at: number
+  count: number
+  gone: boolean
 }
 
 export interface InsightsResponse {
   fetchedAt: number
+  home?: string
   agents: AgentInsight[]
+}
+
+export interface FileView {
+  path: string
+  size: number
+  mtime: number
+  kind: 'text' | 'image' | 'binary'
+  text?: string
+  data?: string
+  truncated: boolean
+  local?: string
 }
 
 export interface Workspace {

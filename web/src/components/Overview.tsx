@@ -14,6 +14,7 @@ import {
 } from '../insights'
 import { ago } from '../time'
 import { headline } from './SessionList'
+import { FileList, FilePreview, type FileRef } from './FilePreview'
 
 interface Row {
   session: Session
@@ -130,6 +131,11 @@ function Card({
             </span>
           ))}
           {notable.length > shown.length ? <span>+{notable.length - shown.length}</span> : null}
+          {insight?.files?.length ? (
+            <span>
+              {insight.files.length} file{insight.files.length === 1 ? '' : 's'}
+            </span>
+          ) : null}
           {insight?.model ? <span>{modelName(insight.model)}</span> : null}
         </span>
       </button>
@@ -168,7 +174,19 @@ function ArtifactList({
   )
 }
 
-function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: () => void; onSeen: () => void }) {
+function Detail({
+  row,
+  now,
+  onOpen,
+  onSeen,
+  onPick,
+}: {
+  row: Row
+  now: number
+  onOpen: () => void
+  onSeen: () => void
+  onPick: (file: FileRef) => void
+}) {
   const { session, insight } = row
   const state = stateLabel(row)
   const tasks = insight?.tasks
@@ -237,6 +255,18 @@ function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: (
             </dd>
           </>
         ) : null}
+        {insight?.files?.length ? (
+          <>
+            <dt>Files</dt>
+            <dd>
+              <FileList
+                files={insight.files.map((f) => ({ ...f, session: session.name, cwd: session.path }))}
+                now={now}
+                onPick={onPick}
+              />
+            </dd>
+          </>
+        ) : null}
         <dt>Agent</dt>
         <dd>
           {insight ? [insight.agent, insight.model && modelName(insight.model)].filter(Boolean).join(' · ') : session.cmd}
@@ -251,7 +281,7 @@ function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: (
 export function ignoredTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
-    target.closest('input, textarea, select, [contenteditable], .terminals, a, summary, .detail-actions') !== null
+    target.closest('input, textarea, select, [contenteditable], .terminals, a, summary, .detail-actions, dialog') !== null
   )
 }
 
@@ -276,6 +306,7 @@ export function Overview({
 }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [parkedOpen, setParkedOpen] = useState(false)
+  const [preview, setPreview] = useState<FileRef | null>(null)
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const lanesRef = useRef<HTMLDivElement | null>(null)
   const pointerInside = useRef(false)
@@ -367,6 +398,11 @@ export function Overview({
     />
   )
   const artifacts = ledger([...rows.values()].map((r) => ({ name: r.session.name, artifacts: r.insight?.artifacts ?? [] })))
+  const recentFiles = [...rows.values()]
+    .flatMap((r) => (r.insight?.files ?? []).map((f) => ({ ...f, session: r.session.name, cwd: r.session.path, label: r.session.name })))
+    .filter((f) => !f.gone)
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 12)
 
   return (
     <section className="overview" aria-label="overview">
@@ -432,6 +468,7 @@ export function Overview({
             now={now}
             onOpen={() => onOpen(current.session.name)}
             onSeen={() => onSeen([current.session.name])}
+            onPick={setPreview}
           />
         ) : (
           <div className="detail-body">
@@ -442,6 +479,12 @@ export function Overview({
             ) : (
               <p className="lane-empty">No pull requests or reviews seen yet.</p>
             )}
+            {recentFiles.length > 0 ? (
+              <>
+                <h2 className="detail-section">Recent files</h2>
+                <FileList files={recentFiles} now={now} onPick={setPreview} />
+              </>
+            ) : null}
             <p className="hint">
               Select a session to see where it stands. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>Enter</kbd> opens,{' '}
               <kbd>e</kbd> marks seen.
@@ -449,6 +492,7 @@ export function Overview({
           </div>
         )}
       </aside>
+      {preview ? <FilePreview file={preview} onClose={() => setPreview(null)} /> : null}
     </section>
   )
 }

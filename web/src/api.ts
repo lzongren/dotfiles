@@ -2,6 +2,7 @@ import type {
   ApiError,
   CreateSessionRequest,
   CreateSessionResponse,
+  FileView,
   InsightsResponse,
   NoteDaysResponse,
   NoteResponse,
@@ -69,4 +70,12 @@ export function getNote(day: string): Promise<ApiResult<NoteResponse>> {
 
 export function putNote(day: string, text: string, base: string): Promise<ApiResult<{ version: string }>> {
   return fetchJson<{ version: string }>(`/api/notes/${day}`, { method: 'PUT', body: { text, base } })
+}
+
+export function getFile(session: string, path: string): Promise<ApiResult<FileView>> {
+  return fetchJson<FileView>(`/api/file?${new URLSearchParams({ session, path }).toString()}`)
+}
+
+export function openFile(session: string, path: string): Promise<ApiResult<{ opened: string }>> {
+  return fetchJson<{ opened: string }>('/api/file/open', { method: 'POST', body: { session, path } })
 }
