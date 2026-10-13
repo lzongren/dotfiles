@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemePicker } from '../../src/components/ThemePicker'
 import type { GhosttyLook } from '../../src/shared/types'
-import { applyLook, ghosttyLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
+import { applyLook, ghosttyLook, onTerminalLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
 
 const ansi = (c: string) => Array<string>(16).fill(c)
 const GHOSTTY: GhosttyLook = {
@@ -22,6 +22,7 @@ const GHOSTTY: GhosttyLook = {
 let light = false
 let more = false
 const listeners = new Set<() => void>()
+const zoom = new Set<() => void>()
 
 function serve(ghostty: GhosttyLook | null) {
   vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ ghostty }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
@@ -45,15 +46,22 @@ beforeEach(() => {
     get matches() {
       return query.includes('contrast') ? more : light
     },
-    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
-    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+    addEventListener: (_: string, fn: () => void) => (query.includes('resolution') ? zoom : listeners).add(fn),
+    removeEventListener: (_: string, fn: () => void) => (query.includes('resolution') ? zoom : listeners).delete(fn),
   }))
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   listeners.clear()
+  zoom.clear()
 })
+
+function zoomTo(dpr: number) {
+  vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(dpr)
+  act(() => zoom.forEach((fn) => fn()))
+}
 
 describe('ThemePicker', () => {
   it('starts on your Ghostty theme, with its font and cursor in the terminal', async () => {
@@ -162,6 +170,48 @@ describe('ThemePicker', () => {
     await renderPicker()
     expect(screen.getAllByRole('combobox', { name: 'Theme' })[1]).toHaveDisplayValue('Gruvbox Dark')
     expect(bg()).toBe('#282828')
+  })
+
+  it('keeps your theme when a terminal fails to take it', async () => {
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    const stop = onTerminalLook(() => {
+      throw new Error('terminal disposed')
+    })
+    serve(null)
+    await renderPicker()
+    stop()
+    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Dracula')
+    expect(savedLook()?.id).toBe('dracula')
+    expect(bg()).not.toBe('')
+  })
+
+  it('stays up when even the fallback look cannot be painted', async () => {
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    vi.spyOn(document.documentElement.style, 'removeProperty').mockImplementation(() => {
+      throw new Error('style locked')
+    })
+    serve(null)
+    await renderPicker()
+    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Devbox')
+  })
+
+  it('repaints terminals on zoom only when the line height depends on it', async () => {
+    let paints = 0
+    const stop = onTerminalLook(() => {
+      paints += 1
+    })
+    serve(GHOSTTY)
+    await renderPicker()
+    const before = terminalLook().lineHeight
+    paints = 0
+    zoomTo(2)
+    expect(paints).toBe(1)
+    expect(terminalLook().lineHeight).not.toBe(before)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value: 'tokyo-night' } })
+    paints = 0
+    zoomTo(3)
+    expect(paints).toBe(0)
+    stop()
   })
 
   it('offers only the presets without Ghostty, and Devbox clears every override', async () => {

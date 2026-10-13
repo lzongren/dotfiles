@@ -56,10 +56,14 @@ export function ThemePicker() {
       applyLook(selected, prefs)
     } catch {
       saveLook(null)
-      applyLook(DEVBOX, prefs)
+      try {
+        applyLook(DEVBOX, prefs)
+      } catch {
+        void 0
+      }
       setSelected(DEVBOX)
     }
-  }, [selected, prefs, dpr])
+  }, [selected, prefs, selected.cellHeight?.unit === 'px' ? dpr : 0])
 
   const looks = ghostty ? [ghostty, ...PRESETS] : PRESETS
   return (

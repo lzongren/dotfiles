@@ -6,6 +6,7 @@ let store: Record<string, string>
 let failPuts = 0
 let failStatus = 500
 let failGets = 0
+let loseReplies = 0
 const puts: Array<{ day: string; text: string }> = []
 
 const version = (text: string) => (text ? `h:${text}` : '')
@@ -34,6 +35,7 @@ beforeEach(() => {
   failPuts = 0
   failStatus = 500
   failGets = 0
+  loseReplies = 0
   puts.length = 0
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     if (url === '/api/notes') return json({ days: Object.keys(store).sort().reverse() })
@@ -50,6 +52,10 @@ beforeEach(() => {
       puts.push({ day, text })
       if (text.trim()) store[day] = text
       else delete store[day]
+      if (loseReplies > 0) {
+        loseReplies -= 1
+        return json({ error: 'remote_unreachable', message: 'connection reset' }, 502)
+      }
       return json({ day, version: version(text) })
     }
     if (getGate) await getGate
@@ -144,7 +150,7 @@ describe('Notes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
     await settle()
     expect(pad()).toHaveValue('tuesday plan')
-    expect(screen.getByRole('status')).toHaveTextContent('retrying')
+    expect(screen.getByRole('status')).toHaveTextContent('not saved yet, retrying — switch days once it saves')
     await settle(5100)
     expect(store['2026-10-13']).toBe('tuesday plan')
     fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
@@ -254,6 +260,7 @@ describe('Notes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
     await settle()
     expect(pad()).toHaveValue('far too long')
+    expect(screen.getByRole('status')).toHaveTextContent('not saved: request body too large — switch days once it saves')
     const leave = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(leave)
     expect(leave.defaultPrevented).toBe(true)
@@ -271,6 +278,108 @@ describe('Notes', () => {
     await settle(700)
     expect(shown()).toBe('saved')
     expect(screen.queryByRole('button', { name: 'Keep mine' })).toBeNull()
+  })
+
+  it('reopens on a day whose draft never saved, and saves it there', async () => {
+    store['2026-10-13'] = 'today'
+    localStorage.setItem('devbox.notes.draft.2026-10-11', JSON.stringify({ text: 'sunday, typed while offline', base: '' }))
+    localStorage.setItem('devbox.notes.draft.not-a-day', JSON.stringify({ text: 'x', base: '' }))
+    render(<Notes />)
+    await settle()
+    expect(pad()).toHaveValue('sunday, typed while offline')
+    expect(screen.getByRole('button', { name: /^Notes · Sun/ })).toBeInTheDocument()
+    await settle()
+    expect(store['2026-10-11']).toBe('sunday, typed while offline')
+    fireEvent.click(screen.getByRole('button', { name: 'newer notes' }))
+    await settle()
+    expect(pad()).toHaveValue('today')
+  })
+
+  it('takes its own save back as saved when the reply was lost and more was typed since', async () => {
+    store['2026-10-13'] = 'start'
+    loseReplies = 1
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: 'a' } })
+    await settle(700)
+    expect(store['2026-10-13']).toBe('a')
+    fireEvent.change(pad(), { target: { value: 'ab' } })
+    await settle(700)
+    expect(store['2026-10-13']).toBe('ab')
+    expect(shown()).toBe('saved')
+    expect(screen.queryByRole('button', { name: 'Keep mine' })).toBeNull()
+  })
+
+  it('counts a cleared pad as saved when the server removed the file but the reply was lost', async () => {
+    store['2026-10-13'] = 'start'
+    loseReplies = 1
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: '  ' } })
+    await settle(700)
+    await settle(5100)
+    expect(shown()).toBe('saved')
+    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
+  })
+
+  it('follows a draft typed in another tab, and reloads once that tab has saved it', async () => {
+    store['2026-10-13'] = 'start'
+    render(<Notes />)
+    await settle()
+    const key = 'devbox.notes.draft.2026-10-13'
+    const draft = JSON.stringify({ text: 'start, from tab two', base: 'h:start' })
+    localStorage.setItem(key, draft)
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key, newValue: draft }))
+    })
+    expect(pad()).toHaveValue('start, from tab two')
+    store['2026-10-13'] = 'start, from tab two, saved'
+    localStorage.removeItem(key)
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key, newValue: null }))
+    })
+    await settle()
+    expect(pad()).toHaveValue('start, from tab two, saved')
+    expect(shown()).toBe('saved')
+    expect(puts).toEqual([])
+  })
+
+  it("keeps another tab's draft when you take the saved version here", async () => {
+    store['2026-10-13'] = 'v1'
+    render(<Notes />)
+    await settle()
+    store['2026-10-13'] = 'v2 from elsewhere'
+    fireEvent.change(pad(), { target: { value: 'v1 local' } })
+    await settle(700)
+    const theirs = JSON.stringify({ text: 'typed in tab two', base: 'h:v1' })
+    localStorage.setItem('devbox.notes.draft.2026-10-13', theirs)
+    fireEvent.click(screen.getByRole('button', { name: 'Use saved' }))
+    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBe(theirs)
+  })
+
+  it('stops calling yesterday Today after midnight, and only moves on once nothing is unsaved', async () => {
+    vi.setSystemTime(new Date(2026, 9, 13, 23, 59, 30))
+    store['2026-10-13'] = 'late'
+    failPuts = 100
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: 'late, still typing' } })
+    await settle(61_000)
+    expect(screen.getByRole('button', { name: /^Notes · Tue/ })).toBeInTheDocument()
+    expect(pad()).toHaveValue('late, still typing')
+    failPuts = 0
+    await settle(5100)
+    expect(store['2026-10-13']).toBe('late, still typing')
+  })
+
+  it('moves to the new day at midnight when everything is saved', async () => {
+    vi.setSystemTime(new Date(2026, 9, 13, 23, 59, 30))
+    store['2026-10-13'] = 'late'
+    render(<Notes />)
+    await settle()
+    await settle(61_000)
+    expect(screen.getByRole('button', { name: /Notes · Today/ })).toBeInTheDocument()
+    expect(pad()).toHaveValue('')
   })
 
   it('treats a draft left by an older version as possibly stale and asks', async () => {

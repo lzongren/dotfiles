@@ -253,7 +253,13 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
     fontWeightBold: look.thicken ? 800 : 'bold',
     lineHeight: cellLineHeight(look.cellHeight, look.fontSize ?? TERMINAL_OPTIONS.fontSize) ?? 1,
   }
-  for (const listener of listeners) listener()
+  for (const listener of listeners) {
+    try {
+      listener()
+    } catch {
+      void 0
+    }
+  }
 }
 
 const HEX = /^#[0-9a-f]{6}$/i

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { getNote, getNoteDays, putNote, type ApiResult } from '../api'
 import { ignoredTarget } from './Overview'
 
@@ -8,6 +8,7 @@ const OPEN_KEY = 'devbox.notes.open'
 const DRAFT = 'devbox.notes.draft.'
 const LEGACY_BASE = '\u0000legacy'
 const OPEN_ITEM = /^\s*[-*] \[ \] .+$/gm
+const DAY = /^\d{4}-\d{2}-\d{2}$/
 
 interface Draft {
   day: string
@@ -15,7 +16,18 @@ interface Draft {
   base: string
 }
 
-type Phase = 'idle' | 'saving' | 'offline' | 'rejected' | 'conflict'
+type Phase =
+  | { kind: 'idle' }
+  | { kind: 'saving' }
+  | { kind: 'offline' }
+  | { kind: 'rejected'; text: string; problem: string }
+  | { kind: 'conflict'; text: string; version: string }
+
+const IDLE: Phase = { kind: 'idle' }
+
+function stored(text: string): string {
+  return text.trim() === '' ? '' : text
+}
 
 function readDraft(day: string): Draft | null {
   try {
@@ -41,12 +53,23 @@ function writeDraft(draft: Draft): void {
   }
 }
 
-function dropDraft(day: string, ifText?: string): void {
+function dropDraft(day: string, ifText: string): void {
   try {
-    if (ifText !== undefined && readDraft(day)?.text !== ifText) return
-    localStorage.removeItem(DRAFT + day)
+    const current = readDraft(day)
+    if (current && stored(current.text) === stored(ifText)) localStorage.removeItem(DRAFT + day)
   } catch {
     void 0
+  }
+}
+
+function draftDays(): string[] {
+  try {
+    return Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? '')
+      .filter((key) => key.startsWith(DRAFT) && DAY.test(key.slice(DRAFT.length)))
+      .map((key) => key.slice(DRAFT.length))
+      .sort()
+  } catch {
+    return []
   }
 }
 
@@ -79,22 +102,22 @@ function retriable(result: ApiResult<unknown>): boolean {
 
 export function Notes() {
   const [today, setToday] = useState(localDay)
-  const [day, setDay] = useState(today)
+  const [day, setDay] = useState(() => draftDays()[0] ?? today)
   const [text, setText] = useState('')
   const [days, setDays] = useState<string[]>([])
   const [loaded, setLoaded] = useState<string | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [carry, setCarry] = useState<{ from: string; items: string[] } | null>(null)
   const [draft, setDraftState] = useState<Draft | null>(null)
-  const [phase, setPhaseState] = useState<Phase>('idle')
-  const [problem, setProblem] = useState('')
-  const [conflict, setConflict] = useState<{ text: string; version: string } | null>(null)
+  const [phase, setPhaseState] = useState<Phase>(IDLE)
+  const [blocked, setBlocked] = useState(false)
   const [reload, setReload] = useState(0)
   const [open, setOpen] = useState(readOpen)
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
   const draftRef = useRef<Draft | null>(null)
-  const phaseRef = useRef<Phase>('idle')
-  const refusedText = useRef<string | null>(null)
+  const phaseRef = useRef<Phase>(IDLE)
   const versionRef = useRef('')
+  const sent = useRef(new Set<string>())
   const textRef = useRef('')
   const loadedRef = useRef<string | null>(null)
   const chain = useRef<Promise<void>>(Promise.resolve())
@@ -108,6 +131,7 @@ export function Notes() {
   const setDraft = (next: Draft | null) => {
     draftRef.current = next
     if (next) writeDraft(next)
+    else setBlocked(false)
     setDraftState(next)
   }
   const setPhase = (next: Phase) => {
@@ -122,36 +146,39 @@ export function Notes() {
     }
     const step = async () => {
       const job = draftRef.current
-      if (!job || phaseRef.current === 'conflict' || refusedText.current === job.text) return
-      if (!disposed.current) setPhase('saving')
+      const now = phaseRef.current
+      if (!job || now.kind === 'conflict' || (now.kind === 'rejected' && now.text === job.text)) return
+      if (!disposed.current) setPhase({ kind: 'saving' })
+      sent.current.add(stored(job.text))
       const result = await putNote(job.day, job.text, job.base)
       const body = result.kind === 'error' ? ((result.body ?? {}) as { text?: unknown; version?: unknown }) : {}
-      const landed =
-        result.kind === 'ok' ? (typeof result.data.version === 'string' ? result.data.version : '') : result.kind === 'error' && result.status === 409 && body.text === job.text ? String(body.version ?? '') : null
-      if (landed !== null) {
-        dropDraft(job.day, job.text)
+      const theirs = typeof body.text === 'string' ? body.text : ''
+      const version = result.kind === 'ok' ? result.data.version : body.version
+      const known = [...sent.current, stored(draftRef.current?.text ?? job.text)].includes(stored(theirs))
+      const conflict = result.kind === 'error' && result.status === 409
+      const saved = result.kind === 'ok' ? job.text : conflict && known ? theirs : null
+      if (saved !== null) {
+        dropDraft(job.day, saved)
         if (disposed.current) return
-        versionRef.current = landed
-        refusedText.current = null
+        versionRef.current = typeof version === 'string' ? version : ''
+        sent.current.clear()
         const current = draftRef.current
-        if (current?.text === job.text) setDraft(null)
-        else if (current) setDraft({ ...current, base: landed })
-        setDays((prev) => (job.text.trim() ? (prev.includes(job.day) ? prev : [...prev, job.day].sort().reverse()) : prev.filter((d) => d !== job.day)))
-        setPhase('idle')
+        if (current && stored(current.text) === stored(saved)) setDraft(null)
+        else if (current) {
+          setDraft({ ...current, base: versionRef.current })
+          if (result.kind !== 'ok') void save()
+        }
+        setDays((prev) => (stored(saved) ? (prev.includes(job.day) ? prev : [...prev, job.day].sort().reverse()) : prev.filter((d) => d !== job.day)))
+        setPhase(IDLE)
         return
       }
       if (disposed.current) return
-      if (result.kind === 'error' && result.status === 409) {
-        setConflict({ text: typeof body.text === 'string' ? body.text : '', version: typeof body.version === 'string' ? body.version : '' })
-        setPhase('conflict')
-      } else if (retriable(result)) {
-        setPhase('offline')
+      if (!draftRef.current) setPhase(IDLE)
+      else if (conflict) setPhase({ kind: 'conflict', text: theirs, version: typeof version === 'string' ? version : '' })
+      else if (retriable(result)) {
+        setPhase({ kind: 'offline' })
         retry.current = window.setTimeout(() => void save(), RETRY_MS)
-      } else {
-        refusedText.current = job.text
-        setProblem(result.kind === 'error' ? result.message : 'reload the dashboard')
-        setPhase('rejected')
-      }
+      } else setPhase({ kind: 'rejected', text: job.text, problem: result.kind === 'error' ? result.message : 'reload the dashboard' })
     }
     chain.current = chain.current.then(step).catch(() => undefined)
     return chain.current
@@ -160,7 +187,8 @@ export function Notes() {
   const go = async (target: string | undefined) => {
     if (!target) return
     await save()
-    if (!draftRef.current) setDay(target)
+    if (draftRef.current) setBlocked(true)
+    else setDay(target)
   }
 
   useEffect(() => {
@@ -168,30 +196,30 @@ export function Notes() {
     setLoaded(null)
     setLoadError(false)
     setCarry(null)
-    setConflict(null)
-    setPhase('idle')
-    refusedText.current = null
+    setBlocked(false)
+    setPhase(IDLE)
+    sent.current.clear()
     void (async () => {
       const result = await getNote(day)
       if (!live) return
       const ok = result.kind === 'ok' && typeof result.data.text === 'string'
-      let stored = readDraft(day)
-      if (!ok && !stored) {
+      let kept = readDraft(day)
+      if (!ok && !kept) {
         setLoadError(true)
         return
       }
       const server = ok ? result.data.text : null
-      versionRef.current = ok ? (typeof result.data.version === 'string' ? result.data.version : '') : (stored?.base ?? '')
-      if (stored && server !== null && stored.text === server) {
+      versionRef.current = ok ? (typeof result.data.version === 'string' ? result.data.version : '') : (kept?.base ?? '')
+      if (kept && server !== null && kept.text === server) {
         dropDraft(day, server)
-        stored = null
+        kept = null
       }
-      const shown = stored?.text ?? server ?? ''
+      const shown = kept?.text ?? server ?? ''
       setText(shown)
       textRef.current = shown
-      setDraft(stored)
+      setDraft(kept)
       setLoaded(day)
-      if (stored) void save()
+      if (kept) void save()
       const list = await getNoteDays()
       if (!live || list.kind !== 'ok' || !Array.isArray(list.data.days)) return
       setDays(list.data.days)
@@ -209,12 +237,31 @@ export function Notes() {
   useEffect(() => {
     const tick = window.setInterval(() => {
       const now = localDay()
-      if (now === today || draftRef.current) return
-      setDay((current) => (current === today ? now : current))
+      if (now === today) return
       setToday(now)
+      void save().then(() => setDay((current) => (current === today && !draftRef.current ? now : current)))
     }, 60_000)
     return () => window.clearInterval(tick)
-  }, [today])
+  }, [today, save])
+
+  useEffect(() => {
+    const adopt = (event: StorageEvent) => {
+      if (!event.key?.startsWith(DRAFT)) return
+      rerender()
+      if (event.key !== DRAFT + day || loadedRef.current !== day) return
+      const next = readDraft(day)
+      draftRef.current = next
+      setDraftState(next)
+      if (!next) {
+        setReload((n) => n + 1)
+        return
+      }
+      setText(next.text)
+      textRef.current = next.text
+    }
+    window.addEventListener('storage', adopt)
+    return () => window.removeEventListener('storage', adopt)
+  }, [day])
 
   useEffect(() => {
     disposed.current = false
@@ -238,26 +285,28 @@ export function Notes() {
   }, [save])
 
   const edit = (next: string) => {
-    if (loadedRef.current !== day || phaseRef.current === 'conflict') return
+    const now = phaseRef.current
+    if (loadedRef.current !== day || now.kind === 'conflict') return
     setText(next)
     textRef.current = next
     setCarry(null)
     setDraft({ day, text: next, base: draftRef.current?.base ?? versionRef.current })
-    if (phaseRef.current === 'rejected' && refusedText.current !== next) setPhase('idle')
+    if (now.kind === 'rejected' && now.text !== next) setPhase(IDLE)
     if (debounce.current !== null) window.clearTimeout(debounce.current)
     debounce.current = window.setTimeout(() => void save(), SAVE_MS)
   }
 
   const resolve = (keep: boolean) => {
-    if (!conflict) return
+    const conflict = phaseRef.current
+    if (conflict.kind !== 'conflict') return
     versionRef.current = conflict.version
-    setConflict(null)
-    setPhase('idle')
+    sent.current.clear()
+    setPhase(IDLE)
     if (keep && draftRef.current) {
       setDraft({ ...draftRef.current, base: conflict.version })
       void save()
     } else {
-      dropDraft(day)
+      if (draftRef.current) dropDraft(day, draftRef.current.text)
       setDraft(null)
       setText(conflict.text)
       textRef.current = conflict.text
@@ -275,25 +324,26 @@ export function Notes() {
     })
   }
 
-  const timeline = [...new Set([today, day, ...days])].sort().reverse()
+  const timeline = [...new Set([today, day, ...days, ...draftDays()])].sort().reverse()
   const index = timeline.indexOf(day)
   const older = timeline[index + 1]
   const newer = index > 0 ? timeline[index - 1] : undefined
   const remaining = openItems(text).length
   const label = dayLabel(day, today)
-  const [shown, alarming] = loadError
+  const [status, warning] = loadError
     ? ["couldn't load this note", true]
     : loaded !== day
       ? ['', false]
-      : phase === 'conflict'
+      : phase.kind === 'conflict'
         ? ['changed elsewhere', true]
-        : phase === 'rejected'
-          ? [`not saved: ${problem}`, true]
-          : phase === 'offline'
+        : phase.kind === 'rejected'
+          ? [`not saved: ${phase.problem}`, true]
+          : phase.kind === 'offline'
             ? ['not saved yet, retrying', true]
             : draft
-              ? [phase === 'saving' ? 'saving…' : 'editing…', false]
+              ? [phase.kind === 'saving' ? 'saving…' : 'editing…', false]
               : ['saved', false]
+  const [shown, alarming] = blocked && draft ? [`${warning ? status : 'not saved yet'} — switch days once it saves`, true] : [status, warning]
 
   return (
     <section className="notes" aria-label="notes">
@@ -321,7 +371,7 @@ export function Notes() {
             aria-label={`notes for ${label.toLowerCase()}`}
             placeholder={'What are you on today?\n- [ ] a thing to finish\n- [x] a thing done'}
             spellCheck
-            readOnly={loaded !== day || phase === 'conflict'}
+            readOnly={loaded !== day || phase.kind === 'conflict'}
             value={text}
             onChange={(e) => edit(e.target.value)}
             onBlur={() => void save()}
@@ -347,7 +397,7 @@ export function Notes() {
                 Retry
               </button>
             ) : null}
-            {conflict ? (
+            {phase.kind === 'conflict' ? (
               <>
                 <button type="button" className="notes-carry" onClick={() => resolve(false)}>
                   Use saved
