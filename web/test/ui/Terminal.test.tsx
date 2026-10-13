@@ -400,6 +400,10 @@ describe('TerminalPane', () => {
         osc(';aGk=')
       })
       expect(screen.getByRole('status')).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
+
+      render(<TerminalPane name="web" active={false} />)
+      xterms[1].osc.get(52)!(';aGk=')
+      expect(writeText).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
       vi.unstubAllGlobals()

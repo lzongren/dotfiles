@@ -97,7 +97,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     }
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
-      if (text === null) return true
+      if (text === null || !activeRef.current) return true
       if (!navigator.clipboard) flash(BLOCKED)
       else
         void navigator.clipboard.writeText(text).then(
