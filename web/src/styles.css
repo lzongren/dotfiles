@@ -1342,7 +1342,12 @@ details[open] > .parked-toggle::before {
   color: var(--accent);
 }
 
-.md a.md-image {
+.md a[role='link'] {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.md .md-image {
   font-style: italic;
 }
 

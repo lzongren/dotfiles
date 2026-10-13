@@ -165,7 +165,7 @@ describe('file viewer', () => {
     text('/w/plan.md', '# The plan\n\n- [x] done')
     const dialog = preview('/w/plan.md')
     expect(await dialog.findByRole('heading', { name: 'The plan' })).toBeInTheDocument()
-    expect(dialog.getByRole('checkbox')).toBeChecked()
+    expect(dialog.getByRole('checkbox', { name: 'done' })).toBeChecked()
     expect(dialog.getByRole('button', { name: 'Rendered' })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(dialog.getByRole('button', { name: 'Source' }))
     expect(dialog.getByLabelText('plan.md contents')).toHaveTextContent('# The plan - [x] done')
@@ -173,7 +173,7 @@ describe('file viewer', () => {
   })
 
   it('follows links to files the agent wrote, says why it cannot follow others, and jumps to headings', async () => {
-    text('/w/docs/plan.md', '# Plan\n\n[the code](../src/x.ts) [elsewhere](/etc/hosts) [top](#plan)')
+    text('/w/docs/plan.md', '# Plan\n\n[the code](../src/x.ts) [elsewhere](/etc/hosts) [top](#plan) [self](plan.md)')
     text('/w/src/x.ts', 'const a = 1\n')
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
@@ -181,14 +181,14 @@ describe('file viewer', () => {
     fireEvent.click(await dialog.findByRole('link', { name: 'top' }))
     expect(scroll.mock.contexts[0]).toBe(dialog.getByRole('heading', { name: 'Plan' }))
     expect(document.activeElement).toBe(dialog.getByRole('heading', { name: 'Plan' }))
-    const middle = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 })
-    dialog.getByRole('link', { name: 'the code' }).dispatchEvent(middle)
-    expect(middle.defaultPrevented).toBe(true)
+    expect(dialog.getByRole('link', { name: 'the code' })).not.toHaveAttribute('href')
+    fireEvent.click(dialog.getByRole('link', { name: 'self' }))
+    expect(dialog.queryByRole('button', { name: 'Back' })).toBeNull()
 
     fireEvent.click(dialog.getByRole('link', { name: 'elsewhere' }))
     expect(dialog.getByRole('status')).toHaveTextContent("hosts isn't a file this agent wrote")
 
-    fireEvent.click(dialog.getByRole('link', { name: 'the code' }))
+    fireEvent.keyDown(dialog.getByRole('link', { name: 'the code' }), { key: 'Enter' })
     expect(await dialog.findByRole('heading', { name: 'x.ts' })).toHaveFocus()
     expect(await dialog.findByLabelText('x.ts contents')).toContainHTML('<span class="hljs-keyword">const</span>')
     expect(location.hash).toBe('')
@@ -234,7 +234,7 @@ describe('file viewer', () => {
     cleanup()
 
     const lines = (n: number) => ['h', ...Array.from({ length: n }, (_, i) => `${i}`)].join('\n')
-    text('/w/full.csv', lines(1000))
+    text('/w/full.csv', `${lines(1000)}\n\n\n`)
     const full = preview('/w/full.csv')
     expect(await full.findAllByRole('row')).toHaveLength(1001)
     expect(full.queryByText(/Showing the first/)).toBeNull()

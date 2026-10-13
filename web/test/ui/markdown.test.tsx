@@ -24,36 +24,40 @@ describe('markdown rendering', () => {
 
   it('turns links to other files into in-preview links resolved against the file folder', () => {
     const html = render('[spec](../spec.md) [deep](./notes/a%20b.md#part) [abs](/tmp/x.txt)')
-    expect(html).toContain('href="#" data-path="/home/me/work/api/spec.md"')
+    expect(html).toContain('<a data-path="/home/me/work/api/spec.md" role="link" tabindex="0">spec</a>')
+    expect(html).not.toContain('href="#"')
     expect(html).toContain('data-path="/home/me/work/api/docs/notes/a b.md"')
     expect(html).toContain('data-path="/tmp/x.txt"')
   })
 
   it('gives headings ids and turns #links into in-page jumps, without touching the page URL', () => {
     const html = render('# Open questions\n\n## Open questions\n\n[jump](#open-questions)')
-    expect(html).toContain('<h1 id="md-open-questions">')
-    expect(html).toContain('<h2 id="md-open-questions-1">')
-    expect(html).toContain('href="#" data-anchor="md-open-questions"')
-    expect(render('## Setup & Install_now\n\n[toc](#setup--install_now)')).toMatch(/id="md-setup--install_now".*data-anchor="md-setup--install_now"/s)
+    expect(html).toContain('<h1 id="md-open-questions" tabindex="-1">')
+    expect(html).toContain('<h2 id="md-open-questions-1" tabindex="-1">')
+    expect(html).toContain('<a data-anchor="md-open-questions" role="link" tabindex="0">jump</a>')
+    const ids = [...render('## Setup & Install_now\n## _Draft_ plan\n## See [docs](https://x.io)\n## Q&amp;A\n## The `foo` option').matchAll(/id="([^"]+)"/g)].map((m) => m[1])
+    expect(ids).toEqual(['md-setup--install_now', 'md-draft-plan', 'md-see-docs', 'md-qa', 'md-the-foo-option'])
   })
 
   it('survives malformed escapes and leaves bare file names as text', () => {
     expect(render('[a](#%E0%A4) [b](x%E0%A4.md)')).toMatch(/data-anchor="md-e0a4".*data-path="\/home\/me\/work\/api\/docs\/x%E0%A4.md"/)
-    const html = render('see README.md, setup.py and https://example.com')
-    expect(html.match(/<a /g)).toHaveLength(1)
+    const html = render('see README.md, setup.py, main.rs and https://example.com or www.example.com')
+    expect([...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(['https://example.com', 'http://www.example.com'])
   })
 
   it('shows images it cannot load as links, and keeps inline data images', () => {
-    const html = render('![chart](chart.png) ![remote](https://example.com/a.png) ![dot](data:image/png;base64,AAAA)')
-    expect(html).toContain('<a href="#" class="md-image" data-path="/home/me/work/api/docs/chart.png">image: chart</a>')
+    const html = render('![chart](chart.png) ![remote](https://example.com/a.png) ![dot](data:image/png;base64,AAAA) ![odd](ftp://h/a.png)')
+    expect(html).toContain('<a class="md-image" data-path="/home/me/work/api/docs/chart.png" role="link" tabindex="0">image: chart</a>')
+    expect(html).toContain('<span class="md-image">image: odd</span>')
     expect(html).toContain('<a href="https://example.com/a.png" class="md-image" target="_blank" rel="noopener noreferrer">image: remote</a>')
     expect(html).toContain('<img src="data:image/png;base64,AAAA" alt="dot">')
   })
 
   it('renders task lists as checkboxes, tables, and highlighted code that keyboard users can scroll', () => {
     const html = render('- [ ] todo\n- [x] done\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst x = "y"\n```')
-    expect(html).toContain('<li class="md-task"><input type="checkbox" aria-label="task" disabled> todo')
-    expect(html).toContain('<input type="checkbox" aria-label="task" disabled checked> done')
+    expect(html).toContain('<li class="md-task"><label><input type="checkbox" disabled> todo</label></li>')
+    expect(html).toContain('<li class="md-task"><label><input type="checkbox" disabled checked> done</label></li>')
+    expect(render('- [ ] loose\n\n  more\n- not [ ] a task')).toMatch(/<li class="md-task">\s*<p><label><input type="checkbox" disabled> loose<\/label><\/p>[\s\S]*<li>\s*<p>not \[ \] a task<\/p>/)
     expect(html).toContain('<table tabindex="0">')
     expect(html).toMatch(/<pre tabindex="0"><code class="language-ts"><span class="hljs-keyword">const<\/span>/)
   })

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { getFile, openFile, type ApiResult } from '../api'
 import type { FileTouch, FileView } from '../shared/types'
 import { highlight, languageOf } from '../highlight'
@@ -97,6 +97,7 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
       cell = ''
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && text[i + 1] === '\n') i++
+      if (row.length === 0 && cell === '') continue
       row.push(cell)
       rows.push(row)
       row = []
@@ -111,6 +112,7 @@ export function indentJson(text: string): string {
   let out = ''
   let depth = 0
   const pad = () => `\n${'  '.repeat(depth)}`
+  const blank = (c: string | undefined) => c === ' ' || c === '\n' || c === '\r' || c === '\t'
   for (let i = 0; i < text.length; i++) {
     const c = text[i]
     if (c === '"') {
@@ -119,7 +121,8 @@ export function indentJson(text: string): string {
       out += text.slice(i, end + 1)
       i = end
     } else if (c === '{' || c === '[') {
-      const next = text.slice(i + 1).search(/\S/) + i + 1
+      let next = i + 1
+      while (blank(text[next])) next++
       if (text[next] === (c === '{' ? '}' : ']')) {
         out += c + text[next]
         i = next
@@ -132,7 +135,7 @@ export function indentJson(text: string): string {
       out += pad() + c
     } else if (c === ',') out += `,${pad()}`
     else if (c === ':') out += ': '
-    else if (!/\s/.test(c)) out += c
+    else if (!blank(c)) out += c
   }
   return out
 }
@@ -147,23 +150,18 @@ function Formatted({ format, text, path, onLink }: { format: Format; text: strin
   }, [format, text])
   const name = baseName(path)
   if (format === 'markdown') {
-    const click = (event: MouseEvent<HTMLElement>) => {
-      const link = (event.target as Element).closest('a')
-      if (!link || link.getAttribute('href') !== '#') return
+    const activate = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
+      const link = (event.target as Element).closest('a[role="link"]')
+      if (!link || ('key' in event && event.key !== 'Enter')) return
       event.preventDefault()
       const anchor = link.getAttribute('data-anchor')
-      const target = link.getAttribute('data-path')
       const heading = anchor ? document.getElementById(anchor) : null
       if (heading) {
-        heading.tabIndex = -1
         heading.focus({ preventScroll: true })
         heading.scrollIntoView?.({ block: 'start' })
-      } else if (target) onLink(target)
+      } else if (link.hasAttribute('data-path')) onLink(link.getAttribute('data-path')!)
     }
-    const auxClick = (event: MouseEvent<HTMLElement>) => {
-      if ((event.target as Element).closest('a')?.getAttribute('href') === '#') event.preventDefault()
-    }
-    return <article className="md" aria-label={`${name}, rendered`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} onAuxClick={auxClick} />
+    return <article className="md" aria-label={`${name}, rendered`} dangerouslySetInnerHTML={{ __html: html }} onClick={activate} onKeyDown={activate} />
   }
   if (json) {
     return json.html !== null ? (
@@ -253,6 +251,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const [wrap, setWrap] = useState(false)
   const path = trail[trail.length - 1]
   const follow = (target: string) => {
+    if (target === path) return
     if (known.includes(target)) {
       moved.current = true
       setTrail((t) => [...t, target])
