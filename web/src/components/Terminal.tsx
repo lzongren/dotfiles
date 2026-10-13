@@ -14,6 +14,17 @@ const SSH_FAILED = 255
 const MAX_RETRIES = 6
 const HEALTHY_MS = 5000
 const QUEUE_MAX = 64 * 1024
+const COPIED_MS = 1500
+
+export function clipboardText(data: string): string | null {
+  const payload = data.slice(data.indexOf(';') + 1)
+  if (!payload || payload === '?') return null
+  try {
+    return new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0)))
+  } catch {
+    return null
+  }
+}
 
 export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; active: boolean; focusSignal?: number }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -22,6 +33,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
   const activeRef = useRef(active)
   activeRef.current = active
   const [status, setStatus] = useState<Status>('connecting')
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     const term = new XTerm({ ...TERMINAL_OPTIONS, ...terminalLook() })
@@ -74,6 +86,22 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
 
     const dataSub = term.onData(sendInput)
     const resizeSub = term.onResize(sendResize)
+    let copiedTimer: number | null = null
+    const clipSub = term.parser.registerOscHandler(52, (data) => {
+      const text = clipboardText(data)
+      if (text !== null && navigator.clipboard) {
+        void navigator.clipboard.writeText(text).then(
+          () => {
+            if (disposed) return
+            setCopied(true)
+            if (copiedTimer !== null) window.clearTimeout(copiedTimer)
+            copiedTimer = window.setTimeout(() => setCopied(false), COPIED_MS)
+          },
+          () => undefined,
+        )
+      }
+      return true
+    })
 
     let fitTimer: number | null = null
     const observer = new ResizeObserver(() => {
@@ -202,12 +230,14 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (retryTimer !== null) window.clearTimeout(retryTimer)
       if (healthyTimer !== null) window.clearTimeout(healthyTimer)
       if (fitTimer !== null) window.clearTimeout(fitTimer)
+      if (copiedTimer !== null) window.clearTimeout(copiedTimer)
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()
       stopLook()
       ws?.close()
       dataSub.dispose()
       resizeSub.dispose()
+      clipSub.dispose()
       term.dispose()
     }
   }, [name])
@@ -222,6 +252,9 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
         <span className="terminal-name">{name}</span>
         <span className={`terminal-status terminal-status-${status}`}>
           {status === 'rejected' ? 'attach rejected' : status}
+        </span>
+        <span className="terminal-copied" role="status">
+          {copied ? 'copied' : ''}
         </span>
         {status === 'closed' || status === 'rejected' ? (
           <button type="button" onClick={() => reconnectRef.current()}>
