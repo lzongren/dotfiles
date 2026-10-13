@@ -479,7 +479,7 @@ kbd {
 
 .terminal-screen .xterm {
   height: 100%;
-  padding: 6px;
+  padding: var(--term-pad, 6px);
 }
 
 .terminal-screen .xterm .xterm-viewport {

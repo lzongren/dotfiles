@@ -156,7 +156,8 @@ including ids printed without a URL.
 
 The theme picker in the top bar starts on your Ghostty theme when it finds
 one: the server reads your Ghostty config for its colors (a `light:…,dark:…`
-pair follows the system), font, and cursor. A few presets sit beside it. Each
+pair follows the system), font, cursor, padding, line height, `font-thicken`,
+`bold-is-bright`, and `minimum-contrast`. A few presets sit beside it. Each
 theme is a terminal palette, and the page's colors are derived from it and
 held to WCAG AA. Ghostty draws its default font from a built-in copy that a
 browser can't use, so install that font to see it in the browser too.

@@ -40,6 +40,11 @@ export interface Look {
   fontSize?: number
   cursorStyle?: 'block' | 'bar' | 'underline'
   cursorBlink?: boolean
+  minimumContrast?: number
+  boldIsBright?: boolean
+  thicken?: boolean
+  lineHeight?: number
+  padding?: [number, number]
 }
 
 export interface Prefs {
@@ -47,13 +52,25 @@ export interface Prefs {
   more: boolean
 }
 
-type TerminalLook = Pick<ITerminalOptions, 'theme' | 'fontFamily' | 'fontSize' | 'cursorStyle' | 'cursorBlink'>
+type TerminalLook = Pick<
+  ITerminalOptions,
+  | 'theme'
+  | 'fontFamily'
+  | 'fontSize'
+  | 'cursorStyle'
+  | 'cursorBlink'
+  | 'minimumContrastRatio'
+  | 'drawBoldTextInBrightColors'
+  | 'fontWeight'
+  | 'fontWeightBold'
+  | 'lineHeight'
+>
 
 const STORE = 'devbox.look'
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const TOKENS = [
   '--bg', '--surface', '--raised', '--selected', '--text', '--dim', '--accent', '--bell', '--border', '--control',
-  '--term-bg', '--bell-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono',
+  '--term-bg', '--bell-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono', '--term-pad',
 ]
 const ANSI = [
   'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
@@ -104,7 +121,19 @@ export function ghosttyLook(g: GhosttyLook): Look {
     fontSize: g.fontSize,
     cursorStyle: g.cursorStyle,
     cursorBlink: g.cursorBlink ?? true,
+    minimumContrast: g.minimumContrast,
+    boldIsBright: g.boldIsBright,
+    thicken: g.fontThicken,
+    lineHeight: cellLineHeight(g.cellHeight, g.fontSize ?? TERMINAL_OPTIONS.fontSize),
+    padding: g.padding,
   }
+}
+
+function cellLineHeight(adjust: string | undefined, fontSize: number): number | undefined {
+  const m = /^(-?\d+(?:\.\d+)?)(%?)$/.exec(adjust?.trim() ?? '')
+  if (!m) return undefined
+  const extra = m[2] ? Number(m[1]) / 100 : Number(m[1]) / (fontSize * 1.2)
+  return Math.max(1, Math.round((1 + extra) * 1000) / 1000)
 }
 
 function rgb(hex: string): number[] {
@@ -195,6 +224,7 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
   const tokens: Record<string, string> = p ? uiTokens(p, prefs.more) : {}
   const font = fontStack(look.fontFamily)
   if (font) tokens['--mono'] = font
+  if (look.padding) tokens['--term-pad'] = `${look.padding[1]}px ${look.padding[0]}px`
   const root = document.documentElement.style
   for (const name of TOKENS) {
     if (tokens[name]) root.setProperty(name, tokens[name])
@@ -218,6 +248,11 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
     fontSize: look.fontSize ?? TERMINAL_OPTIONS.fontSize,
     cursorStyle: look.cursorStyle ?? 'block',
     cursorBlink: look.cursorBlink ?? false,
+    minimumContrastRatio: look.minimumContrast ?? TERMINAL_OPTIONS.minimumContrastRatio,
+    drawBoldTextInBrightColors: look.boldIsBright ?? true,
+    fontWeight: look.thicken ? 500 : 'normal',
+    fontWeightBold: look.thicken ? 800 : 'bold',
+    lineHeight: look.lineHeight ?? 1,
   }
   for (const listener of listeners) listener()
 }

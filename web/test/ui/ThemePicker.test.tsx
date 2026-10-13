@@ -12,6 +12,11 @@ const GHOSTTY: GhosttyLook = {
   fontSize: 14,
   cursorStyle: 'bar',
   cursorBlink: true,
+  minimumContrast: 1,
+  boldIsBright: false,
+  fontThicken: true,
+  cellHeight: '2',
+  padding: [10, 8],
 }
 
 let light = false
@@ -56,7 +61,16 @@ describe('ThemePicker', () => {
     await renderPicker()
     expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Ghostty · Night / Day')
     expect(bg()).toBe('#101018')
-    expect(terminalLook()).toMatchObject({ fontSize: 14, cursorStyle: 'bar', cursorBlink: true })
+    expect(terminalLook()).toMatchObject({
+      fontSize: 14,
+      cursorStyle: 'bar',
+      cursorBlink: true,
+      minimumContrastRatio: 1,
+      drawBoldTextInBrightColors: false,
+      fontWeight: 500,
+      lineHeight: 1.119,
+    })
+    expect(document.documentElement.style.getPropertyValue('--term-pad')).toBe('8px 10px')
     expect(terminalLook().fontFamily).toMatch(/^"JetBrainsMonoNerdFont", "JetBrainsMono Nerd Font", ui-monospace/)
   })
 

@@ -103,6 +103,10 @@ export async function readGhostty(env: NodeJS.ProcessEnv = process.env, home = o
     else families.push(value)
   }
   const size = Number(last('font-size'))
+  const num = (key: string, fallback: number) => {
+    const n = parseFloat(last(key) ?? '')
+    return Number.isFinite(n) ? n : fallback
+  }
   const cursor = last('cursor-style')?.replace(/_hollow$/, '')
   return {
     dark,
@@ -111,5 +115,10 @@ export async function readGhostty(env: NodeJS.ProcessEnv = process.env, home = o
     ...(size > 0 ? { fontSize: size } : {}),
     ...(cursor === 'block' || cursor === 'bar' || cursor === 'underline' ? { cursorStyle: cursor } : {}),
     ...(last('cursor-style-blink') ? { cursorBlink: last('cursor-style-blink') === 'true' } : {}),
+    minimumContrast: num('minimum-contrast', 1),
+    boldIsBright: last('bold-is-bright') === 'true',
+    fontThicken: last('font-thicken') === 'true',
+    ...(last('adjust-cell-height') ? { cellHeight: last('adjust-cell-height') } : {}),
+    padding: [num('window-padding-x', 2), num('window-padding-y', 2)],
   }
 }

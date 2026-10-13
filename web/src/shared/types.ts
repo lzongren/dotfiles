@@ -101,6 +101,11 @@ export interface GhosttyLook {
   fontSize?: number
   cursorStyle?: 'block' | 'bar' | 'underline'
   cursorBlink?: boolean
+  minimumContrast: number
+  boldIsBright: boolean
+  fontThicken: boolean
+  cellHeight?: string
+  padding: [number, number]
 }
 
 export interface ThemeResponse {

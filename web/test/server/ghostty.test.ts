@@ -37,6 +37,10 @@ describe('readGhostty', () => {
         'cursor-style-blink = true',
         'palette = 1=#abcdef',
         'background-opacity = 0.9',
+        'font-thicken = true',
+        'adjust-cell-height = 2',
+        'window-padding-x = 10',
+        'window-padding-y = 8',
       ].join('\n'),
     )
     const look = await readGhostty({}, home)
@@ -47,6 +51,11 @@ describe('readGhostty', () => {
       fontSize: 14,
       cursorStyle: 'bar',
       cursorBlink: true,
+      minimumContrast: 1,
+      boldIsBright: false,
+      fontThicken: true,
+      cellHeight: '2',
+      padding: [10, 8],
     })
     expect(look!.dark.palette.ansi).toHaveLength(16)
     expect(look!.dark.palette.ansi[1]).toBe('#abcdef')
