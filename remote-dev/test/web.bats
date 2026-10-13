@@ -165,12 +165,17 @@ teardown() {
   [[ "$output" == *"running (pid "* ]]
 }
 
-@test "web: --print-config emits host and sync lines in the pinned format" {
+@test "web: --print-config emits host, sync, ignore, and artifact lines in the pinned format" {
   cat >"$DEVBOX_CONFIG" <<EOF
 DEVBOX_HOST="stub-host"
 DEVBOX_SYNCS="
 work|/home/me/Documents/Work|work
 api|/home/me/my api|api
+"
+DEVBOX_ARTIFACTS="
+MR|https://git\.example\.com/[^ |]+/merge_requests/[0-9]+
+TICKET|T-[0-9]+|(old|new)|https://tickets.example.com/{0}
+TWO|https://a\.example\.com/[0-9]+|https://b\.example\.com/[0-9]+
 "
 EOF
   run "$DEVBOX" web --print-config
@@ -180,6 +185,9 @@ EOF
   [ "${lines[2]}" = "$(printf 'sync\tapi\t/home/me/my api\tapi')" ]
   printf '%s\n' "${lines[@]}" | grep -qx "$(printf 'ignore\tbuild/')"
   printf '%s\n' "${lines[@]}" | grep -qx "$(printf 'ignore\tnode_modules/')"
+  [ "${lines[${#lines[@]} - 3]}" = "$(printf 'artifact\tMR\t%s' 'https://git\.example\.com/[^ |]+/merge_requests/[0-9]+')" ]
+  [ "${lines[${#lines[@]} - 2]}" = "$(printf 'artifact\tTICKET\t%s\t%s' 'T-[0-9]+|(old|new)' 'https://tickets.example.com/{0}')" ]
+  [ "${lines[${#lines[@]} - 1]}" = "$(printf 'artifact\tTWO\t%s' 'https://a\.example\.com/[0-9]+|https://b\.example\.com/[0-9]+')" ]
 }
 
 @test "web: an unresponsive server is replaced, not leaked" {

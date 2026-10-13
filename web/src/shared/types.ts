@@ -16,6 +16,44 @@ export interface SessionsResponse {
   sessions: Session[]
 }
 
+export type AgentState = 'working' | 'waiting' | 'ready' | 'error' | 'unknown'
+
+export interface Artifact {
+  label: string
+  url: string
+  at: number
+  first: number
+  hits: number
+  said: boolean
+  action?: string
+}
+
+export interface AgentInsight {
+  session: string
+  agent: 'claude' | 'codex'
+  state: AgentState
+  waitingFor?: string
+  since?: number
+  title?: string
+  ask?: string
+  askAt?: number
+  firstAsk?: string
+  summary?: string
+  summaryAt?: number
+  turnAt?: number
+  model?: string
+  branch?: string
+  tasks?: { done: number; total: number; current?: string }
+  artifacts: Artifact[]
+  commits: number
+  error?: string
+}
+
+export interface InsightsResponse {
+  fetchedAt: number
+  agents: AgentInsight[]
+}
+
 export interface Workspace {
   root: string
   name: string

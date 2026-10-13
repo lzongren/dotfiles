@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { getSessions } from './api'
-import type { SessionsResponse } from './shared/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getInsights, getSessions } from './api'
+import type { AgentInsight, SessionsResponse } from './shared/types'
+import { changeMark, loadSeen, markSeen } from './insights'
+import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
 import { WorkspacePalette } from './components/WorkspacePalette'
 
 type Cause = 'remote' | 'local' | 'probe'
+
+const INSIGHTS_STALE_MS = 60_000
 
 type View =
   | { phase: 'loading' }
@@ -19,13 +23,40 @@ export function App() {
   const [tabs, setTabs] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const [openCount, setOpenCount] = useState(0)
+  const [insights, setInsights] = useState<Map<string, AgentInsight>>(() => new Map())
+  const [insightsNotice, setInsightsNotice] = useState<string | null>(null)
+  const [seenVersion, setSeenVersion] = useState(0)
+  const insightsAt = useRef(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
+  const latest = useRef<{ sessions: SessionsResponse['sessions']; insights: Map<string, AgentInsight> }>({
+    sessions: [],
+    insights: new Map(),
+  })
+  const seen = useCallback((names: string[]) => {
+    const { sessions, insights: byName } = latest.current
+    markSeen(
+      names,
+      (name) => {
+        const session = sessions.find((s) => s.name === name)
+        return session ? changeMark(session, byName.get(name)) : Math.floor(Date.now() / 1000)
+      },
+      Date.now(),
+    )
+    setSeenVersion((n) => n + 1)
+  }, [])
+  const seenAt = useMemo(() => loadSeen(Date.now()).seenAt, [seenVersion])
+  const leaving = useRef<string | null>(null)
+  useEffect(() => {
+    if (leaving.current !== null && leaving.current !== activeTab) seen([leaving.current])
+    leaving.current = activeTab
+  }, [activeTab, seen])
   const openTerminal = useCallback((name: string) => {
+    seen([name])
     setTabs((prev) => (prev.includes(name) ? prev : [...prev, name]))
     setActiveTab(name)
     setOpenCount((n) => n + 1)
-  }, [])
+  }, [seen])
   const closeTerminal = useCallback(
     (name: string) => {
       const index = tabs.indexOf(name)
@@ -58,24 +89,42 @@ export function App() {
     })
   }, [])
 
+  const refreshInsights = useCallback(async () => {
+    const result = await getInsights()
+    if (result.kind === 'ok' && Array.isArray(result.data.agents)) {
+      insightsAt.current = Date.now()
+      setInsights(new Map(result.data.agents.map((a) => [a.session, a])))
+      setInsightsNotice(null)
+    } else if (result.kind !== 'ok') {
+      if (Date.now() - insightsAt.current > INSIGHTS_STALE_MS) setInsights(new Map())
+      setInsightsNotice(result.kind === 'unauthorized' ? null : `agent details unavailable: ${result.message}`)
+    }
+  }, [])
+
   useEffect(() => {
     void refresh()
+    void refreshInsights()
     const poll = setInterval(() => {
       void refresh()
     }, 5000)
+    const insightsPoll = setInterval(() => {
+      void refreshInsights()
+    }, 15000)
     const tick = setInterval(() => {
       setNow(Date.now())
     }, 1000)
     const onFocus = () => {
       void refresh()
+      void refreshInsights()
     }
     window.addEventListener('focus', onFocus)
     return () => {
       clearInterval(poll)
+      clearInterval(insightsPoll)
       clearInterval(tick)
       window.removeEventListener('focus', onFocus)
     }
-  }, [refresh])
+  }, [refresh, refreshInsights])
 
   if (view.phase === 'unauthorized') {
     return (
@@ -109,6 +158,7 @@ export function App() {
   }
 
   const { data, staleSince, staleCause } = view
+  latest.current = { sessions: data.sessions, insights }
   return (
     <div className="app">
       <header className="topbar">
@@ -135,22 +185,34 @@ export function App() {
         ) : null}
       </header>
       <aside className="sidebar">
-        <SessionList sessions={data.sessions} now={now} active={activeTab} onAttach={openTerminal} />
+        <SessionList
+          sessions={data.sessions}
+          insights={insights}
+          now={now}
+          active={activeTab}
+          onAttach={openTerminal}
+        />
       </aside>
       <main className="workspace">
-        {tabs.length === 0 ? (
-          <div className="workspace-empty">
-            Pick a session on the left, or press <kbd>/</kbd> to find or start one.
-          </div>
-        ) : (
-          <TerminalTabs
-            tabs={tabs}
-            active={activeTab}
-            focusSignal={openCount}
-            onSelect={setActiveTab}
-            onClose={closeTerminal}
+        <TerminalTabs
+          tabs={tabs}
+          active={activeTab}
+          focusSignal={openCount}
+          onSelect={setActiveTab}
+          onClose={closeTerminal}
+        />
+        <div className="overview-wrap" hidden={activeTab !== null}>
+          <Overview
+            sessions={data.sessions}
+            insights={insights}
+            now={now}
+            seenAt={seenAt}
+            visible={activeTab === null}
+            notice={insightsNotice}
+            onOpen={openTerminal}
+            onSeen={seen}
           />
-        )}
+        </div>
       </main>
     </div>
   )

@@ -2,6 +2,7 @@ import type {
   ApiError,
   CreateSessionRequest,
   CreateSessionResponse,
+  InsightsResponse,
   SessionsResponse,
   WorkspacesResponse,
 } from './shared/types'
@@ -37,6 +38,10 @@ export async function fetchJson<T>(path: string, init: { method?: string; body?:
 
 export function getSessions(): Promise<ApiResult<SessionsResponse>> {
   return fetchJson<SessionsResponse>('/api/sessions')
+}
+
+export function getInsights(): Promise<ApiResult<InsightsResponse>> {
+  return fetchJson<InsightsResponse>('/api/insights')
 }
 
 export function getWorkspaces(): Promise<ApiResult<WorkspacesResponse>> {

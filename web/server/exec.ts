@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import path from 'node:path'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import type { AgentChoice } from '../src/shared/types.js'
@@ -82,4 +82,46 @@ export function spawnAttachPty(host: string, name: string, cols: number, rows: n
     if (value !== undefined) env[key] = value
   }
   return ptySpawn(file, args, { name: 'xterm-256color', cols, rows, env })
+}
+
+export function runAgentProbe(host: string, script: string, timeoutMs = 30000): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, 'python3', '-I', '-'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (result: RunResult) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+    const stop = (reason: string) => {
+      child.kill('SIGKILL')
+      child.stdout.destroy()
+      child.stderr.destroy()
+      finish({ stdout: '', stderr: reason, exitCode: 124 })
+    }
+    const timer = setTimeout(() => stop('agent probe timed out'), timeoutMs)
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+      if (stdout.length > 4 * 1024 * 1024) stop('agent probe output too large')
+    })
+    child.stderr.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-8192)
+    })
+    child.on('error', (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.on('close', (code) => finish({ stdout, stderr, exitCode: code ?? 1 }))
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(script)
+  })
 }

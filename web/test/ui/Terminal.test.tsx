@@ -380,8 +380,8 @@ describe('TerminalTabs', () => {
       <TerminalTabs tabs={['api', 'main']} active="api" onSelect={() => {}} onClose={() => {}} />,
     )
     const tabButtons = screen.getAllByRole('tab')
-    expect(tabButtons).toHaveLength(2)
-    expect(tabButtons[0]).toHaveAttribute('aria-selected', 'true')
+    expect(tabButtons.map((t) => t.textContent)).toEqual(['Overview', 'api', 'main'])
+    expect(tabButtons[1]).toHaveAttribute('aria-selected', 'true')
     const panes = container.querySelectorAll('.termpane')
     expect(panes).toHaveLength(2)
     expect((panes[0] as HTMLElement).style.display).toBe('flex')
@@ -389,12 +389,20 @@ describe('TerminalTabs', () => {
     expect(sockets).toHaveLength(2)
   })
 
+  it('selects the Overview tab and hides every pane while it is active', () => {
+    const { container } = render(<TerminalTabs tabs={['api']} active={null} onSelect={() => {}} onClose={() => {}} />)
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+    expect((container.querySelector('.termpane') as HTMLElement).style.display).toBe('none')
+  })
+
   it('fires select and close callbacks', () => {
     const onSelect = vi.fn()
     const onClose = vi.fn()
     render(<TerminalTabs tabs={['api', 'main']} active="api" onSelect={onSelect} onClose={onClose} />)
-    fireEvent.click(screen.getAllByRole('tab')[1])
+    fireEvent.click(screen.getAllByRole('tab')[2])
     expect(onSelect).toHaveBeenCalledWith('main')
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }))
+    expect(onSelect).toHaveBeenLastCalledWith(null)
     fireEvent.click(screen.getByRole('button', { name: 'close api' }))
     expect(onClose).toHaveBeenCalledWith('api')
   })
