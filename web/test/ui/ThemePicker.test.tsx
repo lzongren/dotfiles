@@ -195,8 +195,21 @@ describe('ThemePicker', () => {
     })
     serve(null)
     await renderPicker()
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Devbox')
+    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Dracula')
     expect(savedLook()?.id).toBe('dracula')
+  })
+
+  it('paints Devbox when your saved look fails, and lets you pick Devbox to keep it', async () => {
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    vi.spyOn(document.documentElement.style, 'setProperty').mockImplementation(() => {
+      throw new Error('style locked')
+    })
+    serve(null)
+    await renderPicker()
+    const picker = screen.getByRole('combobox', { name: 'Theme' })
+    expect(picker).toHaveDisplayValue('Dracula')
+    fireEvent.change(picker, { target: { value: 'devbox' } })
+    expect(savedLook()?.id).toBe('devbox')
   })
 
   it('repaints terminals on zoom only when the line height depends on it', async () => {

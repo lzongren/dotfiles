@@ -60,7 +60,6 @@ export function ThemePicker() {
       } catch {
         void 0
       }
-      setSelected(DEVBOX)
     }
   }, [selected, prefs, selected.cellHeight?.unit === 'px' ? dpr : 0])
 

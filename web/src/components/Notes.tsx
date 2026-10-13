@@ -9,6 +9,7 @@ const DRAFT = 'devbox.notes.draft.'
 const LEGACY_BASE = '\u0000legacy'
 const OPEN_ITEM = /^\s*[-*] \[ \] .+$/gm
 const DAY = /^\d{4}-\d{2}-\d{2}$/
+const LOCK = 'devbox.notes'
 
 interface Draft {
   day: string
@@ -84,7 +85,7 @@ export function Notes() {
   const [today, setToday] = useState(localDay)
   const [drafts, setDrafts] = useState(draftDays)
   const [day, setDay] = useState(() => drafts[0] ?? today)
-  const [editor, setEditor] = useState(() => !navigator.locks)
+  const [editor, setEditor] = useState<boolean | null>(() => (navigator.locks ? null : true))
   const [text, setText] = useState('')
   const [days, setDays] = useState<string[]>([])
   const [loaded, setLoaded] = useState<string | null>(null)
@@ -95,6 +96,8 @@ export function Notes() {
   const [blocked, setBlocked] = useState(false)
   const [reload, setReload] = useState(0)
   const [open, setOpen] = useState(() => quietly(() => localStorage.getItem(OPEN_KEY) !== '0', true))
+  const editorRef = useRef(editor)
+  const take = useRef(() => undefined as void)
   const draftRef = useRef<Draft | null>(null)
   const phaseRef = useRef<Phase>(IDLE)
   const versionRef = useRef('')
@@ -118,9 +121,17 @@ export function Notes() {
     setText(value)
     textRef.current = value
   }
+  const role = (next: boolean) => {
+    editorRef.current = next
+    setEditor(next)
+    if (!next) return
+    const left = draftDays()
+    setDrafts(left)
+    if (left[0]) setDay(left[0])
+  }
   const setDraft = (next: Draft | null) => {
     draftRef.current = next
-    if (next) remember(DRAFT + next.day, JSON.stringify({ text: next.text, base: next.base }))
+    if (next && editorRef.current) remember(DRAFT + next.day, JSON.stringify({ text: next.text, base: next.base }))
     else {
       setBlocked(false)
       follow()
@@ -140,7 +151,7 @@ export function Notes() {
     const step = async (): Promise<void> => {
       const job = draftRef.current
       const now = phaseRef.current
-      if (!job || now.kind === 'conflict' || (now.kind === 'rejected' && now.text === job.text)) return
+      if (!editorRef.current || !job || now.kind === 'conflict' || (now.kind === 'rejected' && now.text === job.text)) return
       if (!disposed.current) setPhase({ kind: 'saving' })
       sent.current.add(stored(job.text))
       const result = await putNote(job.day, job.text, job.base)
@@ -187,18 +198,57 @@ export function Notes() {
   }
 
   useEffect(() => {
-    if (!navigator.locks) return
-    const stop = new AbortController()
-    const held = new Promise<void>((resolve) => stop.signal.addEventListener('abort', () => resolve()))
+    const locks = navigator.locks
+    if (!locks) return
+    let live = true
+    let release = () => undefined as void
+    let cancel = () => undefined as void
     const hold = () => {
-      setEditor(true)
-      return held
+      if (!live) return Promise.resolve()
+      role(true)
+      return new Promise<void>((resolve) => {
+        release = resolve
+      })
     }
-    navigator.locks.request('devbox.notes', { signal: stop.signal }, hold).catch(() => undefined)
-    return () => stop.abort()
+    const ask = (options: LockOptions) => {
+      let ours = false
+      const stop = options.steal || options.ifAvailable ? null : new AbortController()
+      cancel = () => {
+        ours = true
+        stop?.abort()
+      }
+      locks
+        .request(LOCK, stop ? { ...options, signal: stop.signal } : options, (lock) => {
+          if (lock) return hold()
+          if (live) {
+            role(false)
+            ask({})
+          }
+          return undefined
+        })
+        .catch((err: unknown) => {
+          if (ours || !live) return
+          const stolen = err instanceof DOMException && err.name === 'AbortError'
+          role(!stolen)
+          if (stolen) ask({})
+        })
+    }
+    take.current = () => {
+      if (editorRef.current !== false) return
+      cancel()
+      ask({ steal: true })
+    }
+    ask({ ifAvailable: true })
+    return () => {
+      live = false
+      take.current = () => undefined
+      cancel()
+      release()
+    }
   }, [])
 
   useEffect(() => {
+    if (editor === null) return
     let live = true
     setLoaded(null)
     setLoadError(false)
@@ -254,8 +304,8 @@ export function Notes() {
   useEffect(() => {
     const mirror = (event: StorageEvent) => {
       if (!event.key?.startsWith(DRAFT)) return
-      setDrafts(draftDays())
-      if (editor || event.key !== DRAFT + day) return
+      if (event.oldValue === null || event.newValue === null) setDrafts(draftDays())
+      if (editor !== false || event.key !== DRAFT + day) return
       const next = readDraft(day)
       if (next) show(next.text)
       else setReload((n) => n + 1)
@@ -288,6 +338,7 @@ export function Notes() {
   const edit = (next: string) => {
     const now = phaseRef.current
     if (!editor || loaded !== day || now.kind === 'conflict') return
+    following.current = null
     show(next)
     setCarry(null)
     setDraft({ day, text: next, base: draftRef.current?.base ?? versionRef.current })
@@ -337,7 +388,8 @@ export function Notes() {
               : draft
                 ? [phase.kind === 'saving' ? 'saving…' : 'editing…', false]
                 : ['saved', false]
-  const then = phase.kind === 'conflict' ? 'resolve the conflict first' : 'switch days once it saves'
+  const then =
+    phase.kind === 'conflict' ? 'resolve the conflict first' : phase.kind === 'rejected' ? 'discard or edit it first' : 'switch days once it saves'
   const [shown, alarming] = blocked && draft ? [`${warning ? status : 'not saved yet'} — ${then}`, true] : [status, warning]
 
   return (
@@ -369,9 +421,11 @@ export function Notes() {
             readOnly={!editor || loaded !== day || phase.kind === 'conflict'}
             value={text}
             onChange={(e) => edit(e.target.value)}
+            onFocus={() => take.current()}
             onBlur={() => void save()}
             onKeyDown={(e) => {
               if (e.key === 'Escape') toggleRef.current?.focus()
+              else take.current()
             }}
           />
           <footer className="notes-foot">
