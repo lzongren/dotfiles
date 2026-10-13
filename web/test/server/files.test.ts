@@ -27,6 +27,7 @@ describe('file access rules', () => {
     expect(localMirror('/srv/dots/zshrc', undefined, syncs)).toEqual({ file: '/Users/me/dots/zshrc', root: '/Users/me/dots' })
     expect(localMirror('/home/me/work/api-old/x', '/home/me', syncs)).toBeNull()
     expect(localMirror('/home/me/work/api/x', undefined, syncs)).toBeNull()
+    expect(localMirror('/etc/hosts', undefined, [{ name: 'all', localPath: '/Volumes/host', remotePath: '/' }])).toEqual({ file: '/Volumes/host/etc/hosts', root: '/Volumes/host' })
     const nested = [{ name: 'w', localPath: '/Users/me/w', remotePath: 'work' }, ...syncs]
     expect(localMirror('/home/me/work/api/src/x.ts', '/home/me', nested)).toEqual({ file: '/Users/me/api/src/x.ts', root: '/Users/me/api' })
   })

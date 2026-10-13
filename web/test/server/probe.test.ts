@@ -227,6 +227,16 @@ beforeAll(() => {
         timestamp: at(34),
         payload: { type: 'function_call', name: 'shell', arguments: JSON.stringify({ command: ['apply_patch', '*** Begin Patch\n*** Add File: notes.md\n+x\n*** End Patch'] }) },
       }),
+      line({
+        type: 'response_item',
+        timestamp: at(35),
+        payload: {
+          type: 'function_call',
+          name: 'shell',
+          arguments: JSON.stringify({ command: ['bash', '-lc', "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: doc.md\n+x\n*** End Patch\nEOF"], workdir: 'docs' }),
+        },
+      }),
+      line({ type: 'response_item', timestamp: at(36), payload: { type: 'function_call', name: 'shell', arguments: { command: ['apply_patch'] } } }),
     ].join(''),
   )
   write('.codex/session_index.jsonl', line({ id: uuid, thread_name: 'Port the parser to Rust' }))
@@ -319,6 +329,7 @@ describe('agent probe', () => {
       { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
     ])
     expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
+      ['/work/cdx/crate/docs/doc.md', 'created'],
       ['/work/cdx/crate/notes.md', 'created'],
       ['/work/cdx/a.rs', 'deleted'],
       ['/work/cdx/b.rs', 'created'],

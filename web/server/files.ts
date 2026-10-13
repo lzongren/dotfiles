@@ -15,7 +15,7 @@ const IMAGES: Record<string, string> = {
   '.svg': 'image/svg+xml',
 }
 
-const OPENABLE = new Set(['.md', '.markdown', '.txt', '.log', '.csv', '.tsv', '.json', '.yaml', '.yml', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp'])
+const OPENABLE = new Set(['.md', '.markdown', '.txt', '.log', '.csv', '.tsv', '.json', '.yaml', '.yml', '.png', '.jpg', '.jpeg', '.gif', '.webp'])
 
 export function allowed(target: string, touched: string[]): boolean {
   return target.startsWith('/') && !target.includes('\0') && path.posix.normalize(target) === target && touched.includes(target)
@@ -27,8 +27,9 @@ export function openable(file: string): boolean {
 
 export function localMirror(remote: string, home: string | undefined, syncs: SyncEntry[]): { file: string; root: string } | null {
   const roots = syncs
-    .map((sync) => ({ sync, root: (sync.remotePath.startsWith('/') ? sync.remotePath : home ? path.posix.join(home, sync.remotePath) : '').replace(/\/$/, '') }))
-    .filter(({ root }) => root !== '' && remote.startsWith(`${root}/`))
+    .map((sync) => ({ sync, root: sync.remotePath.startsWith('/') ? sync.remotePath : home ? path.posix.join(home, sync.remotePath) : null }))
+    .map(({ sync, root }) => ({ sync, root: root?.replace(/\/+$/, '') ?? null }))
+    .filter((r): r is { sync: SyncEntry; root: string } => r.root !== null && remote.startsWith(`${r.root}/`))
     .sort((a, b) => b.root.length - a.root.length)
   const best = roots[0]
   return best ? { file: path.join(best.sync.localPath, remote.slice(best.root.length)), root: best.sync.localPath } : null

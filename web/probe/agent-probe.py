@@ -401,16 +401,21 @@ def track_files(files, rec, at, cwd):
         touch(files, result["filePath"], "created" if result.get("type") == "create" else "edited", at)
     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
     patch = payload.get("input") if payload.get("type") == "custom_tool_call" and payload.get("name") == "apply_patch" else None
-    if payload.get("type") == "function_call" and payload.get("name") in ("apply_patch", "shell"):
+    if payload.get("type") == "function_call" and payload.get("name") in ("apply_patch", "shell", "exec_command"):
         try:
             args = json.loads(payload.get("arguments") or "{}")
-        except ValueError:
-            args = {}
-        command = args.get("command") if isinstance(args, dict) else None
-        if isinstance(args, dict) and payload["name"] == "apply_patch":
-            patch = args.get("input")
-        elif isinstance(command, list) and len(command) == 2 and command[0] == "apply_patch":
-            patch = command[1]
+        except (TypeError, ValueError):
+            args = None
+        if isinstance(args, dict):
+            command = args.get("command") or args.get("cmd")
+            parts = [c for c in (command if isinstance(command, list) else [command]) if isinstance(c, str)]
+            if payload["name"] == "apply_patch":
+                patch = args.get("input")
+            elif "apply_patch" in " ".join(parts):
+                patch = next((c for c in parts if "*** Begin Patch" in c), None)
+            workdir = args.get("workdir")
+            if isinstance(workdir, str) and workdir:
+                cwd = os.path.join(cwd, workdir) if cwd else workdir
     if not isinstance(patch, str):
         return
     last = None
