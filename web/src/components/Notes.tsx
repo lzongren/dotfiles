@@ -115,7 +115,7 @@ export function Notes() {
 
   const follow = () => {
     const move = following.current
-    if (!move || draftRef.current) return
+    if (!move || draftRef.current || leavingRef.current) return
     following.current = null
     setDay((current) => (current === move.from ? move.to : current))
   }
@@ -136,12 +136,16 @@ export function Notes() {
   }
   const setDraft = (next: Draft | null) => {
     draftRef.current = next
-    if (next && editorRef.current) remember(DRAFT + next.day, JSON.stringify({ text: next.text, base: next.base }))
+    if (next && editorRef.current && !leavingRef.current) remember(DRAFT + next.day, JSON.stringify({ text: next.text, base: next.base }))
     else {
       setBlocked(false)
       follow()
     }
     setDraftState(next)
+  }
+  const leave = (next: boolean) => {
+    leavingRef.current = next
+    setLeaving(next)
   }
   const setPhase = (next: Phase) => {
     phaseRef.current = next
@@ -195,7 +199,7 @@ export function Notes() {
   }, [])
 
   const go = async (target: string | undefined) => {
-    if (!target) return
+    if (!target || leavingRef.current) return
     following.current = null
     await save()
     if (draftRef.current) setBlocked(true)
@@ -234,11 +238,9 @@ export function Notes() {
         .catch((err: unknown) => {
           if (ours || !live) return
           if (!(err instanceof DOMException && err.name === 'AbortError')) return role(true)
-          leavingRef.current = true
-          setLeaving(true)
+          leave(true)
           void save().finally(() => {
-            leavingRef.current = false
-            setLeaving(false)
+            leave(false)
             if (!live) return
             role(false)
             ask({})
@@ -317,7 +319,11 @@ export function Notes() {
     const mirror = (event: StorageEvent) => {
       if (!event.key?.startsWith(DRAFT)) return
       if (event.oldValue === null || event.newValue === null) setDrafts(draftDays())
-      if (editor !== false || event.key !== DRAFT + day) return
+      if (event.key !== DRAFT + day) return
+      if (editor === true) {
+        if (event.newValue === null && !draftRef.current && !leavingRef.current) setReload((n) => n + 1)
+        return
+      }
       const next = readDraft(day)
       if (next) show(next.text)
       else setReload((n) => n + 1)
@@ -389,8 +395,10 @@ export function Notes() {
     ? ["couldn't load this note", true]
     : loaded !== day
       ? ['', false]
-      : !editor || leaving
-        ? [leaving ? 'handing over…' : 'editing in another tab', false]
+      : leaving
+        ? ['handing over…', false]
+        : !editor
+          ? ['editing in another tab', false]
         : phase.kind === 'conflict'
           ? ['changed elsewhere', true]
           : phase.kind === 'rejected'
@@ -452,7 +460,7 @@ export function Notes() {
                 Carry over {carry.items.length} open from {dayLabel(carry.from, today)}
               </button>
             ) : null}
-            {loadError ? (
+            {loadError && !leaving ? (
               <button type="button" className="notes-carry" onClick={() => setReload((n) => n + 1)}>
                 Retry
               </button>

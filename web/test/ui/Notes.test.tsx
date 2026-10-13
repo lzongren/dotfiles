@@ -530,6 +530,47 @@ describe('Notes', () => {
     expect(shown()).toBe('editing in another tab')
   })
 
+  it('reloads after taking the pad when the old tab finishes saving, so it never shows a stale copy', async () => {
+    store['2026-10-13'] = 'start'
+    fakeLocks().other()
+    render(<Notes />)
+    await settle()
+    act(() => pad().focus())
+    await settle()
+    expect(pad()).toHaveValue('start')
+    store['2026-10-13'] = 'mine'
+    const key = 'devbox.notes.draft.2026-10-13'
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key, oldValue: JSON.stringify({ text: 'mine', base: 'h:start' }), newValue: null }))
+    })
+    await settle()
+    expect(pad()).toHaveValue('mine')
+  })
+
+  it('leaves the stored draft, the arrows and Retry alone while handing over', async () => {
+    store['2026-10-12'] = 'yesterday'
+    store['2026-10-13'] = 'start'
+    const locks = fakeLocks()
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: 'a' } })
+    await settle(700)
+    let open = () => undefined as void
+    putGate = new Promise<void>((done) => (open = done))
+    fireEvent.change(pad(), { target: { value: 'ab' } })
+    act(() => pad().blur())
+    locks.other({ steal: true })
+    await settle()
+    const key = 'devbox.notes.draft.2026-10-13'
+    localStorage.setItem(key, JSON.stringify({ text: 'abX', base: 'h:a' }))
+    fireEvent.click(screen.getByRole('button', { name: /older/i }))
+    putGate = null
+    open()
+    await settle()
+    expect(screen.getByRole('button', { name: /^Notes · Today/ })).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(key) ?? 'null')).toMatchObject({ text: 'abX' })
+  })
+
   it('saves a draft the browser could not store before handing the pad over', async () => {
     store['2026-10-13'] = 'start'
     const locks = fakeLocks()
