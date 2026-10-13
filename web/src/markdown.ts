@@ -45,7 +45,7 @@ export function resolvePath(dir: string, ref: string): string {
 
 function local(href: string, env: Env): string | null {
   const bare = href.split(/[?#]/)[0]
-  if (!bare || /^[a-z][a-z0-9+.-]*:/i.test(bare)) return null
+  if (!bare || bare.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(bare)) return null
   return resolvePath(env.dir, decode(bare))
 }
 
@@ -69,7 +69,7 @@ md.core.ruler.before('text_join', 'tasks', (state) => {
 
 md.renderer.rules.heading_open = (tokens, i, options, env: Env, self) => {
   const text = (tokens[i + 1]?.children ?? [])
-    .map((t) => (t.type === 'text' || t.type === 'text_special' || t.type === 'code_inline' ? t.content : t.type.endsWith('break') ? ' ' : ''))
+    .map((t) => (t.type === 'text' || t.type === 'code_inline' ? t.content : t.type.endsWith('break') ? ' ' : ''))
     .join('')
   const base = `md-${slug(text)}`
   const seen = env.slugs.get(base) ?? 0
@@ -94,8 +94,9 @@ md.renderer.rules.link_open = (tokens, i, options, env: Env, self) => {
   else if (path) token.attrs.push(...internal('data-path', path))
   else {
     token.tag = 'span'
-    const close = tokens.slice(i).find((t) => t.type === 'link_close')
-    if (close) close.tag = 'span'
+    let close = i + 1
+    while (close < tokens.length && tokens[close].type !== 'link_close') close++
+    if (close < tokens.length) tokens[close].tag = 'span'
   }
   return self.renderToken(tokens, i, options)
 }
@@ -113,6 +114,6 @@ md.renderer.rules.image = (tokens: Token[], i, options, env: Env, self) => {
 }
 
 export function renderMarkdown(text: string, file: string): string {
-  const env: Env = { file, dir: file.slice(0, file.lastIndexOf('/')) || '/', slugs: new Map() }
+  const env: Env = { file: resolvePath('/', file), dir: file.slice(0, file.lastIndexOf('/')) || '/', slugs: new Map() }
   return md.render(text, env).replace(/<(pre|table)>/g, '<$1 tabindex="0">')
 }

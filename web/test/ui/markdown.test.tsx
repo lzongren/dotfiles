@@ -43,7 +43,7 @@ describe('markdown rendering', () => {
     expect(render('[a](#%E0%A4) [b](x%E0%A4.md)')).toMatch(/data-anchor="md-e0a4".*data-path="\/home\/me\/work\/api\/docs\/x%E0%A4.md"/)
     const html = render('see README.md, setup.py, Ghostty.app, logo.ai and https://example.com, not www.example.com')
     expect([...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(['https://example.com'])
-    expect(render('[ftp](ftp://h/x)')).toContain('<p><span>ftp</span></p>')
+    expect(render('[ftp](ftp://h/x) [p](//cdn.io/a) and //example.com/x')).toBe('<p><span>ftp</span> <span>p</span> and <span>//example.com/x</span></p>\n')
     const self = render('[setup](plan.md#setup) [same](./plan.md) [there](spec.md#intro)')
     expect(self).toContain('<a data-anchor="md-setup" role="link" tabindex="0">setup</a>')
     expect(self).toContain('<a data-path="/home/me/work/api/docs/plan.md" role="link" tabindex="0">same</a>')

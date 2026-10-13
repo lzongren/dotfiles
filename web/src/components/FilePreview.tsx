@@ -106,7 +106,7 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
       touched = false
     } else cell += c
   }
-  if ((cell !== '' || row.length > 0) && rows.length < max) rows.push([...row, cell])
+  if ((cell !== '' || row.length > 0 || touched) && rows.length < max) rows.push([...row, cell])
   return rows
 }
 
