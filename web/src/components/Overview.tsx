@@ -492,7 +492,14 @@ export function Overview({
           </div>
         )}
       </aside>
-      {preview ? <FilePreview file={preview} onClose={() => setPreview(null)} /> : null}
+      {preview ? (
+        <FilePreview
+          key={`${preview.session}${preview.path}`}
+          file={preview}
+          known={(rows.get(preview.session)?.insight?.files ?? []).map((f) => f.path)}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
     </section>
   )
 }

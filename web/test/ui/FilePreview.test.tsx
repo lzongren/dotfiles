@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FilePreview, parseDelimited } from '../../src/components/FilePreview'
 import { Overview } from '../../src/components/Overview'
 import type { AgentInsight, FileView, Session } from '../../src/shared/types'
 
@@ -97,7 +98,7 @@ describe('agent files', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ship the API' }))
     fireEvent.click(within(screen.getByRole('article', { name: 'api details' })).getByRole('button', { name: 'plan.md' }))
     const dialog = within(screen.getByRole('dialog', { name: 'plan.md' }))
-    expect(await dialog.findByText('# The plan')).toBeInTheDocument()
+    expect(await dialog.findByRole('heading', { name: 'The plan' })).toBeInTheDocument()
     expect(calls[0].url).toBe('/api/file?session=api&path=%2Fhome%2Fme%2Fwork%2Fapi%2Fdocs%2Fplan.md')
     expect(dialog.getByText(/laptop copy/)).toBeInTheDocument()
     expect(dialog.getByRole('link', { name: 'Download' })).toHaveAttribute('download', 'plan.md')
@@ -148,5 +149,94 @@ describe('agent files', () => {
     fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Open on laptop' }))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('shown in its folder'))
+  })
+})
+
+describe('file viewer', () => {
+  const text = (path: string, body: string) => {
+    views[path] = { path, size: body.length, mtime: sec(5), kind: 'text', text: body, truncated: false }
+  }
+  const preview = (path: string, known: string[] = []) => {
+    render(<FilePreview file={{ session: 'api', path }} known={known} onClose={vi.fn()} />)
+    return within(screen.getByRole('dialog'))
+  }
+
+  it('renders Markdown, with the source a click away', async () => {
+    text('/w/plan.md', '# The plan\n\n- [x] done')
+    const dialog = preview('/w/plan.md')
+    expect(await dialog.findByRole('heading', { name: 'The plan' })).toBeInTheDocument()
+    expect(dialog.getByRole('checkbox')).toBeChecked()
+    expect(dialog.getByRole('button', { name: 'Rendered' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(dialog.getByRole('button', { name: 'Source' }))
+    expect(dialog.getByLabelText('plan.md contents')).toHaveTextContent('# The plan - [x] done')
+    expect(dialog.queryByRole('heading', { name: 'The plan' })).toBeNull()
+  })
+
+  it('follows links to files the agent wrote, says why it cannot follow others, and jumps to headings', async () => {
+    text('/w/docs/plan.md', '# Plan\n\n[the code](../src/x.ts) [elsewhere](/etc/hosts) [top](#plan)')
+    text('/w/src/x.ts', 'const a = 1\n')
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const dialog = preview('/w/docs/plan.md', ['/w/docs/plan.md', '/w/src/x.ts'])
+    fireEvent.click(await dialog.findByRole('link', { name: 'top' }))
+    expect(scroll).toHaveBeenCalled()
+    expect(scroll.mock.contexts[0]).toBe(dialog.getByRole('heading', { name: 'Plan' }))
+
+    fireEvent.click(dialog.getByRole('link', { name: 'elsewhere' }))
+    expect(dialog.getByRole('status')).toHaveTextContent("hosts isn't a file this agent wrote")
+
+    fireEvent.click(dialog.getByRole('link', { name: 'the code' }))
+    expect(await dialog.findByRole('heading', { name: 'x.ts' })).toBeInTheDocument()
+    expect(await dialog.findByLabelText('x.ts contents')).toContainHTML('<span class="hljs-keyword">const</span>')
+    expect(location.hash).toBe('')
+
+    fireEvent.click(dialog.getByRole('button', { name: 'Back' }))
+    expect(await dialog.findByRole('heading', { name: 'Plan' })).toBeInTheDocument()
+    expect(dialog.queryByRole('button', { name: 'Back' })).toBeNull()
+  })
+
+  it('pretty-prints JSON, and shows broken JSON as it is', async () => {
+    text('/w/a.json', '{"a":[1,"x"]}')
+    const dialog = preview('/w/a.json')
+    const formatted = await dialog.findByLabelText('a.json, formatted')
+    expect(formatted.textContent).toBe('{\n  "a": [\n    1,\n    "x"\n  ]\n}')
+    expect(formatted.querySelector('.hljs-number')).toHaveTextContent('1')
+    cleanup()
+
+    text('/w/b.json', '{"a":')
+    const broken = preview('/w/b.json')
+    expect(await broken.findByLabelText('b.json contents')).toHaveTextContent('{"a":')
+    expect(broken.queryByRole('button', { name: 'Formatted' })).toBeNull()
+  })
+
+  it('shows CSV and TSV as tables, keeping quoted separators and newlines inside a cell', async () => {
+    expect(parseDelimited('a,b\r\n"x, ""y""","multi\nline"\n', ',')).toEqual([['a', 'b'], ['x, "y"', 'multi\nline']])
+    expect(parseDelimited('1\n2\n3\n', ',', 2)).toEqual([['1'], ['2']])
+    text('/w/t.tsv', 'name\tcount\nfoo\t3\n')
+    const dialog = preview('/w/t.tsv')
+    const table = within(await dialog.findByRole('table'))
+    expect(table.getByRole('columnheader', { name: 'count' })).toBeInTheDocument()
+    expect(table.getByRole('cell', { name: 'foo' })).toBeInTheDocument()
+  })
+
+  it('renders HTML in a sandbox with scripts off', async () => {
+    text('/w/r.html', '<h1>Report</h1><script>parent.x = 1</script>')
+    const dialog = preview('/w/r.html')
+    const frame = await dialog.findByTitle('r.html, rendered without scripts')
+    expect(frame).toHaveAttribute('sandbox', '')
+    expect(frame).toHaveAttribute('srcdoc', '<h1>Report</h1><script>parent.x = 1</script>')
+    expect(dialog.getByText(/Scripts are off/)).toBeInTheDocument()
+  })
+
+  it('numbers source lines and drops the numbers when wrapping', async () => {
+    text('/w/app.py', 'def f():\n    return 1\n')
+    const dialog = preview('/w/app.py')
+    const code = await dialog.findByLabelText('app.py contents')
+    expect(code.querySelector('.hljs-keyword')).toHaveTextContent('def')
+    expect(code.parentElement?.querySelector('.file-gutter')?.textContent).toBe('1\n2')
+    expect(dialog.queryByRole('button', { name: 'Source' })).toBeNull()
+    fireEvent.click(dialog.getByRole('button', { name: 'Wrap lines' }))
+    expect(dialog.getByRole('button', { name: 'Wrap lines' })).toHaveAttribute('aria-pressed', 'true')
+    expect(code.parentElement?.querySelector('.file-gutter')).toBeNull()
   })
 })

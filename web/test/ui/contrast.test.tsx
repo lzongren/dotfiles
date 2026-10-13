@@ -44,6 +44,13 @@ describe('theme contrast (WCAG AA)', () => {
     }
   })
 
+  it.each(['hl-keyword', 'hl-string', 'hl-number', 'hl-title', 'hl-type', 'hl-comment', 'hl-add', 'hl-del'])(
+    '--%s code color is at least 4.5:1 on the code background',
+    (fg) => {
+      expect(worst(fg, 'term-bg')).toBeGreaterThanOrEqual(4.5)
+    },
+  )
+
   it('control borders are at least 3:1 against what they sit on', () => {
     for (const surface of ['bg', 'surface', 'term-bg']) {
       expect(worst('control', surface), `--control on --${surface}`).toBeGreaterThanOrEqual(3)
@@ -108,6 +115,12 @@ describe.each(
       }
     }
     expect(contrast(t['--bell'], t['--bell-bg'])).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('keeps every code highlight color at least 4.5:1 on the code background', () => {
+    for (const fg of ['--hl-keyword', '--hl-string', '--hl-number', '--hl-title', '--hl-type', '--hl-comment', '--hl-add', '--hl-del']) {
+      expect(contrast(t[fg], palette.background), fg).toBeGreaterThanOrEqual(4.5)
+    }
   })
 
   it('keeps chip text and control borders readable', () => {
