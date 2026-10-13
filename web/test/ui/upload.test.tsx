@@ -68,7 +68,7 @@ describe('dropping files on a terminal tab', () => {
     )
   })
 
-  it('queues a second drop on the same tab behind the first, so their notes stay in order', async () => {
+  it('queues a second drop on the same tab behind the first and reports both', async () => {
     let release = () => undefined as void
     vi.mocked(fetch).mockImplementationOnce(
       async (url) =>
@@ -83,10 +83,10 @@ describe('dropping files on a terminal tab', () => {
       fireEvent.drop(pane('web'), { dataTransfer: transfer(item(new File(['b'], 'b.md'))) })
     })
     expect(calls).toHaveLength(1)
-    expect(pane('web')).toHaveTextContent('Copying a.md…')
+    expect(pane('web')).toHaveTextContent('Copying a.md… (1 more)')
     await act(async () => release())
     expect(calls).toHaveLength(2)
-    expect(pane('web')).toHaveTextContent('Copied to /home/me/work/api/b.md')
+    expect(pane('web')).toHaveTextContent('Copied 2 files to /home/me/work/api')
   })
 
   it('keeps a file dropped anywhere else from replacing the dashboard', () => {

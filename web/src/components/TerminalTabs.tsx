@@ -23,7 +23,7 @@ export function TerminalTabs({
   const [over, setOver] = useState<string | null>(null)
   const [notes, setNotes] = useState<Record<string, string>>({})
   const timers = useRef(new Map<string, number>())
-  const queues = useRef(new Map<string, Promise<void>>())
+  const jobs = useRef(new Map<string, { current: string; files: File[]; placed: string[]; problems: string[] }>())
   const alive = useRef(true)
 
   useEffect(() => {
@@ -51,21 +51,33 @@ export function TerminalTabs({
     if (!sticky) timers.current.set(tab, window.setTimeout(() => setNotes((n) => ({ ...n, [tab]: '' })), NOTE_MS))
   }
 
-  const send = async (tab: string, files: File[], folders: number) => {
-    note(tab, files.length === 1 ? `Copying ${files[0].name}…` : `Copying ${files.length} files…`, true)
-    const placed: string[] = []
-    const problems: string[] = folders ? [`${folders === 1 ? 'a folder' : `${folders} folders`} skipped, drop files instead`] : []
-    for (const file of files) {
-      if (file.size > UPLOAD_MAX) {
-        problems.push(`${file.name} is ${UPLOAD_TOO_LARGE}`)
-        continue
+  const progress = (tab: string, job: { current: string; files: File[] }) =>
+    note(tab, `Copying ${job.current}…${job.files.length ? ` (${job.files.length} more)` : ''}`, true)
+
+  const enqueue = (tab: string, files: File[], folders: number) => {
+    const running = jobs.current.get(tab)
+    const job = running ?? { current: '', files: [], placed: [], problems: [] }
+    job.files.push(...files)
+    if (folders) job.problems.push(`${folders === 1 ? 'a folder' : `${folders} folders`} skipped, drop files instead`)
+    if (running) return progress(tab, job)
+    jobs.current.set(tab, job)
+    void (async () => {
+      for (let file = job.files.shift(); file && alive.current; file = job.files.shift()) {
+        job.current = file.name
+        if (file.size > UPLOAD_MAX) {
+          job.problems.push(`${file.name} is ${UPLOAD_TOO_LARGE}`)
+          continue
+        }
+        progress(tab, job)
+        const result = await uploadFile(tab, file)
+        if (result.kind === 'ok') job.placed.push(result.data.path)
+        else job.problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.message}`)
       }
-      const result = await uploadFile(tab, file)
-      if (result.kind === 'ok') placed.push(result.data.path)
-      else problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.message}`)
-    }
-    const done = placed.length === 1 ? `Copied to ${placed[0]}` : placed.length ? `Copied ${placed.length} files to ${placed[0].slice(0, placed[0].lastIndexOf('/'))}` : ''
-    note(tab, [done, ...problems].filter(Boolean).join(' · '))
+      jobs.current.delete(tab)
+      const { placed } = job
+      const done = placed.length === 1 ? `Copied to ${placed[0]}` : placed.length ? `Copied ${placed.length} files to ${placed[0].slice(0, placed[0].lastIndexOf('/'))}` : ''
+      note(tab, [done, ...job.problems].filter(Boolean).join(' · '))
+    })()
   }
 
   const zone = (tab: string) => ({
@@ -88,9 +100,7 @@ export function TerminalTabs({
       const folders = entries.filter((item) => item.webkitGetAsEntry?.()?.isDirectory).length
       const files = entries.filter((item) => !item.webkitGetAsEntry?.()?.isDirectory).flatMap((item) => item.getAsFile() ?? [])
       onSelect(tab)
-      if (!files.length && !folders) return
-      const next = (queues.current.get(tab) ?? Promise.resolve()).then(() => send(tab, files, folders))
-      queues.current.set(tab, next)
+      if (files.length || folders) enqueue(tab, files, folders)
     },
   })
 

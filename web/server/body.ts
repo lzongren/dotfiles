@@ -22,6 +22,10 @@ export async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise
 
 export function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    if (req.destroyed) return reject(new BodyError(400, 'request aborted'))
+    req.on('close', () => {
+      if (!req.complete) reject(new BodyError(400, 'request aborted'))
+    })
     const chunks: Buffer[] = []
     let size = 0
     let tooLarge = false

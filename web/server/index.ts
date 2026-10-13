@@ -184,21 +184,19 @@ export async function createApp(opts: AppOptions): Promise<App> {
         const name = url.searchParams.get('name') ?? ''
         const refuse = (status: number, error: string, message: string) => {
           if (status === 413) res.setHeader('Connection', 'close')
-          else req.resume()
           sendJson(res, status, { error, message })
         }
         if (!isUploadName(name)) return refuse(400, 'bad_name', 'not a usable file name')
         if (Number(req.headers['content-length']) > UPLOAD_MAX) return refuse(413, 'bad_request', UPLOAD_TOO_LARGE)
-        getSessions.invalidate()
         getSessions()
           .then(async (snapshot) => {
             const row = snapshot.sessions.find((s) => s.name === sessionName && s.attachable)
             if (!row) return refuse(404, 'unknown_session', 'no such session')
             if (!row.path.startsWith('/')) return refuse(409, 'no_folder', 'the session has no folder yet')
             const data = await readBody(req, UPLOAD_MAX)
-            const result = await runUpload(config.host, uploadInput(row.path, name, data), 30000 + data.length / 50)
+            const result = await runUpload(config.host, uploadInput(row.path, name, data), 120000 + data.length / 50)
             if (result.exitCode === 255) return sendJson(res, 502, { error: 'remote_unreachable', message: 'host unreachable' })
-            if (result.exitCode === 124) return sendJson(res, 504, { error: 'timeout', message: 'the upload timed out' })
+            if (result.exitCode === 124 && result.stderr === 'upload timed out') return sendJson(res, 504, { error: 'timeout', message: 'the upload timed out' })
             if (result.exitCode === 127) return sendJson(res, 500, { error: 'write_failed', message: 'python3 is not installed on the host' })
             if (result.exitCode !== 0) return sendJson(res, 500, { error: 'write_failed', message: 'could not write the file' })
             const placed = parseUpload(result.stdout)
