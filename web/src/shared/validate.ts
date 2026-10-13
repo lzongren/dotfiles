@@ -1,6 +1,7 @@
 export const SESSION_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 
 export const UPLOAD_MAX = 50 * 1024 * 1024
+export const UPLOAD_TOO_LARGE = `larger than ${UPLOAD_MAX / 1024 / 1024} MB`
 
 export function isUploadName(name: string): boolean {
   return name !== '.' && name !== '..' && new TextEncoder().encode(name).length <= 255 && /^[^/\u0000-\u001f\u007f]+$/.test(name)

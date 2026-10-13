@@ -192,8 +192,9 @@ fragment and every request must carry it. Override the port with
 
 Drop files on a terminal tab, or on the open terminal, to copy them into
 that session's current folder on the host. A name that is already taken
-gets a suffix, as in `shot (1).png`, so nothing is overwritten; the tab
-says where each file landed. Files up to 50 MB; folders are skipped.
+gets a suffix, as in `shot (1).png`, so nothing is overwritten, and new
+files are readable only by you. The tab says where each file landed. Files
+up to 50 MB; folders are skipped.
 
 ### Managing synced folders with `devbox sync`
 

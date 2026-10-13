@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
-import { UPLOAD_MAX } from '../shared/validate'
+import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
 import { TerminalPane } from './Terminal'
 
 const NOTE_MS = 8000
@@ -23,6 +23,8 @@ export function TerminalTabs({
   const [over, setOver] = useState<string | null>(null)
   const [notes, setNotes] = useState<Record<string, string>>({})
   const timers = useRef(new Map<string, number>())
+  const queues = useRef(new Map<string, Promise<void>>())
+  const alive = useRef(true)
 
   useEffect(() => {
     const block = (event: globalThis.DragEvent) => {
@@ -33,7 +35,9 @@ export function TerminalTabs({
     window.addEventListener('dragover', block)
     window.addEventListener('drop', block)
     const pending = timers.current
+    alive.current = true
     return () => {
+      alive.current = false
       window.removeEventListener('dragover', block)
       window.removeEventListener('drop', block)
       for (const timer of pending.values()) window.clearTimeout(timer)
@@ -41,6 +45,7 @@ export function TerminalTabs({
   }, [])
 
   const note = (tab: string, text: string, sticky = false) => {
+    if (!alive.current) return
     setNotes((n) => ({ ...n, [tab]: text }))
     window.clearTimeout(timers.current.get(tab))
     if (!sticky) timers.current.set(tab, window.setTimeout(() => setNotes((n) => ({ ...n, [tab]: '' })), NOTE_MS))
@@ -52,7 +57,7 @@ export function TerminalTabs({
     const problems: string[] = folders ? [`${folders === 1 ? 'a folder' : `${folders} folders`} skipped, drop files instead`] : []
     for (const file of files) {
       if (file.size > UPLOAD_MAX) {
-        problems.push(`${file.name} is larger than 50 MB`)
+        problems.push(`${file.name} is ${UPLOAD_TOO_LARGE}`)
         continue
       }
       const result = await uploadFile(tab, file)
@@ -83,7 +88,9 @@ export function TerminalTabs({
       const folders = entries.filter((item) => item.webkitGetAsEntry?.()?.isDirectory).length
       const files = entries.filter((item) => !item.webkitGetAsEntry?.()?.isDirectory).flatMap((item) => item.getAsFile() ?? [])
       onSelect(tab)
-      if (files.length || folders) void send(tab, files, folders)
+      if (!files.length && !folders) return
+      const next = (queues.current.get(tab) ?? Promise.resolve()).then(() => send(tab, files, folders))
+      queues.current.set(tab, next)
     },
   })
 

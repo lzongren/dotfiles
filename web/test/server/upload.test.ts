@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import { request } from 'node:http'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,9 +18,8 @@ describe('remote upload writer', () => {
   })
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-  const [python, ...args] = UPLOAD_COMMAND
-  const run = (input: Buffer) => {
-    const out = spawnSync(python, [...args.slice(0, -1), args.at(-1)!.slice(1, -1)], { input })
+  const run = (input: Buffer | Buffer[]) => {
+    const out = spawnSync('sh', ['-c', UPLOAD_COMMAND.join(' ')], { input: Buffer.concat([input].flat()) })
     expect(out.status).toBe(0)
     return parseUpload(out.stdout.toString())
   }
@@ -31,13 +31,14 @@ describe('remote upload writer', () => {
     symlinkSync(path.join(dir, 'nowhere'), path.join(dir, 'shot (2).png'))
     expect(run(uploadInput(dir, 'shot.png', Buffer.from('three')))).toEqual({ path: path.join(dir, 'shot (3).png') })
     expect(readFileSync(path.join(dir, 'shot.png'))).toEqual(data)
+    expect(statSync(path.join(dir, 'shot.png')).mode & 0o777).toBe(0o600)
     expect(readFileSync(path.join(dir, 'shot (1).png'), 'utf8')).toBe('two')
     expect(existsSync(path.join(dir, 'nowhere'))).toBe(false)
     expect(run(uploadInput(dir, 'notes', Buffer.alloc(0)))).toEqual({ path: path.join(dir, 'notes') })
   })
 
   it('removes a file that arrived short, and reports a missing folder', () => {
-    const input = uploadInput(dir, 'cut.bin', Buffer.alloc(100_000, 7))
+    const input = Buffer.concat(uploadInput(dir, 'cut.bin', Buffer.alloc(100_000, 7)))
     expect(run(input.subarray(0, input.length - 10))).toEqual({ error: 'upload cut short' })
     expect(readdirSync(dir)).not.toContain('cut.bin')
     expect(run(uploadInput(path.join(dir, 'gone'), 'a.txt', Buffer.from('x')))).toEqual({ error: 'No such file or directory' })
@@ -90,9 +91,24 @@ describe('upload route', () => {
   })
 
   it('refuses bad names, unknown sessions and oversized files before touching the host', async () => {
+    rmSync(path.join(scratch, 'stdin'), { force: true })
     expect((await post('cc-demo', '../x', Buffer.from('x')))?.status).toBe(400)
-    expect((await post('nope', 'a.txt', Buffer.from('x')))?.status).toBe(404)
-    expect(await post('cc-demo', 'big.bin', Buffer.alloc(UPLOAD_MAX + 1))).toMatchObject({ status: 413, body: { message: 'larger than 50 MB' } })
+    expect((await post('nope', 'a.txt', Buffer.alloc(UPLOAD_MAX)))?.status).toBe(404)
+    expect(existsSync(path.join(scratch, 'stdin'))).toBe(false)
+    const declared = await new Promise<{ status?: number; body: string }>((resolve, reject) => {
+      const req = request(`${app.url.split('#')[0]}api/upload?session=cc-demo&name=big.bin`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${app.token}`, 'Content-Length': String(UPLOAD_MAX + 1) },
+      })
+      req.on('response', (res) => {
+        let body = ''
+        res.on('data', (chunk: Buffer) => (body += chunk.toString()))
+        res.on('end', () => resolve({ status: res.statusCode, body }))
+      })
+      req.on('error', reject)
+      req.flushHeaders()
+    })
+    expect(declared).toMatchObject({ status: 413, body: expect.stringContaining('larger than 50 MB') })
   })
 
   it('passes the host error back, and says when the host is unreachable', async () => {

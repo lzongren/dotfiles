@@ -68,6 +68,27 @@ describe('dropping files on a terminal tab', () => {
     )
   })
 
+  it('queues a second drop on the same tab behind the first, so their notes stay in order', async () => {
+    let release = () => undefined as void
+    vi.mocked(fetch).mockImplementationOnce(
+      async (url) =>
+        new Promise((resolve) => {
+          calls.push({ url: String(url), init: {} })
+          release = () => resolve(Response.json({ path: '/home/me/work/api/a.md' }, { status: 201 }))
+        }),
+    )
+    const { pane } = setup()
+    await act(async () => {
+      fireEvent.drop(pane('web'), { dataTransfer: transfer(item(new File(['a'], 'a.md'))) })
+      fireEvent.drop(pane('web'), { dataTransfer: transfer(item(new File(['b'], 'b.md'))) })
+    })
+    expect(calls).toHaveLength(1)
+    expect(pane('web')).toHaveTextContent('Copying a.md…')
+    await act(async () => release())
+    expect(calls).toHaveLength(2)
+    expect(pane('web')).toHaveTextContent('Copied to /home/me/work/api/b.md')
+  })
+
   it('keeps a file dropped anywhere else from replacing the dashboard', () => {
     setup()
     const drop = new Event('drop', { bubbles: true, cancelable: true })

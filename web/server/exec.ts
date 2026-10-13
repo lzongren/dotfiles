@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process'
 import path from 'node:path'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import type { AgentChoice } from '../src/shared/types.js'
+import { UPLOAD_COMMAND } from './upload.js'
 
 export interface RunResult {
   stdout: string
@@ -90,12 +91,16 @@ export function openLocal(file: string, reveal: boolean): void {
 }
 
 export function runAgentProbe(host: string, script: string, timeoutMs = 30000): Promise<RunResult> {
-  return runRemote(host, ['python3', '-I', '-'], script, timeoutMs, 'agent probe')
+  return runRemote(host, ['python3', '-I', '-'], [script], timeoutMs, 'agent probe')
 }
 
-export function runRemote(host: string, command: string[], input: string | Buffer, timeoutMs: number, label: string): Promise<RunResult> {
+export function runUpload(host: string, input: Buffer[], timeoutMs: number): Promise<RunResult> {
+  return runRemote(host, UPLOAD_COMMAND, input, timeoutMs, 'upload')
+}
+
+function runRemote(host: string, command: string[], input: Array<string | Buffer>, timeoutMs: number, label: string): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, ...command], {
+    const child = spawn('ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, ...command], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -131,6 +136,7 @@ export function runRemote(host: string, command: string[], input: string | Buffe
     })
     child.on('close', (code) => finish({ stdout, stderr, exitCode: code ?? 1 }))
     child.stdin.on('error', () => undefined)
-    child.stdin.end(input)
+    for (const part of input) child.stdin.write(part)
+    child.stdin.end()
   })
 }

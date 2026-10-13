@@ -591,6 +591,7 @@ kbd {
   color: var(--text);
   font-size: 12px;
   overflow-wrap: anywhere;
+  pointer-events: none;
 }
 
 .drop-note:empty {

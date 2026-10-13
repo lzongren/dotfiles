@@ -10,7 +10,7 @@ def place():
     for i in range(100):
         target = os.path.join(ARGS["dir"], ARGS["name"] if i == 0 else "%s (%d)%s" % (stem, i, ext))
         try:
-            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             break
         except FileExistsError:
             continue
@@ -39,9 +39,9 @@ except OSError as err:
     print(json.dumps({"error": err.strerror or str(err)}))
 `
 
-export function uploadInput(dir: string, name: string, data: Buffer): Buffer {
+export function uploadInput(dir: string, name: string, data: Buffer): Buffer[] {
   const script = probeScript(WRITER, { dir, name, size: data.length })
-  return Buffer.concat([Buffer.from(`${JSON.stringify(script)}\n`), data])
+  return [Buffer.from(`${JSON.stringify(script)}\n`), data]
 }
 
 export function parseUpload(stdout: string): { path: string } | { error: string } {
