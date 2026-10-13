@@ -653,7 +653,7 @@ if [[ "$1" == "web" ]]; then
   web_build="$WEB_REBUILD"
   [ -f "$web_stamp" ] || web_build=1
   if [ "$web_build" = 0 ]; then
-    web_changed="$(find "$WEB_DIR/src" "$WEB_DIR/server" "$WEB_DIR/index.html" \
+    web_changed="$(find "$WEB_DIR/src" "$WEB_DIR/server" "$WEB_DIR/public" "$WEB_DIR/index.html" \
       "$WEB_DIR/package.json" "$WEB_DIR/package-lock.json" "$WEB_DIR/vite.config.ts" \
       "$WEB_DIR/tsconfig.json" "$WEB_DIR/tsconfig.server.json" \
       -newer "$web_stamp" -print 2>/dev/null | head -1)"

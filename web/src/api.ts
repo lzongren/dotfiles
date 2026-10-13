@@ -3,6 +3,8 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   InsightsResponse,
+  NoteDaysResponse,
+  NoteResponse,
   SessionsResponse,
   ThemeResponse,
   WorkspacesResponse,
@@ -55,4 +57,16 @@ export function createSession(body: CreateSessionRequest): Promise<ApiResult<Cre
 
 export function getTheme(): Promise<ApiResult<ThemeResponse>> {
   return fetchJson<ThemeResponse>('/api/theme')
+}
+
+export function getNoteDays(): Promise<ApiResult<NoteDaysResponse>> {
+  return fetchJson<NoteDaysResponse>('/api/notes')
+}
+
+export function getNote(day: string): Promise<ApiResult<NoteResponse>> {
+  return fetchJson<NoteResponse>(`/api/notes/${day}`)
+}
+
+export function putNote(day: string, text: string): Promise<ApiResult<{ saved: boolean }>> {
+  return fetchJson<{ saved: boolean }>(`/api/notes/${day}`, { method: 'PUT', body: { text } })
 }

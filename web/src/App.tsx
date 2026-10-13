@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getInsights, getSessions } from './api'
 import type { AgentInsight, SessionsResponse } from './shared/types'
-import { changeMark, loadSeen, markSeen } from './insights'
+import { changeMark, laneOf, loadSeen, markSeen } from './insights'
 import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
+import { Notes } from './components/Notes'
 import { ThemePicker } from './components/ThemePicker'
 import { WorkspacePalette } from './components/WorkspacePalette'
 
@@ -127,6 +128,17 @@ export function App() {
     }
   }, [refresh, refreshInsights])
 
+  const host = view.phase === 'ready' ? view.data.host : ''
+  const waiting =
+    view.phase === 'ready'
+      ? view.data.sessions.filter((s) => ['blocked', 'ready'].includes(laneOf(s, insights.get(s.name), seenAt(s.name), now))).length
+      : 0
+  useEffect(() => {
+    const place = activeTab ?? host
+    document.title = `${waiting > 0 ? `(${waiting}) ` : ''}${place ? `${place} · ` : ''}devbox`
+    document.querySelector('link[rel="icon"]')?.setAttribute('href', waiting > 0 ? '/favicon-alert.svg' : '/favicon.svg')
+  }, [waiting, activeTab, host])
+
   if (view.phase === 'unauthorized') {
     return (
       <main className="notice">
@@ -163,7 +175,8 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>
+        <h1 className="brand">
+          <img src="/favicon.svg" alt="" width="22" height="22" />
           devbox <span className="host">{data.host}</span>
         </h1>
         <WorkspacePalette
@@ -187,13 +200,16 @@ export function App() {
         ) : null}
       </header>
       <aside className="sidebar">
-        <SessionList
-          sessions={data.sessions}
-          insights={insights}
-          now={now}
-          active={activeTab}
-          onAttach={openTerminal}
-        />
+        <div className="sidebar-sessions">
+          <SessionList
+            sessions={data.sessions}
+            insights={insights}
+            now={now}
+            active={activeTab}
+            onAttach={openTerminal}
+          />
+        </div>
+        <Notes />
       </aside>
       <main className="workspace">
         <TerminalTabs

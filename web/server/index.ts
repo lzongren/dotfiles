@@ -1,6 +1,7 @@
 import { createServer, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -15,6 +16,7 @@ import { loadConfig } from './config.js'
 import { BodyError, readJson } from './body.js'
 import { detach, runAgentProbe, spawnAttachPty, statusRaw } from './exec.js'
 import { readGhostty } from './ghostty.js'
+import { DAY_RE, listDays, readNote, writeNote } from './notes.js'
 import { createInsightsSource, probeScript } from './insights.js'
 import { isAgentChoice, SESSION_NAME_RE } from '../src/shared/validate.js'
 import { listWorkspaces } from './workspaces.js'
@@ -29,6 +31,7 @@ export interface AppOptions {
   stateDir: string
   distRoot: string
   version: string
+  notesDir?: string
 }
 
 export interface App {
@@ -54,6 +57,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
     runAgentProbe(config.host, probeScript(await readFile(probePath, 'utf8'), config.artifacts)),
   )
   const distRoot = path.resolve(opts.distRoot)
+  const notesDir =
+    opts.notesDir ??
+    process.env.DEVBOX_NOTES_DIR ??
+    path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'devbox', 'notes')
 
   let boundPort = opts.port
   const server = createServer((req, res) => {
@@ -118,6 +125,40 @@ export async function createApp(opts: AppOptions): Promise<App> {
             }
           })
         return
+      }
+      if (url.pathname === '/api/notes' && req.method === 'GET') {
+        listDays(notesDir)
+          .then((days) => sendJson(res, 200, { days }))
+          .catch(() => sendJson(res, 500, { error: 'internal', message: 'could not list notes' }))
+        return
+      }
+      const noteDay = /^\/api\/notes\/([^/]+)$/.exec(url.pathname)?.[1]
+      if (noteDay !== undefined) {
+        if (!DAY_RE.test(noteDay)) return sendJson(res, 400, { error: 'bad_day', message: 'day must be YYYY-MM-DD' })
+        if (req.method === 'GET') {
+          readNote(notesDir, noteDay)
+            .then((text) => sendJson(res, 200, { day: noteDay, text }))
+            .catch(() => sendJson(res, 500, { error: 'internal', message: 'could not read the note' }))
+          return
+        }
+        if (req.method === 'PUT') {
+          readJson(req, 256 * 1024)
+            .then(async (raw) => {
+              const text = (raw as { text?: unknown } | null)?.text
+              if (typeof text !== 'string') return sendJson(res, 400, { error: 'bad_request', message: 'text must be a string' })
+              await writeNote(notesDir, noteDay, text)
+              return sendJson(res, 200, { day: noteDay, saved: true })
+            })
+            .catch((err: unknown) => {
+              if (err instanceof BodyError) {
+                if (err.status === 413) res.setHeader('Connection', 'close')
+                sendJson(res, err.status, { error: 'bad_request', message: err.message })
+              } else {
+                sendJson(res, 500, { error: 'internal', message: 'could not save the note' })
+              }
+            })
+          return
+        }
       }
       if (url.pathname === '/api/theme' && req.method === 'GET') {
         readGhostty()

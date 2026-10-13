@@ -14,7 +14,7 @@ vi.mock('../../src/components/WorkspacePalette', () => ({
 }))
 
 import { App } from '../../src/App'
-import type { AgentInsight, InsightsResponse, Session, SessionsResponse, ThemeResponse } from '../../src/shared/types'
+import type { AgentInsight, Session, SessionsResponse } from '../../src/shared/types'
 
 const NOW_EPOCH = 1800000000
 
@@ -39,7 +39,7 @@ const ROWS: Session[] = [
   session({ name: 'main', activityEpoch: NOW_EPOCH - 40 }),
 ]
 
-function response(body: SessionsResponse | InsightsResponse | ThemeResponse | { error: string; message: string }, status = 200): Response {
+function response(body: object, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
@@ -58,7 +58,15 @@ beforeEach(() => {
   fetchMock = vi.fn()
   insightsMock = vi.fn(async () => response({ fetchedAt: Date.now(), agents: [] }))
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) =>
-    url === '/api/theme' ? response({ ghostty: null }) : url === '/api/insights' ? insightsMock(url, init) : fetchMock(url, init),
+    url === '/api/theme'
+      ? response({ ghostty: null })
+      : url === '/api/notes'
+        ? response({ days: [] })
+        : url.startsWith('/api/notes/')
+          ? response({ day: url.slice(11), text: '' })
+          : url === '/api/insights'
+            ? insightsMock(url, init)
+            : fetchMock(url, init),
   )
 })
 
@@ -200,6 +208,23 @@ describe('App', () => {
       await vi.advanceTimersByTimeAsync(60000)
     })
     expect(blocked()).toBeNull()
+  })
+
+  it('counts what wants you in the tab title and badges the icon', async () => {
+    const link = document.createElement('link')
+    link.rel = 'icon'
+    link.href = '/favicon.svg'
+    document.head.append(link)
+    const waiting: AgentInsight = { session: 'cc-demo', agent: 'claude', state: 'waiting', artifacts: [], commits: 0 }
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [waiting] }))
+    render(<App />)
+    await flush()
+    expect(document.title).toBe('(1) stub-host · devbox')
+    expect(link.getAttribute('href')).toBe('/favicon-alert.svg')
+    fireEvent.click(sidebar().getByRole('button', { name: /api/ }))
+    expect(document.title).toBe('(1) api · devbox')
+    link.remove()
   })
 
   it('polls agent details every 15 seconds', async () => {

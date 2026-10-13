@@ -108,6 +108,15 @@ export interface GhosttyLook {
   padding: [number, number, number, number]
 }
 
+export interface NoteDaysResponse {
+  days: string[]
+}
+
+export interface NoteResponse {
+  day: string
+  text: string
+}
+
 export interface ThemeResponse {
   ghostty: GhosttyLook | null
 }
