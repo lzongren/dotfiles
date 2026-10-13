@@ -13,14 +13,15 @@ import {
   tokenMatches,
 } from './auth.js'
 import { loadConfig } from './config.js'
-import { BodyError, readJson } from './body.js'
-import { detach, openLocal, runAgentProbe, spawnAttachPty, statusRaw } from './exec.js'
+import { BodyError, readBody, readJson } from './body.js'
+import { detach, openLocal, runAgentProbe, runRemote, spawnAttachPty, statusRaw } from './exec.js'
 import { allowed, localMirror, openable, parseRemoteRead, readMirror, remoteReadScript, resolveMirror } from './files.js'
 import { readGhostty } from './ghostty.js'
 import type { InsightsResponse } from '../src/shared/types.js'
 import { DAY_RE, listDays, readNote, writeNote } from './notes.js'
 import { createInsightsSource, probeScript } from './insights.js'
-import { isAgentChoice, SESSION_NAME_RE } from '../src/shared/validate.js'
+import { isAgentChoice, isUploadName, SESSION_NAME_RE, UPLOAD_MAX } from '../src/shared/validate.js'
+import { parseUpload, UPLOAD_COMMAND, uploadInput } from './upload.js'
 import { listWorkspaces } from './workspaces.js'
 import { createSessionSource, RemoteUnreachableError } from './sessions.js'
 import { attachTerminalServer } from './terminal.js'
@@ -175,6 +176,34 @@ export async function createApp(opts: AppOptions): Promise<App> {
             if (err instanceof BodyError) sendJson(res, err.status, { error: 'bad_request', message: err.message })
             else if (err instanceof RemoteUnreachableError) sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
             else sendJson(res, 500, { error: 'internal', message: 'could not open the file' })
+          })
+        return
+      }
+      if (url.pathname === '/api/upload' && req.method === 'POST') {
+        const sessionName = url.searchParams.get('session') ?? ''
+        const name = url.searchParams.get('name') ?? ''
+        if (!isUploadName(name)) {
+          res.setHeader('Connection', 'close')
+          return sendJson(res, 400, { error: 'bad_name', message: 'not a usable file name' })
+        }
+        readBody(req, UPLOAD_MAX)
+          .then(async (data) => {
+            const row = (await getSessions()).sessions.find((s) => s.name === sessionName && s.attachable)
+            if (!row) return sendJson(res, 404, { error: 'unknown_session', message: 'no such session' })
+            if (!row.path.startsWith('/')) return sendJson(res, 409, { error: 'no_folder', message: 'the session has no folder yet' })
+            const result = await runRemote(config.host, UPLOAD_COMMAND, uploadInput(row.path, name, data), 120000, 'upload')
+            if (result.exitCode === 255) return sendJson(res, 502, { error: 'remote_unreachable', message: 'host unreachable' })
+            if (result.exitCode !== 0) return sendJson(res, 500, { error: 'write_failed', message: 'could not write the file' })
+            const placed = parseUpload(result.stdout)
+            if ('error' in placed) return sendJson(res, 409, { error: 'write_failed', message: placed.error })
+            return sendJson(res, 201, placed)
+          })
+          .catch((err: unknown) => {
+            if (err instanceof BodyError) {
+              res.setHeader('Connection', 'close')
+              sendJson(res, err.status, { error: 'bad_request', message: err.status === 413 ? 'larger than 50 MB' : err.message })
+            } else if (err instanceof RemoteUnreachableError) sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
+            else sendJson(res, 500, { error: 'write_failed', message: 'could not write the file' })
           })
         return
       }

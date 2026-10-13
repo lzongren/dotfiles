@@ -90,8 +90,12 @@ export function openLocal(file: string, reveal: boolean): void {
 }
 
 export function runAgentProbe(host: string, script: string, timeoutMs = 30000): Promise<RunResult> {
+  return runRemote(host, ['python3', '-I', '-'], script, timeoutMs, 'agent probe')
+}
+
+export function runRemote(host: string, command: string[], input: string | Buffer, timeoutMs: number, label: string): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, 'python3', '-I', '-'], {
+    const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, ...command], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -109,12 +113,12 @@ export function runAgentProbe(host: string, script: string, timeoutMs = 30000): 
       child.stderr.destroy()
       finish({ stdout: '', stderr: reason, exitCode: 124 })
     }
-    const timer = setTimeout(() => stop('agent probe timed out'), timeoutMs)
+    const timer = setTimeout(() => stop(`${label} timed out`), timeoutMs)
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk
-      if (stdout.length > 4 * 1024 * 1024) stop('agent probe output too large')
+      if (stdout.length > 4 * 1024 * 1024) stop(`${label} output too large`)
     })
     child.stderr.on('data', (chunk: string) => {
       stderr = (stderr + chunk).slice(-8192)
@@ -127,6 +131,6 @@ export function runAgentProbe(host: string, script: string, timeoutMs = 30000): 
     })
     child.on('close', (code) => finish({ stdout, stderr, exitCode: code ?? 1 }))
     child.stdin.on('error', () => undefined)
-    child.stdin.end(script)
+    child.stdin.end(input)
   })
 }

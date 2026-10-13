@@ -22,12 +22,13 @@ export type ApiResult<T> =
 export async function fetchJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<ApiResult<T>> {
   let res: Response
   const headers: Record<string, string> = { Authorization: `Bearer ${getToken() ?? ''}` }
-  if (init.body !== undefined) headers['Content-Type'] = 'application/json'
+  const raw = init.body instanceof Blob
+  if (init.body !== undefined) headers['Content-Type'] = raw ? 'application/octet-stream' : 'application/json'
   try {
     res = await fetch(path, {
       method: init.method ?? 'GET',
       headers,
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      ...(init.body === undefined ? {} : { body: raw ? (init.body as Blob) : JSON.stringify(init.body) }),
     })
   } catch {
     return { kind: 'network', message: 'devbox web server not reachable' }
@@ -78,4 +79,8 @@ export function getFile(session: string, path: string): Promise<ApiResult<FileVi
 
 export function openFile(session: string, path: string): Promise<ApiResult<{ opened: string; revealed: boolean }>> {
   return fetchJson<{ opened: string; revealed: boolean }>('/api/file/open', { method: 'POST', body: { session, path } })
+}
+
+export function uploadFile(session: string, file: File): Promise<ApiResult<{ path: string }>> {
+  return fetchJson(`/api/upload?${new URLSearchParams({ session, name: file.name }).toString()}`, { method: 'POST', body: file })
 }
