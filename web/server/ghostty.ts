@@ -102,11 +102,16 @@ export async function readGhostty(env: NodeJS.ProcessEnv = process.env, home = o
     if (value === '') families.splice(0)
     else families.push(value)
   }
-  const size = Number(last('font-size'))
-  const num = (key: string, fallback: number) => {
-    const n = parseFloat(last(key) ?? '')
-    return Number.isFinite(n) ? n : fallback
+  const nums = (key: string) => (last(key) ?? '').split(',').map((v) => parseFloat(v)).filter(Number.isFinite)
+  const num = (key: string, fallback: number) => nums(key)[0] ?? fallback
+  const pad = (key: string) => {
+    const [a = 2, b = a] = nums(key)
+    return [a, b].map((n) => Math.max(0, Math.round(n)))
   }
+  const [left, right] = pad('window-padding-x')
+  const [top, bottom] = pad('window-padding-y')
+  const cell = /^(-?\d+(?:\.\d+)?)(%?)$/.exec(last('adjust-cell-height')?.trim() ?? '')
+  const size = num('font-size', 0)
   const cursor = last('cursor-style')?.replace(/_hollow$/, '')
   return {
     dark,
@@ -115,10 +120,10 @@ export async function readGhostty(env: NodeJS.ProcessEnv = process.env, home = o
     ...(size > 0 ? { fontSize: size } : {}),
     ...(cursor === 'block' || cursor === 'bar' || cursor === 'underline' ? { cursorStyle: cursor } : {}),
     ...(last('cursor-style-blink') ? { cursorBlink: last('cursor-style-blink') === 'true' } : {}),
-    minimumContrast: num('minimum-contrast', 1),
+    minimumContrast: Math.min(21, Math.max(1, num('minimum-contrast', 1))),
     boldIsBright: last('bold-is-bright') === 'true',
     fontThicken: last('font-thicken') === 'true',
-    ...(last('adjust-cell-height') ? { cellHeight: last('adjust-cell-height') } : {}),
-    padding: [num('window-padding-x', 2), num('window-padding-y', 2)],
+    ...(cell ? { cellHeight: { value: Number(cell[1]), unit: cell[2] ? '%' : 'px' } } : {}),
+    padding: [top, right, bottom, left],
   }
 }

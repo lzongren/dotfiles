@@ -44,7 +44,7 @@ export interface Look {
   boldIsBright?: boolean
   thicken?: boolean
   lineHeight?: number
-  padding?: [number, number]
+  padding?: [number, number, number, number]
 }
 
 export interface Prefs {
@@ -129,10 +129,9 @@ export function ghosttyLook(g: GhosttyLook): Look {
   }
 }
 
-function cellLineHeight(adjust: string | undefined, fontSize: number): number | undefined {
-  const m = /^(-?\d+(?:\.\d+)?)(%?)$/.exec(adjust?.trim() ?? '')
-  if (!m) return undefined
-  const extra = m[2] ? Number(m[1]) / 100 : Number(m[1]) / (fontSize * 1.2)
+function cellLineHeight(cell: GhosttyLook['cellHeight'], fontSize: number): number | undefined {
+  if (!cell) return undefined
+  const extra = cell.unit === '%' ? cell.value / 100 : cell.value / (window.devicePixelRatio || 1) / (fontSize * 1.2)
   return Math.max(1, Math.round((1 + extra) * 1000) / 1000)
 }
 
@@ -193,7 +192,7 @@ export function uiTokens(p: Palette, more = false): Record<string, string> {
     '--danger': text(p.ansi[dark ? 9 : 1]),
     '--border': mix(bg, fg, more ? 0.35 : 0.16),
     '--control': readable(mix(bg, fg, more ? 0.6 : 0.4), [bg, surface], more ? 4.5 : 3.1, edge),
-    '--term-bg': bg,
+    '--term-bg': p.background,
     '--bell-bg': bellBg,
     '--on-accent': bg,
     '--on-bell': bg,
@@ -224,7 +223,7 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
   const tokens: Record<string, string> = p ? uiTokens(p, prefs.more) : {}
   const font = fontStack(look.fontFamily)
   if (font) tokens['--mono'] = font
-  if (look.padding) tokens['--term-pad'] = `${look.padding[1]}px ${look.padding[0]}px`
+  if (look.padding) tokens['--term-pad'] = look.padding.map((n) => `${n}px`).join(' ')
   const root = document.documentElement.style
   for (const name of TOKENS) {
     if (tokens[name]) root.setProperty(name, tokens[name])
@@ -236,10 +235,10 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
     theme: p
       ? {
           ...Object.fromEntries(ANSI.map((name, i) => [name, p.ansi[i]])),
-          background: tokens['--bg'],
+          background: p.background,
           foreground: p.foreground,
           cursor: p.cursor ?? p.foreground,
-          cursorAccent: p.cursorText ?? tokens['--bg'],
+          cursorAccent: p.cursorText ?? p.background,
           selectionBackground: p.selectionBackground ?? mix(p.background, p.foreground, 0.25),
           ...(p.selectionForeground ? { selectionForeground: p.selectionForeground } : {}),
         }
@@ -272,13 +271,26 @@ function validPalette(p: unknown): boolean {
   )
 }
 
+function sane({ fontSize, lineHeight, padding, minimumContrast, ...rest }: Look): Look {
+  const between = (n: unknown, lo: number, hi: number): n is number => typeof n === 'number' && n >= lo && n <= hi
+  return {
+    ...rest,
+    ...(between(fontSize, 6, 72) ? { fontSize } : {}),
+    ...(between(lineHeight, 1, 4) ? { lineHeight } : {}),
+    ...(between(minimumContrast, 1, 21) ? { minimumContrast } : {}),
+    ...(Array.isArray(padding) && padding.length === 4 && padding.every((n) => Number.isInteger(n) && between(n, 0, 200))
+      ? { padding }
+      : {}),
+  }
+}
+
 export function savedLook(): Look | null {
   try {
     const look = JSON.parse(localStorage.getItem(STORE) ?? 'null') as Look | null
     const preset = PRESETS.find((l) => l.id === look?.id)
     if (preset) return preset
     const ok = look?.id === 'ghostty' && validPalette(look.palette) && (look.lightPalette === undefined || validPalette(look.lightPalette))
-    return ok ? look : null
+    return ok ? sane(look) : null
   } catch {
     return null
   }

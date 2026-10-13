@@ -15,8 +15,8 @@ const GHOSTTY: GhosttyLook = {
   minimumContrast: 1,
   boldIsBright: false,
   fontThicken: true,
-  cellHeight: '2',
-  padding: [10, 8],
+  cellHeight: { value: 2, unit: 'px' },
+  padding: [8, 10, 8, 10],
 }
 
 let light = false
@@ -70,7 +70,7 @@ describe('ThemePicker', () => {
       fontWeight: 500,
       lineHeight: 1.119,
     })
-    expect(document.documentElement.style.getPropertyValue('--term-pad')).toBe('8px 10px')
+    expect(document.documentElement.style.getPropertyValue('--term-pad')).toBe('8px 10px 8px 10px')
     expect(terminalLook().fontFamily).toMatch(/^"JetBrainsMonoNerdFont", "JetBrainsMono Nerd Font", ui-monospace/)
   })
 
@@ -112,6 +112,27 @@ describe('ThemePicker', () => {
 
   it('blinks the cursor when Ghostty does not say, as Ghostty does', () => {
     expect(ghosttyLook({ ...GHOSTTY, cursorBlink: undefined }).cursorBlink).toBe(true)
+  })
+
+  it('reads a percentage cell height as a line height, and never shrinks below 1', () => {
+    expect(ghosttyLook({ ...GHOSTTY, cellHeight: { value: 20, unit: '%' } }).lineHeight).toBe(1.2)
+    expect(ghosttyLook({ ...GHOSTTY, cellHeight: { value: -30, unit: '%' } }).lineHeight).toBe(1)
+  })
+
+  it('drops saved terminal settings xterm would reject, keeping the rest of the look', () => {
+    const look = { ...ghosttyLook(GHOSTTY), lineHeight: 0.8, padding: '8', minimumContrast: 40, fontSize: 'big' }
+    localStorage.setItem('devbox.look', JSON.stringify(look))
+    const saved = savedLook()!
+    expect(saved.palette).toEqual(GHOSTTY.dark.palette)
+    expect([saved.lineHeight, saved.padding, saved.minimumContrast, saved.fontSize]).toEqual([undefined, undefined, undefined, undefined])
+  })
+
+  it('puts padding, weight, line height, and contrast back when you leave the Ghostty theme', async () => {
+    serve(GHOSTTY)
+    await renderPicker()
+    fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value: 'tokyo-night' } })
+    expect(document.documentElement.style.getPropertyValue('--term-pad')).toBe('')
+    expect(terminalLook()).toMatchObject({ minimumContrastRatio: 4.5, drawBoldTextInBrightColors: true, fontWeight: 'normal', lineHeight: 1 })
   })
 
   it('switches to a preset and remembers it over the Ghostty default', async () => {

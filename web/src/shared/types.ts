@@ -104,8 +104,8 @@ export interface GhosttyLook {
   minimumContrast: number
   boldIsBright: boolean
   fontThicken: boolean
-  cellHeight?: string
-  padding: [number, number]
+  cellHeight?: { value: number; unit: 'px' | '%' }
+  padding: [number, number, number, number]
 }
 
 export interface ThemeResponse {

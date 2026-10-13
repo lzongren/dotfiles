@@ -54,8 +54,8 @@ describe('readGhostty', () => {
       minimumContrast: 1,
       boldIsBright: false,
       fontThicken: true,
-      cellHeight: '2',
-      padding: [10, 8],
+      cellHeight: { value: 2, unit: 'px' },
+      padding: [8, 10, 8, 10],
     })
     expect(look!.dark.palette.ansi).toHaveLength(16)
     expect(look!.dark.palette.ansi[1]).toBe('#abcdef')
@@ -82,6 +82,23 @@ describe('readGhostty', () => {
     const look = await readGhostty({}, home)
     expect(look).toMatchObject({ dark: { name: 'Only Day' }, fontSize: 15 })
     expect(look?.light).toBeUndefined()
+  })
+
+  it("uses Ghostty's defaults for unset drawing options and reads every padding form", async () => {
+    write('.config/ghostty/themes/Plain', `${ansi('55')}\nbackground = #000000\nforeground = #ffffff\n`)
+    write('.config/ghostty/config', 'theme = Plain\n')
+    expect(await readGhostty({}, home)).toMatchObject({ minimumContrast: 1, boldIsBright: false, fontThicken: false, padding: [2, 2, 2, 2] })
+    expect((await readGhostty({}, home))?.cellHeight).toBeUndefined()
+    write(
+      '.config/ghostty/config',
+      'theme = Plain\nwindow-padding-x = 4,20\nwindow-padding-y = -3\nadjust-cell-height = 15%\nminimum-contrast = 99\nfont-size = 13.5\n',
+    )
+    expect(await readGhostty({}, home)).toMatchObject({
+      padding: [0, 20, 0, 4],
+      cellHeight: { value: 15, unit: '%' },
+      minimumContrast: 21,
+      fontSize: 13.5,
+    })
   })
 
   it('returns null without a config, or with a theme it cannot find', async () => {
