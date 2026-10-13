@@ -42,6 +42,11 @@ export interface Look {
   cursorBlink?: boolean
 }
 
+export interface Prefs {
+  light: boolean
+  more: boolean
+}
+
 type TerminalLook = Pick<ITerminalOptions, 'theme' | 'fontFamily' | 'fontSize' | 'cursorStyle' | 'cursorBlink'>
 
 const STORE = 'devbox.look'
@@ -98,7 +103,7 @@ export function ghosttyLook(g: GhosttyLook): Look {
     fontFamily: g.fontFamily,
     fontSize: g.fontSize,
     cursorStyle: g.cursorStyle,
-    cursorBlink: g.cursorBlink,
+    cursorBlink: g.cursorBlink ?? true,
   }
 }
 
@@ -136,9 +141,11 @@ export function isDark(p: Palette): boolean {
   return luminance(p.background) < luminance(p.foreground)
 }
 
-export function uiTokens(p: Palette): Record<string, string> {
+export function uiTokens(p: Palette, more = false): Record<string, string> {
   const dark = isDark(p)
-  const [bg, fg, edge] = [p.background, p.foreground, dark ? '#ffffff' : '#000000']
+  const [edge, away] = dark ? ['#ffffff', '#000000'] : ['#000000', '#ffffff']
+  const bg = readable(p.background, [edge], 7, away)
+  const fg = p.foreground
   const surface = mix(bg, fg, 0.04)
   const raised = mix(bg, fg, 0.1)
   const selected = mix(bg, p.ansi[4], 0.2)
@@ -151,12 +158,12 @@ export function uiTokens(p: Palette): Record<string, string> {
     '--raised': raised,
     '--selected': selected,
     '--text': text(fg),
-    '--dim': text(mix(fg, bg, 0.3)),
+    '--dim': text(mix(fg, bg, more ? 0.15 : 0.3)),
     '--accent': text(p.ansi[dark ? 12 : 4]),
     '--bell': text(p.ansi[dark ? 11 : 3], [bellBg]),
     '--danger': text(p.ansi[dark ? 9 : 1]),
-    '--border': mix(bg, fg, 0.16),
-    '--control': readable(mix(bg, fg, 0.4), [bg, surface], 3.1, edge),
+    '--border': mix(bg, fg, more ? 0.35 : 0.16),
+    '--control': readable(mix(bg, fg, more ? 0.6 : 0.4), [bg, surface], more ? 4.5 : 3.1, edge),
     '--term-bg': bg,
     '--bell-bg': bellBg,
     '--on-accent': bg,
@@ -183,9 +190,9 @@ export function onTerminalLook(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-export function applyLook(look: Look, preferLight: boolean): void {
-  const p = (preferLight && look.lightPalette) || look.palette
-  const tokens: Record<string, string> = p ? uiTokens(p) : {}
+export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
+  const p = (prefs.light && look.lightPalette) || look.palette
+  const tokens: Record<string, string> = p ? uiTokens(p, prefs.more) : {}
   const font = fontStack(look.fontFamily)
   if (font) tokens['--mono'] = font
   const root = document.documentElement.style
@@ -194,15 +201,15 @@ export function applyLook(look: Look, preferLight: boolean): void {
     else root.removeProperty(name)
   }
   root.colorScheme = p ? (isDark(p) ? 'dark' : 'light') : ''
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', p?.background ?? TERMINAL_OPTIONS.theme.background)
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', tokens['--bg'] ?? TERMINAL_OPTIONS.theme.background)
   current = {
     theme: p
       ? {
           ...Object.fromEntries(ANSI.map((name, i) => [name, p.ansi[i]])),
-          background: p.background,
+          background: tokens['--bg'],
           foreground: p.foreground,
           cursor: p.cursor ?? p.foreground,
-          cursorAccent: p.cursorText ?? p.background,
+          cursorAccent: p.cursorText ?? tokens['--bg'],
           selectionBackground: p.selectionBackground ?? mix(p.background, p.foreground, 0.25),
           ...(p.selectionForeground ? { selectionForeground: p.selectionForeground } : {}),
         }
@@ -215,23 +222,45 @@ export function applyLook(look: Look, preferLight: boolean): void {
   for (const listener of listeners) listener()
 }
 
+const HEX = /^#[0-9a-f]{6}$/i
+
+function validPalette(p: unknown): boolean {
+  const q = p as Palette | undefined
+  return (
+    typeof q?.background === 'string' &&
+    HEX.test(q.background) &&
+    typeof q.foreground === 'string' &&
+    HEX.test(q.foreground) &&
+    Array.isArray(q.ansi) &&
+    q.ansi.length === 16 &&
+    q.ansi.every((c) => typeof c === 'string' && HEX.test(c))
+  )
+}
+
 export function savedLook(): Look | null {
   try {
     const look = JSON.parse(localStorage.getItem(STORE) ?? 'null') as Look | null
-    return look && typeof look.id === 'string' ? look : null
+    const preset = PRESETS.find((l) => l.id === look?.id)
+    if (preset) return preset
+    const ok = look?.id === 'ghostty' && validPalette(look.palette) && (look.lightPalette === undefined || validPalette(look.lightPalette))
+    return ok ? look : null
   } catch {
     return null
   }
 }
 
-export function saveLook(look: Look): void {
+export function saveLook(look: Look | null): void {
   try {
-    localStorage.setItem(STORE, JSON.stringify(look))
+    if (look) localStorage.setItem(STORE, JSON.stringify(look))
+    else localStorage.removeItem(STORE)
   } catch {
     void 0
   }
 }
 
-export function prefersLight(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: light)').matches
+export const MEDIA = ['(prefers-color-scheme: light)', '(prefers-contrast: more)']
+
+export function mediaPrefs(): Prefs {
+  const [light, more] = MEDIA.map((q) => typeof window.matchMedia === 'function' && window.matchMedia(q).matches)
+  return { light, more }
 }

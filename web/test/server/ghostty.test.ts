@@ -66,6 +66,15 @@ describe('readGhostty', () => {
     expect((await readGhostty({}, home))?.dark.palette.background).toBe('#111111')
   })
 
+  it('follows config-file includes, and keeps the light half when the dark one is missing', async () => {
+    write('.config/ghostty/themes/Only Day', `${ansi('44')}\nbackground = #fdfdfd\nforeground = #101010\n`)
+    write('.config/ghostty/config', 'config-file = ?extra/look.conf\nconfig-file = ?missing.conf\n')
+    write('.config/ghostty/extra/look.conf', 'theme = light:Only Day,dark:Gone Night\nfont-size = 15\n')
+    const look = await readGhostty({}, home)
+    expect(look).toMatchObject({ dark: { name: 'Only Day' }, fontSize: 15 })
+    expect(look?.light).toBeUndefined()
+  })
+
   it('returns null without a config, or with a theme it cannot find', async () => {
     expect(await readGhostty({}, home)).toBeNull()
     write('.config/ghostty/config', 'theme = No Such Theme\n')

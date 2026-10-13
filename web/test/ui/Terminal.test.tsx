@@ -143,9 +143,9 @@ describe('TerminalPane', () => {
   it('repaints an open terminal when the theme changes', () => {
     render(<TerminalPane name="api" active />)
     expect(xterms[0].options.theme).toMatchObject({ background: '#0e1014' })
-    act(() => applyLook(PRESETS.find((l) => l.id === 'tokyo-night')!, false))
+    act(() => applyLook(PRESETS.find((l) => l.id === 'tokyo-night')!, { light: false, more: false }))
     expect(xterms[0].options.theme).toMatchObject({ background: '#1a1b26', blue: '#7aa2f7' })
-    act(() => applyLook(DEVBOX, false))
+    act(() => applyLook(DEVBOX, { light: false, more: false }))
     expect(xterms[0].options.theme).toMatchObject({ background: '#0e1014' })
   })
 

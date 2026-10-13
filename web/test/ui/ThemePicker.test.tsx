@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemePicker } from '../../src/components/ThemePicker'
 import type { GhosttyLook } from '../../src/shared/types'
-import { terminalLook } from '../../src/theme'
+import { ghosttyLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
 
 const ansi = (c: string) => Array<string>(16).fill(c)
 const GHOSTTY: GhosttyLook = {
@@ -15,6 +15,7 @@ const GHOSTTY: GhosttyLook = {
 }
 
 let light = false
+let more = false
 const listeners = new Set<() => void>()
 
 function serve(ghostty: GhosttyLook | null) {
@@ -34,9 +35,10 @@ beforeEach(() => {
   localStorage.clear()
   document.documentElement.removeAttribute('style')
   light = false
-  vi.stubGlobal('matchMedia', () => ({
+  more = false
+  vi.stubGlobal('matchMedia', (query: string) => ({
     get matches() {
-      return light
+      return query.includes('contrast') ? more : light
     },
     addEventListener: (_: string, fn: () => void) => listeners.add(fn),
     removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
@@ -65,6 +67,37 @@ describe('ThemePicker', () => {
     act(() => listeners.forEach((fn) => fn()))
     expect(bg()).toBe('#f4f4f8')
     expect(document.documentElement.style.colorScheme).toBe('light')
+  })
+
+  it('raises contrast when the system asks for more', async () => {
+    serve(GHOSTTY)
+    await renderPicker()
+    const dim = () => document.documentElement.style.getPropertyValue('--dim')
+    const before = dim()
+    more = true
+    act(() => listeners.forEach((fn) => fn()))
+    expect(dim()).not.toBe(before)
+  })
+
+  it('falls back to Devbox when the Ghostty theme it saved is gone', async () => {
+    serve(GHOSTTY)
+    await renderPicker()
+    document.body.innerHTML = ''
+    serve(null)
+    await renderPicker()
+    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Devbox')
+    expect(savedLook()).toBeNull()
+  })
+
+  it('ignores a saved look it cannot paint, and restores presets by id rather than by stored colors', () => {
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'ghostty', palette: { background: '#000', foreground: '#fff', ansi: [] } }))
+    expect(savedLook()).toBeNull()
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula', palette: { background: '#123456' } }))
+    expect(savedLook()).toBe(PRESETS.find((l) => l.id === 'dracula'))
+  })
+
+  it('blinks the cursor when Ghostty does not say, as Ghostty does', () => {
+    expect(ghosttyLook({ ...GHOSTTY, cursorBlink: undefined }).cursorBlink).toBe(true)
   })
 
   it('switches to a preset and remembers it over the Ghostty default', async () => {

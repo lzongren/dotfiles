@@ -38,6 +38,19 @@ function paint(palette: Partial<Palette> & { ansi: string[] }, entries: Entries)
   }
 }
 
+async function readConfig(file: string, home: string, seen: Set<string>): Promise<Entries> {
+  if (seen.has(file) || seen.size > 16) return []
+  seen.add(file)
+  const own = parseGhostty(await readFile(file, 'utf8').catch(() => ''))
+  const out = own.filter(([key]) => key !== 'config-file')
+  for (const [key, value] of own) {
+    if (key !== 'config-file' || !value) continue
+    const target = value.replace(/^\?/, '').replace(/^~(?=\/)/, home)
+    out.push(...(await readConfig(path.resolve(path.dirname(file), target), home, seen)))
+  }
+  return out
+}
+
 async function readFirst(files: string[]): Promise<string | null> {
   for (const file of files) {
     const text = await readFile(file, 'utf8').catch(() => null)
@@ -49,10 +62,11 @@ async function readFirst(files: string[]): Promise<string | null> {
 export async function readGhostty(env: NodeJS.ProcessEnv = process.env, home = os.homedir()): Promise<GhosttyLook | null> {
   const configDir = path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'ghostty')
   const macDir = path.join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty')
-  const texts = await Promise.all(
-    [configDir, macDir].flatMap((dir) => ['config', 'config.ghostty'].map((f) => readFile(path.join(dir, f), 'utf8').catch(() => ''))),
-  )
-  const entries = texts.flatMap(parseGhostty)
+  const seen = new Set<string>()
+  const entries: Entries = []
+  for (const dir of [configDir, macDir]) {
+    for (const name of ['config', 'config.ghostty']) entries.push(...(await readConfig(path.join(dir, name), home, seen)))
+  }
   const last = (key: string) => entries.filter(([k]) => k === key).pop()?.[1]
   const theme = last('theme')
   const names: Record<string, string> = {}
@@ -78,7 +92,7 @@ export async function readGhostty(env: NodeJS.ProcessEnv = process.env, home = o
     const full = palette.background && palette.foreground && palette.ansi.filter(Boolean).length === 16
     return full ? { name: name ?? 'custom', palette: palette as Palette } : undefined
   }
-  const dark = await load(names.dark ?? names.any ?? names.light)
+  const dark = (await load(names.dark ?? names.any ?? names.light)) ?? (names.light ? await load(names.light) : undefined)
   if (!dark) return null
   const lightName = names.light ?? names.any
   const light = lightName && lightName !== dark.name ? await load(lightName) : undefined

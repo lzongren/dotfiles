@@ -1,19 +1,27 @@
 import { useEffect, useState } from 'react'
 import { getTheme } from '../api'
-import { applyLook, DEVBOX, ghosttyLook, prefersLight, PRESETS, savedLook, saveLook, type Look } from '../theme'
+import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, type Look } from '../theme'
 
 export function ThemePicker() {
   const [selected, setSelected] = useState<Look>(() => savedLook() ?? DEVBOX)
   const [ghostty, setGhostty] = useState<Look | null>(() => (selected.id === 'ghostty' ? selected : null))
-  const [light, setLight] = useState(prefersLight)
+  const [prefs, setPrefs] = useState(mediaPrefs)
 
   useEffect(() => {
     let live = true
     void getTheme().then((result) => {
-      if (!live || result.kind !== 'ok' || !result.data.ghostty) return
+      if (!live || result.kind !== 'ok') return
+      const saved = savedLook()
+      if (!result.data.ghostty) {
+        setGhostty(null)
+        if (saved?.id === 'ghostty') {
+          saveLook(null)
+          setSelected(DEVBOX)
+        }
+        return
+      }
       const fresh = ghosttyLook(result.data.ghostty)
       setGhostty(fresh)
-      const saved = savedLook()
       if (saved === null || saved.id === 'ghostty') {
         saveLook(fresh)
         setSelected(fresh)
@@ -26,15 +34,17 @@ export function ThemePicker() {
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return
-    const query = window.matchMedia('(prefers-color-scheme: light)')
-    const update = () => setLight(query.matches)
-    query.addEventListener('change', update)
-    return () => query.removeEventListener('change', update)
+    const queries = MEDIA.map((q) => window.matchMedia(q))
+    const update = () => setPrefs(mediaPrefs())
+    for (const query of queries) query.addEventListener('change', update)
+    return () => {
+      for (const query of queries) query.removeEventListener('change', update)
+    }
   }, [])
 
   useEffect(() => {
-    applyLook(selected, light)
-  }, [selected, light])
+    applyLook(selected, prefs)
+  }, [selected, prefs])
 
   const looks = ghostty ? [ghostty, ...PRESETS] : PRESETS
   return (

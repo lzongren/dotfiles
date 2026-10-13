@@ -88,13 +88,19 @@ const LATTE: Palette = {
   ansi: '#5c5f77 #d20f39 #40a02b #df8e1d #1e66f5 #ea76cb #179299 #acb0be #6c6f85 #de293e #49af3d #eea02d #456eff #fe85d8 #2d9fa8 #bcc0cc'.split(' '),
 }
 const MUDDY: Palette = { background: '#555555', foreground: '#777777', ansi: Array(16).fill('#666666') }
+const MID_LIGHT_TEXT: Palette = { background: '#767676', foreground: '#ffffff', ansi: Array(16).fill('#9a9a9a') }
+const MID_DARK_TEXT: Palette = { background: '#808080', foreground: '#000000', ansi: Array(16).fill('#606060') }
 
-describe.each([
-  ...PRESETS.filter((l) => l.palette).map((l) => [l.label, l.palette!] as const),
-  ['Catppuccin Latte', LATTE] as const,
-  ['a low-contrast palette', MUDDY] as const,
-])('theme derived from %s (WCAG AA)', (_, palette) => {
-  const t = uiTokens(palette)
+describe.each(
+  [
+    ...PRESETS.filter((l) => l.palette).map((l) => [l.label, l.palette!] as const),
+    ['Catppuccin Latte', LATTE] as const,
+    ['a low-contrast palette', MUDDY] as const,
+    ['a mid-grey background with white text', MID_LIGHT_TEXT] as const,
+    ['a mid-grey background with black text', MID_DARK_TEXT] as const,
+  ].flatMap(([name, palette]) => [[name, palette, false] as const, [`${name}, more contrast`, palette, true] as const]),
+)('theme derived from %s (WCAG AA)', (_, palette, more) => {
+  const t = uiTokens(palette, more)
   it('keeps every text token at least 4.5:1 on every surface', () => {
     for (const fg of ['--text', '--dim', '--accent', '--bell', '--danger']) {
       for (const bg of ['--bg', '--surface', '--raised', '--selected']) {
@@ -108,7 +114,7 @@ describe.each([
     for (const [fg, bg] of [['--on-accent', '--accent'], ['--on-bell', '--bell'], ['--on-danger', '--danger']]) {
       expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
     }
-    expect(contrast(t['--control'], t['--bg'])).toBeGreaterThanOrEqual(3)
-    expect(contrast(t['--control'], t['--surface'])).toBeGreaterThanOrEqual(3)
+    expect(contrast(t['--control'], t['--bg'])).toBeGreaterThanOrEqual(more ? 4.5 : 3)
+    expect(contrast(t['--control'], t['--surface'])).toBeGreaterThanOrEqual(more ? 4.5 : 3)
   })
 })
