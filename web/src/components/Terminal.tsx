@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
+import { TERMINAL_OPTIONS } from '../theme'
 import { getToken } from '../token'
 
 type Status = 'connecting' | 'connected' | 'closed' | 'rejected'
@@ -23,12 +24,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
   const [status, setStatus] = useState<Status>('connecting')
 
   useEffect(() => {
-    const term = new XTerm({
-      fontSize: 13,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      scrollback: 5000,
-      theme: { background: '#16181d', foreground: '#d7dae0' },
-    })
+    const term = new XTerm(TERMINAL_OPTIONS)
     const fit = new FitAddon()
     term.loadAddon(fit)
     if (containerRef.current) term.open(containerRef.current)

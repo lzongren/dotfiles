@@ -1,0 +1,31 @@
+import type { ITerminalOptions } from '@xterm/xterm'
+
+export const TERMINAL_OPTIONS = {
+  fontSize: 13,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  scrollback: 5000,
+  minimumContrastRatio: 4.5,
+  theme: {
+    background: '#0e1014',
+    foreground: '#e6edf3',
+    cursor: '#e6edf3',
+    cursorAccent: '#0e1014',
+    selectionBackground: '#2f4a7a',
+    black: '#484f58',
+    red: '#ff7b72',
+    green: '#3fb950',
+    yellow: '#d29922',
+    blue: '#58a6ff',
+    magenta: '#bc8cff',
+    cyan: '#39c5cf',
+    white: '#b1bac4',
+    brightBlack: '#8b949e',
+    brightRed: '#ffa198',
+    brightGreen: '#56d364',
+    brightYellow: '#e3b341',
+    brightBlue: '#79c0ff',
+    brightMagenta: '#d2a8ff',
+    brightCyan: '#56d4dd',
+    brightWhite: '#ffffff',
+  },
+} satisfies ITerminalOptions
