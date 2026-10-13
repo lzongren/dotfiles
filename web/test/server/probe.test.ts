@@ -214,9 +214,16 @@ beforeAll(() => {
         payload: {
           type: 'custom_tool_call',
           name: 'apply_patch',
+          call_id: 'c1',
           input: '*** Begin Patch\n*** Add File: /work/cdx/src/lib.rs\n+fn main() {}\n*** Update File: src/parser.rs\n@@\n-a\n+b\n*** Delete File: /work/cdx/old.py\n*** End Patch',
         },
       }),
+      line({ type: 'response_item', timestamp: at(32), payload: { type: 'custom_tool_call_output', call_id: 'c1', output: 'Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess.' } }),
+      line({ type: 'response_item', timestamp: at(36), payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c2', input: '*** Begin Patch\n*** Add File: /work/cdx/failed.rs\n*** End Patch' } }),
+      line({ type: 'response_item', timestamp: at(36), payload: { type: 'custom_tool_call_output', call_id: 'c2', output: 'apply_patch verification failed: Failed to find expected lines' } }),
+      line({ type: 'response_item', timestamp: at(37), payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c3', input: '*** Begin Patch\n*** Update File: /work/cdx/paired.rs\n*** End Patch' } }),
+      line({ type: 'event_msg', timestamp: at(37), payload: { type: 'patch_apply_end', call_id: 'c3', success: true, changes: { '/work/cdx/paired.rs': { type: 'update', unified_diff: '' } } } }),
+      line({ type: 'response_item', timestamp: at(37), payload: { type: 'custom_tool_call_output', call_id: 'c3', output: 'Exit code: 0\nWall time: 0 seconds' } }),
       line({
         type: 'event_msg',
         timestamp: at(33),
@@ -324,6 +331,7 @@ describe('agent probe', () => {
       { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
     ])
     expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
+      ['/work/cdx/paired.rs', 'edited'],
       ['/work/cdx/crate/rel.md', 'edited'],
       ['/work/cdx/a.rs', 'deleted'],
       ['/work/cdx/b.rs', 'created'],
@@ -333,6 +341,7 @@ describe('agent probe', () => {
       ['/work/cdx/crate/src/parser.rs', 'edited'],
       ['/work/cdx/old.py', 'deleted'],
     ])
+    expect((agents.cdx.files as Array<{ path: string; count: number }>).find((f) => f.path === '/work/cdx/paired.rs')?.count).toBe(1)
   })
 
   it('keeps a title written long before the tail it reads, and sees a finished turn without a registry', () => {

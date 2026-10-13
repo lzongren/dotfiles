@@ -19,7 +19,7 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 10
+CACHE_VERSION = 11
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
@@ -345,6 +345,7 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
             and b"filePath" not in line
             and b"apply_patch" not in line
             and b"patch_apply_end" not in line
+            and b"custom_tool_call_output" not in line
             and b"turn_context" not in line
             and b"session_meta" not in line
             and not (links and any(regex.search(line.decode("utf-8", "replace")) for _, regex, link in patterns if link))
@@ -376,7 +377,7 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
         meta = rec.get("payload") if rec.get("type") in ("session_meta", "turn_context") else None
         if isinstance(meta, dict) and isinstance(meta.get("cwd"), str):
             entry["cwd"] = meta["cwd"]
-        track_files(entry["files"], rec, at, entry.get("cwd") or cwd)
+        track_files(entry, rec, at, entry.get("cwd") or cwd)
         if rec.get("type") == "pr-link" and rec.get("prUrl"):
             found.setdefault(rec["prUrl"], ("PR", None, True))
         for text in strings(rec):
@@ -397,32 +398,46 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
     return entry
 
 
-def track_files(files, rec, at, cwd):
+def track_files(entry, rec, at, cwd):
+    files = entry["files"]
+    pending = entry.setdefault("pending", {})
     result = rec.get("toolUseResult")
     if isinstance(result, dict) and isinstance(result.get("filePath"), str):
         touch(files, result["filePath"], "created" if result.get("type") == "create" else "edited", at)
     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    kind, call = payload.get("type"), payload.get("call_id")
     resolve = lambda name: name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
-    changes = payload.get("changes") if payload.get("type") == "patch_apply_end" and payload.get("success") is not False else None
-    if isinstance(changes, dict):
-        for name, change in changes.items():
-            kind = change.get("type") if isinstance(change, dict) else None
-            moved = change.get("move_path") if isinstance(change, dict) else None
+    if kind == "patch_apply_end":
+        pending.pop(call, None)
+        changes = payload.get("changes") if payload.get("success") is not False else None
+        for name, change in (changes.items() if isinstance(changes, dict) else []):
+            change = change if isinstance(change, dict) else {}
+            moved = change.get("move_path")
             if isinstance(moved, str) and moved:
                 touch(files, resolve(name), "deleted", at)
                 touch(files, resolve(moved), "created", at)
-            elif kind in PATCH_ACTIONS:
-                touch(files, resolve(name), PATCH_ACTIONS[kind], at)
-    patch = payload.get("input") if payload.get("type") == "custom_tool_call" and payload.get("name") == "apply_patch" else None
-    if not isinstance(patch, str):
-        return
-    last = None
-    for match in PATCH_RE.finditer(patch):
-        full = resolve(match.group(2).strip())
-        if match.group(1) == "Move to" and last:
-            touch(files, last, "deleted", at)
-        touch(files, full, {"Add File": "created", "Update File": "edited", "Delete File": "deleted", "Move to": "created"}[match.group(1)], at)
-        last = full
+            elif change.get("type") in PATCH_ACTIONS:
+                touch(files, resolve(name), PATCH_ACTIONS[change["type"]], at)
+    elif kind == "custom_tool_call_output" and call in pending:
+        output = payload.get("output")
+        for path, action in pending.pop(call) if isinstance(output, str) and output.startswith("Exit code: 0") else []:
+            touch(files, path, action, at)
+        pending.pop(call, None)
+    elif kind == "custom_tool_call" and payload.get("name") == "apply_patch" and isinstance(payload.get("input"), str):
+        found, last = [], None
+        for match in PATCH_RE.finditer(payload["input"]):
+            full, verb = resolve(match.group(2).strip()), match.group(1)
+            if verb == "Move to" and last:
+                found.append([last, "deleted"])
+            found.append([full, "created" if verb == "Move to" else PATCH_ACTIONS[verb.split()[0].lower()]])
+            last = full
+        if not isinstance(call, str):
+            for path, action in found:
+                touch(files, path, action, at)
+            return
+        pending[call] = found
+        while len(pending) > 20:
+            pending.pop(next(iter(pending)))
 
 
 def touch(files, path, action, at):
