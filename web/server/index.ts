@@ -14,6 +14,7 @@ import {
 import { loadConfig } from './config.js'
 import { BodyError, readJson } from './body.js'
 import { detach, runAgentProbe, spawnAttachPty, statusRaw } from './exec.js'
+import { readGhostty } from './ghostty.js'
 import { createInsightsSource, probeScript } from './insights.js'
 import { isAgentChoice, SESSION_NAME_RE } from '../src/shared/validate.js'
 import { listWorkspaces } from './workspaces.js'
@@ -116,6 +117,12 @@ export async function createApp(opts: AppOptions): Promise<App> {
               sendJson(res, 500, { error: 'internal', message: 'could not start the session' })
             }
           })
+        return
+      }
+      if (url.pathname === '/api/theme' && req.method === 'GET') {
+        readGhostty()
+          .then((ghostty) => sendJson(res, 200, { ghostty }))
+          .catch(() => sendJson(res, 200, { ghostty: null }))
         return
       }
       if (url.pathname === '/api/insights' && req.method === 'GET') {

@@ -5,6 +5,7 @@ import { changeMark, loadSeen, markSeen } from './insights'
 import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
+import { ThemePicker } from './components/ThemePicker'
 import { WorkspacePalette } from './components/WorkspacePalette'
 
 type Cause = 'remote' | 'local' | 'probe'
@@ -173,6 +174,7 @@ export function App() {
             void refresh()
           }}
         />
+        <ThemePicker />
         {staleSince !== null ? (
           <p role="alert" className="banner">
             {staleCause === 'local'

@@ -83,3 +83,26 @@ export interface ApiError {
   error: string
   message: string
 }
+
+export interface Palette {
+  background: string
+  foreground: string
+  cursor?: string
+  cursorText?: string
+  selectionBackground?: string
+  selectionForeground?: string
+  ansi: string[]
+}
+
+export interface GhosttyLook {
+  dark: { name: string; palette: Palette }
+  light?: { name: string; palette: Palette }
+  fontFamily?: string[]
+  fontSize?: number
+  cursorStyle?: 'block' | 'bar' | 'underline'
+  cursorBlink?: boolean
+}
+
+export interface ThemeResponse {
+  ghostty: GhosttyLook | null
+}

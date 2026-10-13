@@ -14,7 +14,7 @@ vi.mock('../../src/components/WorkspacePalette', () => ({
 }))
 
 import { App } from '../../src/App'
-import type { AgentInsight, InsightsResponse, Session, SessionsResponse } from '../../src/shared/types'
+import type { AgentInsight, InsightsResponse, Session, SessionsResponse, ThemeResponse } from '../../src/shared/types'
 
 const NOW_EPOCH = 1800000000
 
@@ -39,7 +39,7 @@ const ROWS: Session[] = [
   session({ name: 'main', activityEpoch: NOW_EPOCH - 40 }),
 ]
 
-function response(body: SessionsResponse | InsightsResponse | { error: string; message: string }, status = 200): Response {
+function response(body: SessionsResponse | InsightsResponse | ThemeResponse | { error: string; message: string }, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
@@ -57,7 +57,9 @@ beforeEach(() => {
   localStorage.clear()
   fetchMock = vi.fn()
   insightsMock = vi.fn(async () => response({ fetchedAt: Date.now(), agents: [] }))
-  vi.stubGlobal('fetch', (url: string, init: RequestInit) => (url === '/api/insights' ? insightsMock(url, init) : fetchMock(url, init)))
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) =>
+    url === '/api/theme' ? response({ ghostty: null }) : url === '/api/insights' ? insightsMock(url, init) : fetchMock(url, init),
+  )
 })
 
 afterEach(() => {
