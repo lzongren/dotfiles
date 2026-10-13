@@ -3,6 +3,8 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   InsightsResponse,
+  NoteDaysResponse,
+  NoteResponse,
   SessionsResponse,
   ThemeResponse,
   WorkspacesResponse,
@@ -14,7 +16,7 @@ export type ApiResult<T> =
   | { kind: 'unauthorized' }
   | { kind: 'unreachable'; message: string }
   | { kind: 'network'; message: string }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; status?: number; body?: unknown }
 
 export async function fetchJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<ApiResult<T>> {
   let res: Response
@@ -32,7 +34,7 @@ export async function fetchJson<T>(path: string, init: { method?: string; body?:
   if (res.status === 401) return { kind: 'unauthorized' }
   const body = (await res.json().catch(() => null)) as (T & ApiError) | null
   if (res.status === 502) return { kind: 'unreachable', message: body?.message ?? 'remote unreachable' }
-  if (!res.ok) return { kind: 'error', message: body?.message ?? `request failed (${res.status})` }
+  if (!res.ok) return { kind: 'error', message: body?.message ?? `request failed (${res.status})`, status: res.status, body }
   if (body === null) return { kind: 'error', message: 'invalid response' }
   return { kind: 'ok', data: body }
 }
@@ -55,4 +57,16 @@ export function createSession(body: CreateSessionRequest): Promise<ApiResult<Cre
 
 export function getTheme(): Promise<ApiResult<ThemeResponse>> {
   return fetchJson<ThemeResponse>('/api/theme')
+}
+
+export function getNoteDays(): Promise<ApiResult<NoteDaysResponse>> {
+  return fetchJson<NoteDaysResponse>('/api/notes')
+}
+
+export function getNote(day: string): Promise<ApiResult<NoteResponse>> {
+  return fetchJson<NoteResponse>(`/api/notes/${day}`)
+}
+
+export function putNote(day: string, text: string, base: string): Promise<ApiResult<{ version: string }>> {
+  return fetchJson<{ version: string }>(`/api/notes/${day}`, { method: 'PUT', body: { text, base } })
 }

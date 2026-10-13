@@ -40,6 +40,11 @@ export interface Look {
   fontSize?: number
   cursorStyle?: 'block' | 'bar' | 'underline'
   cursorBlink?: boolean
+  minimumContrast?: number
+  boldIsBright?: boolean
+  thicken?: boolean
+  cellHeight?: GhosttyLook['cellHeight']
+  padding?: [number, number, number, number]
 }
 
 export interface Prefs {
@@ -47,13 +52,25 @@ export interface Prefs {
   more: boolean
 }
 
-type TerminalLook = Pick<ITerminalOptions, 'theme' | 'fontFamily' | 'fontSize' | 'cursorStyle' | 'cursorBlink'>
+type TerminalLook = Pick<
+  ITerminalOptions,
+  | 'theme'
+  | 'fontFamily'
+  | 'fontSize'
+  | 'cursorStyle'
+  | 'cursorBlink'
+  | 'minimumContrastRatio'
+  | 'drawBoldTextInBrightColors'
+  | 'fontWeight'
+  | 'fontWeightBold'
+  | 'lineHeight'
+>
 
 const STORE = 'devbox.look'
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const TOKENS = [
   '--bg', '--surface', '--raised', '--selected', '--text', '--dim', '--accent', '--bell', '--border', '--control',
-  '--term-bg', '--bell-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono',
+  '--term-bg', '--bell-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono', '--term-pad',
 ]
 const ANSI = [
   'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
@@ -95,7 +112,7 @@ export const PRESETS: Look[] = [
 ]
 
 export function ghosttyLook(g: GhosttyLook): Look {
-  return {
+  return sane({
     id: 'ghostty',
     label: `Ghostty · ${g.light ? `${g.dark.name} / ${g.light.name}` : g.dark.name}`,
     palette: g.dark.palette,
@@ -104,7 +121,18 @@ export function ghosttyLook(g: GhosttyLook): Look {
     fontSize: g.fontSize,
     cursorStyle: g.cursorStyle,
     cursorBlink: g.cursorBlink ?? true,
-  }
+    minimumContrast: g.minimumContrast,
+    boldIsBright: g.boldIsBright,
+    thicken: g.fontThicken,
+    cellHeight: g.cellHeight,
+    padding: g.padding,
+  })
+}
+
+function cellLineHeight(cell: GhosttyLook['cellHeight'], fontSize: number): number | undefined {
+  if (!cell) return undefined
+  const extra = cell.unit === '%' ? cell.value / 100 : cell.value / (window.devicePixelRatio || 1) / (fontSize * 1.2)
+  return Math.max(1, Math.round((1 + extra) * 1000) / 1000)
 }
 
 function rgb(hex: string): number[] {
@@ -164,7 +192,7 @@ export function uiTokens(p: Palette, more = false): Record<string, string> {
     '--danger': text(p.ansi[dark ? 9 : 1]),
     '--border': mix(bg, fg, more ? 0.35 : 0.16),
     '--control': readable(mix(bg, fg, more ? 0.6 : 0.4), [bg, surface], more ? 4.5 : 3.1, edge),
-    '--term-bg': bg,
+    '--term-bg': p.background,
     '--bell-bg': bellBg,
     '--on-accent': bg,
     '--on-bell': bg,
@@ -195,6 +223,7 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
   const tokens: Record<string, string> = p ? uiTokens(p, prefs.more) : {}
   const font = fontStack(look.fontFamily)
   if (font) tokens['--mono'] = font
+  if (look.padding) tokens['--term-pad'] = look.padding.map((n) => `${n}px`).join(' ')
   const root = document.documentElement.style
   for (const name of TOKENS) {
     if (tokens[name]) root.setProperty(name, tokens[name])
@@ -206,10 +235,10 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
     theme: p
       ? {
           ...Object.fromEntries(ANSI.map((name, i) => [name, p.ansi[i]])),
-          background: tokens['--bg'],
+          background: p.background,
           foreground: p.foreground,
           cursor: p.cursor ?? p.foreground,
-          cursorAccent: p.cursorText ?? tokens['--bg'],
+          cursorAccent: p.cursorText ?? p.background,
           selectionBackground: p.selectionBackground ?? mix(p.background, p.foreground, 0.25),
           ...(p.selectionForeground ? { selectionForeground: p.selectionForeground } : {}),
         }
@@ -218,8 +247,19 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
     fontSize: look.fontSize ?? TERMINAL_OPTIONS.fontSize,
     cursorStyle: look.cursorStyle ?? 'block',
     cursorBlink: look.cursorBlink ?? false,
+    minimumContrastRatio: look.minimumContrast ?? TERMINAL_OPTIONS.minimumContrastRatio,
+    drawBoldTextInBrightColors: look.boldIsBright ?? true,
+    fontWeight: look.thicken ? 500 : 'normal',
+    fontWeightBold: look.thicken ? 800 : 'bold',
+    lineHeight: cellLineHeight(look.cellHeight, look.fontSize ?? TERMINAL_OPTIONS.fontSize) ?? 1,
   }
-  for (const listener of listeners) listener()
+  for (const listener of listeners) {
+    try {
+      listener()
+    } catch (err) {
+      console.error(err)
+    }
+  }
 }
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -237,13 +277,43 @@ function validPalette(p: unknown): boolean {
   )
 }
 
+function sane(look: Look): Look {
+  const clamp = (n: unknown, lo: number, hi: number): number | undefined =>
+    typeof n === 'number' && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : undefined
+  const flag = (v: unknown): v is boolean => typeof v === 'boolean'
+  const { id, label, palette, lightPalette, fontFamily, fontSize, cursorStyle, cursorBlink } = look
+  const { minimumContrast, boldIsBright, thicken, cellHeight, padding } = look
+  const size = clamp(fontSize, 6, 72)
+  const contrast = clamp(minimumContrast, 1, 21)
+  const cell = clamp(cellHeight?.value, -100, 100)
+  const families = Array.isArray(fontFamily) ? fontFamily.filter((f): f is string => typeof f === 'string').slice(0, 8) : []
+  const pads = Array.isArray(padding) && padding.length === 4 ? padding.map((n) => clamp(n, 0, 200)) : []
+  return {
+    id,
+    label: typeof label === 'string' ? label : 'Ghostty',
+    ...(validPalette(palette) ? { palette } : {}),
+    ...(lightPalette !== undefined && validPalette(lightPalette) ? { lightPalette } : {}),
+    ...(families.length ? { fontFamily: families } : {}),
+    ...(size !== undefined ? { fontSize: size } : {}),
+    ...(cursorStyle === 'block' || cursorStyle === 'bar' || cursorStyle === 'underline' ? { cursorStyle } : {}),
+    ...(flag(cursorBlink) ? { cursorBlink } : {}),
+    ...(contrast !== undefined ? { minimumContrast: contrast } : {}),
+    ...(flag(boldIsBright) ? { boldIsBright } : {}),
+    ...(flag(thicken) ? { thicken } : {}),
+    ...(cell !== undefined && (cellHeight?.unit === 'px' || cellHeight?.unit === '%') ? { cellHeight: { value: cell, unit: cellHeight.unit } } : {}),
+    ...(pads.length === 4 && pads.every((n) => n !== undefined)
+      ? { padding: pads.map((n) => Math.round(n!)) as [number, number, number, number] }
+      : {}),
+  }
+}
+
 export function savedLook(): Look | null {
   try {
     const look = JSON.parse(localStorage.getItem(STORE) ?? 'null') as Look | null
     const preset = PRESETS.find((l) => l.id === look?.id)
     if (preset) return preset
     const ok = look?.id === 'ghostty' && validPalette(look.palette) && (look.lightPalette === undefined || validPalette(look.lightPalette))
-    return ok ? look : null
+    return ok ? sane(look) : null
   } catch {
     return null
   }

@@ -5,5 +5,9 @@ import { initToken } from './token'
 import './styles.css'
 
 initToken()
-applyLook(savedLook() ?? DEVBOX)
+try {
+  applyLook(savedLook() ?? DEVBOX)
+} catch {
+  applyLook(DEVBOX)
+}
 createRoot(document.getElementById('root')!).render(<App />)
