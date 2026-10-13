@@ -240,7 +240,7 @@ beforeAll(() => {
       line({
         type: 'response_item',
         timestamp: at(37),
-        payload: { type: 'function_call', name: 'shell_command', arguments: JSON.stringify({ command: "cd sub && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: c.md\n*** End Patch\nEOF" }) },
+        payload: { type: 'function_call', name: 'shell_command', arguments: JSON.stringify({ command: "command -v apply_patch && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: c.md\n*** End Patch\nEOF" }) },
       }),
       line({
         type: 'response_item',
@@ -249,7 +249,7 @@ beforeAll(() => {
           type: 'function_call',
           name: 'shell_command',
           arguments: JSON.stringify({
-            command: "set -e\ncd 'q d' && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: e.md\n*** End Patch\nEOF\ncat > f <<'X'\n*** Begin Patch\n*** Delete File: /work/cdx/src/lib.rs\n*** End Patch\nX",
+            command: "set -e\napply_patch <<-'EOF'\r\n\t*** Begin Patch\r\n\t*** Add File: e.md\r\n\t*** End Patch\r\nEOF\nrg -n apply_patch src; cat > f <<'X'\n*** Begin Patch\n*** Delete File: /work/cdx/src/lib.rs\n*** End Patch\nX\ncd foo\\ bar",
           }),
         },
       }),
@@ -359,8 +359,8 @@ describe('agent probe', () => {
       { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
     ])
     expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
-      ['/work/cdx/crate/q d/e.md', 'created'],
-      ['/work/cdx/crate/sub/c.md', 'created'],
+      ['/work/cdx/crate/e.md', 'created'],
+      ['/work/cdx/crate/c.md', 'created'],
       ['/work/cdx/crate/obj.md', 'created'],
       ['/work/cdx/crate/docs/doc.md', 'created'],
       ['/work/cdx/crate/notes.md', 'created'],

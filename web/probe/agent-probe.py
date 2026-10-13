@@ -10,7 +10,6 @@ import json
 import math
 import os
 import re
-import shlex
 import signal
 import subprocess
 import time
@@ -20,7 +19,7 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 8
+CACHE_VERSION = 9
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
@@ -29,10 +28,8 @@ TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
-PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
-SHELL_PATCH_RE = re.compile(r"(?:^|[\s;&|(])apply_patch(?=\s|<|$)")
-CD_RE = re.compile(r"(?:^|[\s;&|(])cd\s+(?:--\s+)?('[^']*'|\"[^\"]*\"|[^\s;&|]+)")
-BODY_RE = re.compile(r"^\*\*\* Begin Patch$.*?^\*\*\* End Patch$", re.M | re.S)
+PATCH_RE = re.compile(r"^[ \t]*\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
+SHELL_PATCH_RE = re.compile(r"(?:^|[\s;&|(])apply_patch\s*(?:<<-?\s*['\"]?\w+['\"]?\s*)?['\"]?\s*(\*\*\* Begin Patch.*?\*\*\* End Patch)", re.S)
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -416,17 +413,14 @@ def track_files(files, rec, at, cwd):
             parts = [c for c in (command if isinstance(command, list) else [command]) if isinstance(c, str)]
             workdir = args.get("workdir")
             if isinstance(workdir, str) and workdir:
-                cwd = into(cwd, workdir)
+                cwd = os.path.join(cwd, workdir) if cwd else workdir
             call = SHELL_PATCH_RE.search(parts[-1]) if parts else None
-            body = BODY_RE.search(parts[-1], call.end()) if call else None
             if payload["name"] == "apply_patch":
                 patch = args.get("input")
             elif len(parts) == 2 and parts[0] == "apply_patch":
                 patch = parts[1]
-            elif body:
-                patch = body.group(0)
-                for cd in CD_RE.finditer(parts[-1], 0, call.start()):
-                    cwd = into(cwd, shlex.split(cd.group(1))[0])
+            elif call:
+                patch = call.group(1)
     if not isinstance(patch, str):
         return
     last = None
@@ -437,13 +431,6 @@ def track_files(files, rec, at, cwd):
             touch(files, last, "deleted", at)
         touch(files, full, {"Add File": "created", "Update File": "edited", "Delete File": "deleted", "Move to": "created"}[match.group(1)], at)
         last = full
-
-
-def into(base, folder):
-    folder = os.path.expandvars(os.path.expanduser(folder))
-    if "$" in folder:
-        return base
-    return os.path.join(base, folder) if base else folder
 
 
 def touch(files, path, action, at):
