@@ -244,6 +244,22 @@ beforeAll(() => {
       }),
       line({
         type: 'response_item',
+        timestamp: at(39),
+        payload: {
+          type: 'function_call',
+          name: 'shell_command',
+          arguments: JSON.stringify({
+            command: "set -e\ncd 'q d' && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: e.md\n*** End Patch\nEOF\ncat > f <<'X'\n*** Begin Patch\n*** Delete File: /work/cdx/src/lib.rs\n*** End Patch\nX",
+          }),
+        },
+      }),
+      line({
+        type: 'response_item',
+        timestamp: at(40),
+        payload: { type: 'function_call', name: 'shell_command', arguments: JSON.stringify({ command: "apply_patch.py <<'EOF'\n*** Begin Patch\n*** Delete File: /work/cdx/src/lib.rs\n*** End Patch\nEOF" }) },
+      }),
+      line({
+        type: 'response_item',
         timestamp: at(38),
         payload: {
           type: 'function_call',
@@ -343,6 +359,7 @@ describe('agent probe', () => {
       { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
     ])
     expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
+      ['/work/cdx/crate/q d/e.md', 'created'],
       ['/work/cdx/crate/sub/c.md', 'created'],
       ['/work/cdx/crate/obj.md', 'created'],
       ['/work/cdx/crate/docs/doc.md', 'created'],

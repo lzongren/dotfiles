@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import shlex
 import signal
 import subprocess
 import time
@@ -29,7 +30,9 @@ KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
 PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
-SHELL_PATCH_RE = re.compile(r"^\s*(?:cd\s+(\S+)\s*&&\s*)?apply_patch\b")
+SHELL_PATCH_RE = re.compile(r"(?:^|[\s;&|(])apply_patch(?=\s|<|$)")
+CD_RE = re.compile(r"(?:^|[\s;&|(])cd\s+(?:--\s+)?('[^']*'|\"[^\"]*\"|[^\s;&|]+)")
+BODY_RE = re.compile(r"^\*\*\* Begin Patch$.*?^\*\*\* End Patch$", re.M | re.S)
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -413,16 +416,17 @@ def track_files(files, rec, at, cwd):
             parts = [c for c in (command if isinstance(command, list) else [command]) if isinstance(c, str)]
             workdir = args.get("workdir")
             if isinstance(workdir, str) and workdir:
-                cwd = os.path.join(cwd, workdir) if cwd else workdir
-            shell = SHELL_PATCH_RE.match(parts[-1]) if parts else None
+                cwd = into(cwd, workdir)
+            call = SHELL_PATCH_RE.search(parts[-1]) if parts else None
+            body = BODY_RE.search(parts[-1], call.end()) if call else None
             if payload["name"] == "apply_patch":
                 patch = args.get("input")
             elif len(parts) == 2 and parts[0] == "apply_patch":
                 patch = parts[1]
-            elif shell and "*** Begin Patch" in parts[-1]:
-                patch = parts[-1]
-                if shell.group(1):
-                    cwd = os.path.join(cwd, shell.group(1)) if cwd else shell.group(1)
+            elif body:
+                patch = body.group(0)
+                for cd in CD_RE.finditer(parts[-1], 0, call.start()):
+                    cwd = into(cwd, shlex.split(cd.group(1))[0])
     if not isinstance(patch, str):
         return
     last = None
@@ -433,6 +437,13 @@ def track_files(files, rec, at, cwd):
             touch(files, last, "deleted", at)
         touch(files, full, {"Add File": "created", "Update File": "edited", "Delete File": "deleted", "Move to": "created"}[match.group(1)], at)
         last = full
+
+
+def into(base, folder):
+    folder = os.path.expandvars(os.path.expanduser(folder))
+    if "$" in folder:
+        return base
+    return os.path.join(base, folder) if base else folder
 
 
 def touch(files, path, action, at):
