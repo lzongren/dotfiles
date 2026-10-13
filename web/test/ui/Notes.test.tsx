@@ -8,6 +8,9 @@ let failStatus = 500
 let failGets = 0
 const puts: Array<{ day: string; text: string }> = []
 
+const version = (text: string) => (text ? `h:${text}` : '')
+let getGate: Promise<void> | null = null
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
@@ -25,6 +28,8 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false })
   vi.setSystemTime(new Date(2026, 9, 13, 10, 0))
   localStorage.clear()
+  sessionStorage.clear()
+  getGate = null
   store = {}
   failPuts = 0
   failStatus = 500
@@ -38,17 +43,21 @@ beforeEach(() => {
         failPuts -= 1
         return json({ error: 'internal', message: failStatus === 413 ? 'request body too large' : 'disk full' }, failStatus)
       }
-      const { text } = JSON.parse(init.body as string) as { text: string }
+      const { text, base } = JSON.parse(init.body as string) as { text: string; base: string }
+      if (base !== version(store[day] ?? '')) {
+        return json({ error: 'conflict', message: 'the note changed elsewhere', text: store[day] ?? '', version: version(store[day] ?? '') }, 409)
+      }
       puts.push({ day, text })
       if (text.trim()) store[day] = text
       else delete store[day]
-      return json({ day, saved: true })
+      return json({ day, version: version(text) })
     }
+    if (getGate) await getGate
     if (failGets > 0) {
       failGets -= 1
       return json({ error: 'internal', message: 'could not read the note' }, 500)
     }
-    return json({ day, text: store[day] ?? '' })
+    return json({ day, text: store[day] ?? '', version: version(store[day] ?? '') })
   })
 })
 
@@ -142,13 +151,13 @@ describe('Notes', () => {
 
   it('restores a draft the page never got to save, and saves it', async () => {
     store['2026-10-13'] = 'old'
-    localStorage.setItem('devbox.notes.draft.2026-10-13', 'newer, typed before a reload')
+    sessionStorage.setItem('devbox.notes.draft.2026-10-13', JSON.stringify({ text: 'newer, typed before a reload', base: 'h:old' }))
     render(<Notes />)
     await settle()
     expect(pad()).toHaveValue('newer, typed before a reload')
     await settle()
     expect(store['2026-10-13']).toBe('newer, typed before a reload')
-    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
+    expect(sessionStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
   })
 
   it('does not retry a save the server refuses, and says why', async () => {
@@ -175,7 +184,72 @@ describe('Notes', () => {
     const attempts = failPuts
     await settle(30_000)
     expect(failPuts).toBe(attempts)
-    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBe('keep me')
+    expect(JSON.parse(sessionStorage.getItem('devbox.notes.draft.2026-10-13')!)).toEqual({ text: 'keep me', base: '' })
+  })
+
+  it('stays read-only until the day it shows has loaded', async () => {
+    store['2026-10-12'] = 'monday'
+    store['2026-10-13'] = 'today'
+    render(<Notes />)
+    await settle()
+    let release = () => undefined as void
+    getGate = new Promise<void>((r) => {
+      release = r
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
+    await settle(1000)
+    expect(pad()).toHaveAttribute('readonly')
+    fireEvent.change(pad(), { target: { value: 'today plus a stray key' } })
+    await settle(1000)
+    getGate = null
+    release()
+    await settle()
+    expect(pad()).toHaveValue('monday')
+    expect(puts).toEqual([])
+    expect(store['2026-10-12']).toBe('monday')
+  })
+
+  it('asks before overwriting a note that changed in another tab or editor', async () => {
+    store['2026-10-13'] = 'morning'
+    render(<Notes />)
+    await settle()
+    store['2026-10-13'] = 'morning\nedited in vim'
+    fireEvent.change(pad(), { target: { value: 'morning, from the browser' } })
+    await settle(700)
+    expect(store['2026-10-13']).toBe('morning\nedited in vim')
+    expect(screen.getByRole('status')).toHaveTextContent('changed elsewhere')
+    expect(pad()).toHaveAttribute('readonly')
+    fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }))
+    await settle()
+    expect(store['2026-10-13']).toBe('morning, from the browser')
+  })
+
+  it('can take the other version instead', async () => {
+    store['2026-10-13'] = 'v1'
+    render(<Notes />)
+    await settle()
+    store['2026-10-13'] = 'v2 from elsewhere'
+    fireEvent.change(pad(), { target: { value: 'v1 local' } })
+    await settle(700)
+    fireEvent.click(screen.getByRole('button', { name: 'Use saved' }))
+    await settle()
+    expect(pad()).toHaveValue('v2 from elsewhere')
+    expect(sessionStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
+    fireEvent.change(pad(), { target: { value: 'v2 from elsewhere, then mine' } })
+    await settle(700)
+    expect(store['2026-10-13']).toBe('v2 from elsewhere, then mine')
+  })
+
+  it('does not let a refused draft for another day hold up today', async () => {
+    sessionStorage.setItem('devbox.notes.draft.2026-10-01', JSON.stringify({ text: 'huge', base: '' }))
+    failPuts = 1
+    failStatus = 413
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: 'today still saves' } })
+    await settle(700)
+    expect(store['2026-10-13']).toBe('today still saves')
+    expect(shown()).toBe('saved')
   })
 
   it('keeps the day you cleared in reach of the arrows', async () => {

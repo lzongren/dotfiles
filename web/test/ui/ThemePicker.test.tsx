@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemePicker } from '../../src/components/ThemePicker'
 import type { GhosttyLook } from '../../src/shared/types'
-import { ghosttyLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
+import { applyLook, ghosttyLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
 
 const ansi = (c: string) => Array<string>(16).fill(c)
 const GHOSTTY: GhosttyLook = {
@@ -115,16 +115,33 @@ describe('ThemePicker', () => {
   })
 
   it('reads a percentage cell height as a line height, and never shrinks below 1', () => {
-    expect(ghosttyLook({ ...GHOSTTY, cellHeight: { value: 20, unit: '%' } }).lineHeight).toBe(1.2)
-    expect(ghosttyLook({ ...GHOSTTY, cellHeight: { value: -30, unit: '%' } }).lineHeight).toBe(1)
+    applyLook(ghosttyLook({ ...GHOSTTY, cellHeight: { value: 20, unit: '%' } }))
+    expect(terminalLook().lineHeight).toBe(1.2)
+    applyLook(ghosttyLook({ ...GHOSTTY, cellHeight: { value: -30, unit: '%' } }))
+    expect(terminalLook().lineHeight).toBe(1)
   })
 
   it('drops saved terminal settings xterm would reject, keeping the rest of the look', () => {
-    const look = { ...ghosttyLook(GHOSTTY), lineHeight: 0.8, padding: '8', minimumContrast: 40, fontSize: 'big' }
+    const look = {
+      ...ghosttyLook(GHOSTTY),
+      cellHeight: { value: 'tall', unit: 'px' },
+      padding: '8',
+      minimumContrast: 40,
+      fontSize: 'big',
+      fontFamily: 'JetBrains Mono',
+      cursorStyle: 'blinky',
+    }
     localStorage.setItem('devbox.look', JSON.stringify(look))
     const saved = savedLook()!
     expect(saved.palette).toEqual(GHOSTTY.dark.palette)
-    expect([saved.lineHeight, saved.padding, saved.minimumContrast, saved.fontSize]).toEqual([undefined, undefined, undefined, undefined])
+    expect([saved.cellHeight, saved.padding, saved.minimumContrast, saved.fontSize, saved.fontFamily, saved.cursorStyle]).toEqual(
+      Array(6).fill(undefined),
+    )
+    expect(() => applyLook(saved)).not.toThrow()
+  })
+
+  it('applies the same limits to a fresh Ghostty look as to a saved one', () => {
+    expect(ghosttyLook({ ...GHOSTTY, fontSize: 80, padding: [8, 250, 8, 10] })).not.toHaveProperty('fontSize')
   })
 
   it('puts padding, weight, line height, and contrast back when you leave the Ghostty theme', async () => {

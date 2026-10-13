@@ -115,6 +115,7 @@ export interface NoteDaysResponse {
 export interface NoteResponse {
   day: string
   text: string
+  version: string
 }
 
 export interface ThemeResponse {

@@ -37,9 +37,10 @@ describe('notes API', () => {
     })
 
   it('saves a day as a private markdown file and reads it back', async () => {
-    const put = await call('/2026-10-13', { method: 'PUT', body: { text: '- [ ] ship notes\n' } })
+    const put = await call('/2026-10-13', { method: 'PUT', body: { text: '- [ ] ship notes\n', base: '' } })
     expect(put.status).toBe(200)
-    expect(await (await call('/2026-10-13')).json()).toEqual({ day: '2026-10-13', text: '- [ ] ship notes\n' })
+    const { version } = (await put.json()) as { version: string }
+    expect(await (await call('/2026-10-13')).json()).toEqual({ day: '2026-10-13', text: '- [ ] ship notes\n', version })
     const file = path.join(notesDir, '2026-10-13.md')
     expect(readFileSync(file, 'utf8')).toBe('- [ ] ship notes\n')
     expect(statSync(file).mode & 0o777).toBe(0o600)
@@ -47,12 +48,20 @@ describe('notes API', () => {
   })
 
   it('lists the days that have notes, newest first, and forgets a day you clear', async () => {
-    await call('/2026-10-11', { method: 'PUT', body: { text: 'older' } })
+    const older = await call('/2026-10-11', { method: 'PUT', body: { text: 'older', base: '' } })
     expect(await (await call('')).json()).toEqual({ days: ['2026-10-13', '2026-10-11'] })
-    await call('/2026-10-11', { method: 'PUT', body: { text: '  \n' } })
+    const { version } = (await older.json()) as { version: string }
+    await call('/2026-10-11', { method: 'PUT', body: { text: '  \n', base: version } })
     expect(existsSync(path.join(notesDir, '2026-10-11.md'))).toBe(false)
     expect(await (await call('')).json()).toEqual({ days: ['2026-10-13'] })
-    expect(await (await call('/2026-01-01')).json()).toEqual({ day: '2026-01-01', text: '' })
+    expect(await (await call('/2026-01-01')).json()).toEqual({ day: '2026-01-01', text: '', version: '' })
+  })
+
+  it('refuses a write based on an older version and hands back what is there now', async () => {
+    const res = await call('/2026-10-13', { method: 'PUT', body: { text: 'from a stale tab', base: 'not-the-version' } })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({ error: 'conflict', text: '- [ ] ship notes\n' })
+    expect(readFileSync(path.join(notesDir, '2026-10-13.md'), 'utf8')).toBe('- [ ] ship notes\n')
   })
 
   it('reports a note it cannot read instead of passing it off as empty', async () => {
@@ -62,8 +71,9 @@ describe('notes API', () => {
 
   it('refuses days that are not dates, bodies without text, and writes from another origin', async () => {
     expect((await call('/today')).status).toBe(400)
-    expect((await call('/2026-10-13', { method: 'PUT', body: { text: 5 } })).status).toBe(400)
-    expect((await call('/2026-10-13', { method: 'PUT', body: { text: 'x' }, origin: 'https://evil.example' })).status).toBe(403)
+    expect((await call('/2026-10-13', { method: 'PUT', body: { text: 5, base: '' } })).status).toBe(400)
+    expect((await call('/2026-10-13', { method: 'PUT', body: { text: 'x' } })).status).toBe(400)
+    expect((await call('/2026-10-13', { method: 'PUT', body: { text: 'x', base: '' }, origin: 'https://evil.example' })).status).toBe(403)
     expect(readFileSync(path.join(notesDir, '2026-10-13.md'), 'utf8')).toBe('- [ ] ship notes\n')
   })
 })

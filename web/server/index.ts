@@ -137,17 +137,22 @@ export async function createApp(opts: AppOptions): Promise<App> {
         if (!DAY_RE.test(noteDay)) return sendJson(res, 400, { error: 'bad_day', message: 'day must be YYYY-MM-DD' })
         if (req.method === 'GET') {
           readNote(notesDir, noteDay)
-            .then((text) => sendJson(res, 200, { day: noteDay, text }))
+            .then((note) => sendJson(res, 200, { day: noteDay, ...note }))
             .catch(() => sendJson(res, 500, { error: 'internal', message: 'could not read the note' }))
           return
         }
         if (req.method === 'PUT') {
           readJson(req, 256 * 1024)
             .then(async (raw) => {
-              const text = (raw as { text?: unknown } | null)?.text
-              if (typeof text !== 'string') return sendJson(res, 400, { error: 'bad_request', message: 'text must be a string' })
-              await writeNote(notesDir, noteDay, text)
-              return sendJson(res, 200, { day: noteDay, saved: true })
+              const { text, base } = (raw ?? {}) as { text?: unknown; base?: unknown }
+              if (typeof text !== 'string' || typeof base !== 'string') {
+                return sendJson(res, 400, { error: 'bad_request', message: 'text and base must be strings' })
+              }
+              const result = await writeNote(notesDir, noteDay, text, base)
+              if (!result.saved) {
+                return sendJson(res, 409, { error: 'conflict', message: 'the note changed elsewhere', text: result.text, version: result.version })
+              }
+              return sendJson(res, 200, { day: noteDay, version: result.version })
             })
             .catch((err: unknown) => {
               if (err instanceof BodyError) {

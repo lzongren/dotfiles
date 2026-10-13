@@ -43,7 +43,7 @@ export interface Look {
   minimumContrast?: number
   boldIsBright?: boolean
   thicken?: boolean
-  lineHeight?: number
+  cellHeight?: GhosttyLook['cellHeight']
   padding?: [number, number, number, number]
 }
 
@@ -112,7 +112,7 @@ export const PRESETS: Look[] = [
 ]
 
 export function ghosttyLook(g: GhosttyLook): Look {
-  return {
+  return sane({
     id: 'ghostty',
     label: `Ghostty · ${g.light ? `${g.dark.name} / ${g.light.name}` : g.dark.name}`,
     palette: g.dark.palette,
@@ -124,9 +124,9 @@ export function ghosttyLook(g: GhosttyLook): Look {
     minimumContrast: g.minimumContrast,
     boldIsBright: g.boldIsBright,
     thicken: g.fontThicken,
-    lineHeight: cellLineHeight(g.cellHeight, g.fontSize ?? TERMINAL_OPTIONS.fontSize),
+    cellHeight: g.cellHeight,
     padding: g.padding,
-  }
+  })
 }
 
 function cellLineHeight(cell: GhosttyLook['cellHeight'], fontSize: number): number | undefined {
@@ -251,7 +251,7 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
     drawBoldTextInBrightColors: look.boldIsBright ?? true,
     fontWeight: look.thicken ? 500 : 'normal',
     fontWeightBold: look.thicken ? 800 : 'bold',
-    lineHeight: look.lineHeight ?? 1,
+    lineHeight: cellLineHeight(look.cellHeight, look.fontSize ?? TERMINAL_OPTIONS.fontSize) ?? 1,
   }
   for (const listener of listeners) listener()
 }
@@ -271,13 +271,26 @@ function validPalette(p: unknown): boolean {
   )
 }
 
-function sane({ fontSize, lineHeight, padding, minimumContrast, ...rest }: Look): Look {
+function sane(look: Look): Look {
   const between = (n: unknown, lo: number, hi: number): n is number => typeof n === 'number' && n >= lo && n <= hi
+  const flag = (v: unknown): v is boolean => typeof v === 'boolean'
+  const { id, label, palette, lightPalette, fontFamily, fontSize, cursorStyle, cursorBlink } = look
+  const { minimumContrast, boldIsBright, thicken, cellHeight, padding } = look
   return {
-    ...rest,
+    id,
+    label: typeof label === 'string' ? label : 'Ghostty',
+    ...(validPalette(palette) ? { palette } : {}),
+    ...(lightPalette !== undefined && validPalette(lightPalette) ? { lightPalette } : {}),
+    ...(Array.isArray(fontFamily) && fontFamily.length <= 8 && fontFamily.every((f) => typeof f === 'string') ? { fontFamily } : {}),
     ...(between(fontSize, 6, 72) ? { fontSize } : {}),
-    ...(between(lineHeight, 1, 4) ? { lineHeight } : {}),
+    ...(cursorStyle === 'block' || cursorStyle === 'bar' || cursorStyle === 'underline' ? { cursorStyle } : {}),
+    ...(flag(cursorBlink) ? { cursorBlink } : {}),
     ...(between(minimumContrast, 1, 21) ? { minimumContrast } : {}),
+    ...(flag(boldIsBright) ? { boldIsBright } : {}),
+    ...(flag(thicken) ? { thicken } : {}),
+    ...(cellHeight && between(cellHeight.value, -100, 100) && (cellHeight.unit === 'px' || cellHeight.unit === '%')
+      ? { cellHeight }
+      : {}),
     ...(Array.isArray(padding) && padding.length === 4 && padding.every((n) => Number.isInteger(n) && between(n, 0, 200))
       ? { padding }
       : {}),
