@@ -121,13 +121,16 @@ export function Notes() {
     setText(value)
     textRef.current = value
   }
-  const role = (next: boolean) => {
+  const role = (next: boolean, jump = true) => {
     editorRef.current = next
     setEditor(next)
-    if (!next) return
+    if (!next) {
+      if (document.activeElement === area.current) area.current?.blur()
+      return
+    }
     const left = draftDays()
     setDrafts(left)
-    if (left[0]) setDay(left[0])
+    if (jump && left[0]) setDay(left[0])
   }
   const setDraft = (next: Draft | null) => {
     draftRef.current = next
@@ -203,9 +206,9 @@ export function Notes() {
     let live = true
     let release = () => undefined as void
     let cancel = () => undefined as void
-    const hold = () => {
+    const hold = (jump: boolean) => {
       if (!live) return Promise.resolve()
-      role(true)
+      role(true, jump)
       return new Promise<void>((resolve) => {
         release = resolve
       })
@@ -219,7 +222,7 @@ export function Notes() {
       }
       locks
         .request(LOCK, stop ? { ...options, signal: stop.signal } : options, (lock) => {
-          if (lock) return hold()
+          if (lock) return hold(!options.steal)
           if (live) {
             role(false)
             ask({})
@@ -228,9 +231,12 @@ export function Notes() {
         })
         .catch((err: unknown) => {
           if (ours || !live) return
-          const stolen = err instanceof DOMException && err.name === 'AbortError'
-          role(!stolen)
-          if (stolen) ask({})
+          if (!(err instanceof DOMException && err.name === 'AbortError')) return role(true)
+          void save().finally(() => {
+            if (!live) return
+            role(false)
+            ask({})
+          })
         })
     }
     take.current = () => {
@@ -425,7 +431,6 @@ export function Notes() {
             onBlur={() => void save()}
             onKeyDown={(e) => {
               if (e.key === 'Escape') toggleRef.current?.focus()
-              else take.current()
             }}
           />
           <footer className="notes-foot">

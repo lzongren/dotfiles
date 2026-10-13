@@ -413,7 +413,7 @@ describe('Notes', () => {
     expect(shown()).toBe('saved')
   })
 
-  it('hands the pad to the tab you type in, and steps down without saving when another tab takes it', async () => {
+  it('hands the pad to the tab you type in, and saves what it holds before another tab takes it', async () => {
     store['2026-10-13'] = 'start'
     const locks = fakeLocks()
     const them = locks.other()
@@ -428,25 +428,56 @@ describe('Notes', () => {
     const back = locks.other({ steal: true })
     await settle()
     expect(pad()).toHaveAttribute('readonly')
+    expect(puts).toEqual([{ day: '2026-10-13', text: 'mine' }])
     await settle(700)
-    expect(puts).toEqual([])
+    expect(puts).toHaveLength(1)
     act(() => back.release())
     await settle()
     expect(pad()).not.toHaveAttribute('readonly')
     expect(store['2026-10-13']).toBe('mine')
   })
 
-  it('takes the pad when typing starts in a tab that lost it while focused', async () => {
+  it('lets go of focus when another tab takes the pad, so the next click takes it back', async () => {
     const locks = fakeLocks()
     render(<Notes />)
     await settle()
+    act(() => pad().focus())
     const them = locks.other({ steal: true })
     await settle()
     expect(pad()).toHaveAttribute('readonly')
-    fireEvent.keyDown(pad(), { key: 'a' })
+    expect(pad()).not.toHaveFocus()
+    act(() => pad().focus())
     await settle()
     expect(them.lost()).toBe(true)
     expect(pad()).not.toHaveAttribute('readonly')
+  })
+
+  it('stays on the day you clicked into when taking the pad, even with an older draft stored', async () => {
+    store['2026-10-13'] = 'today'
+    fakeLocks().other()
+    render(<Notes />)
+    await settle()
+    localStorage.setItem('devbox.notes.draft.2026-10-11', JSON.stringify({ text: 'stuck', base: '' }))
+    act(() => pad().focus())
+    await settle()
+    expect(pad()).not.toHaveAttribute('readonly')
+    expect(screen.getByRole('button', { name: /^Notes · Today/ })).toBeInTheDocument()
+    expect(pad()).toHaveValue('today')
+  })
+
+  it('saves a draft the browser could not store before handing the pad over', async () => {
+    store['2026-10-13'] = 'start'
+    const locks = fakeLocks()
+    render(<Notes />)
+    await settle()
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    fireEvent.change(pad(), { target: { value: 'only in memory' } })
+    locks.other({ steal: true })
+    await settle()
+    setItem.mockRestore()
+    expect(store['2026-10-13']).toBe('only in memory')
   })
 
   it('on taking over, opens the oldest draft another tab left and saves it', async () => {
