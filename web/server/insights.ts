@@ -25,7 +25,8 @@ function artifact(raw: unknown): Artifact | null {
   const label = str(a.label, 24)
   if (!url || !label || !/^https?:\/\//.test(url)) return null
   const action = str(a.action, 24)
-  return { label, url, at: num(a.at) ?? 0, hits: num(a.hits) ?? 1, said: a.said === true, ...(action ? { action } : {}) }
+  const at = num(a.at) ?? 0
+  return { label, url, at, first: num(a.first) ?? at, hits: num(a.hits) ?? 1, said: a.said === true, ...(action ? { action } : {}) }
 }
 
 function insight(raw: unknown): AgentInsight | null {
@@ -53,7 +54,7 @@ function insight(raw: unknown): AgentInsight | null {
     const value = str(r[key], max)
     if (value) Object.assign(out, { [key]: value })
   }
-  for (const key of ['since', 'askAt', 'summaryAt'] as const) {
+  for (const key of ['since', 'askAt', 'summaryAt', 'turnAt'] as const) {
     const value = num(r[key])
     if (value !== undefined) out[key] = value
   }
@@ -77,7 +78,7 @@ export function probeScript(source: string, artifacts: ArtifactPattern[]): strin
   return `ARGS = __import__("json").loads(${JSON.stringify(JSON.stringify({ artifacts }))})\n${source}`
 }
 
-export function createInsightsSource(runner: () => Promise<RunResult>, ttlMs = 15000): () => Promise<InsightsResponse> {
+export function createInsightsSource(runner: () => Promise<RunResult>, ttlMs = 10000): () => Promise<InsightsResponse> {
   let cached: InsightsResponse | null = null
   let inflight: Promise<InsightsResponse> | null = null
   return () => {

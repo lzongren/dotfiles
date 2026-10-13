@@ -1,6 +1,17 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useReducer, useRef, useState } from 'react'
 import type { AgentInsight, Artifact, Session } from '../shared/types'
-import { artifactName, displayTitle, laneOf, modelName, projectOf, rankArtifacts, unread, type Lane } from '../insights'
+import {
+  artifactName,
+  changeMark,
+  displayTitle,
+  isFresh,
+  laneOf,
+  ledger,
+  modelName,
+  projectOf,
+  rankArtifacts,
+  type Lane,
+} from '../insights'
 import { ago } from '../time'
 import { headline } from './SessionList'
 
@@ -11,11 +22,20 @@ interface Row {
   fresh: boolean
 }
 
+const AUTO_SEEN_MS = 2000
 const LANES: Array<{ lane: Lane; title: string; empty: string }> = [
-  { lane: 'needs', title: 'Needs you', empty: 'Nothing is waiting on you.' },
+  { lane: 'blocked', title: 'Blocked on you', empty: 'No agent is waiting on you.' },
+  { lane: 'ready', title: 'Ready to review', empty: 'Nothing new since you last looked.' },
   { lane: 'working', title: 'Working', empty: 'No agent is mid-turn.' },
   { lane: 'recent', title: 'Recent', empty: 'Nothing else active this week.' },
 ]
+const ORDER: Record<Lane, (a: Row, b: Row) => number> = {
+  blocked: (a, b) => changeMark(a.session, a.insight) - changeMark(b.session, b.insight),
+  ready: (a, b) => changeMark(b.session, b.insight) - changeMark(a.session, a.insight),
+  working: (a, b) => changeMark(a.session, a.insight) - changeMark(b.session, b.insight),
+  recent: (a, b) => b.session.activityEpoch - a.session.activityEpoch,
+  parked: (a, b) => b.session.activityEpoch - a.session.activityEpoch,
+}
 
 function stateLabel(row: Row): { text: string; tone: string } {
   const i = row.insight
@@ -27,11 +47,45 @@ function stateLabel(row: Row): { text: string; tone: string } {
   return { text: row.session.cmd || 'shell', tone: 'idle' }
 }
 
-function changedAt(row: Row): number {
-  return row.insight?.since ?? row.insight?.summaryAt ?? row.session.activityEpoch
+function ageOf(row: Row): number {
+  return row.lane === 'recent' || row.lane === 'parked' ? row.session.activityEpoch : changeMark(row.session, row.insight)
 }
 
-function Card({ row, now, selected, onSelect }: { row: Row; now: number; selected: boolean; onSelect: () => void }) {
+function layout(rows: Row[]): Record<Lane, string[]> {
+  const out: Record<Lane, string[]> = { blocked: [], ready: [], working: [], recent: [], parked: [] }
+  for (const lane of Object.keys(out) as Lane[]) {
+    out[lane] = rows
+      .filter((r) => r.lane === lane)
+      .sort((a, b) => ORDER[lane](a, b) || a.session.name.localeCompare(b.session.name))
+      .map((r) => r.session.name)
+  }
+  return out
+}
+
+function hold(held: Record<Lane, string[]>, live: Record<Lane, string[]>): Record<Lane, string[]> {
+  const exists = new Set(Object.values(live).flat())
+  const placed = new Set(Object.values(held).flat())
+  const out = { ...held }
+  for (const lane of Object.keys(live) as Lane[]) {
+    out[lane] = [...held[lane].filter((n) => exists.has(n)), ...live[lane].filter((n) => !placed.has(n))]
+  }
+  return out
+}
+
+function Card({
+  row,
+  now,
+  selected,
+  tabbable,
+  onSelect,
+}: {
+  row: Row
+  now: number
+  selected: boolean
+  tabbable: boolean
+  onSelect: () => void
+}) {
+  const id = useId()
   const { session, insight } = row
   const state = stateLabel(row)
   const title = displayTitle(headline(session), insight)
@@ -43,15 +97,26 @@ function Card({ row, now, selected, onSelect }: { row: Row; now: number; selecte
         type="button"
         className="card"
         data-session={session.name}
-        aria-current={selected ? 'true' : undefined}
+        aria-pressed={selected}
+        aria-labelledby={`${id}-title`}
+        aria-describedby={insight?.summary ? `${id}-state ${id}-summary` : `${id}-state`}
+        tabIndex={tabbable ? 0 : -1}
         onClick={onSelect}
       >
         <span className="card-top">
-          <span className={`chip chip-${state.tone}`}>{state.text}</span>
-          <span className="card-title">{title || session.name}</span>
-          <span className="card-age">{ago(now, changedAt(row))}</span>
+          <span id={`${id}-state`} className={`chip chip-${state.tone}`}>
+            {state.text}
+          </span>
+          <span id={`${id}-title`} className="card-title">
+            {title || session.name}
+          </span>
+          <span className="card-age">{ago(now, ageOf(row))}</span>
         </span>
-        {insight?.summary ? <span className="card-summary">{insight.summary}</span> : null}
+        {insight?.summary ? (
+          <span id={`${id}-summary`} className="card-summary">
+            {insight.summary}
+          </span>
+        ) : null}
         <span className="card-meta">
           {title ? <span>{session.name}</span> : null}
           {insight?.tasks ? (
@@ -72,18 +137,31 @@ function Card({ row, now, selected, onSelect }: { row: Row; now: number; selecte
   )
 }
 
-function ArtifactList({ artifacts, now }: { artifacts: Array<Artifact & { session?: string; key?: boolean }>; now: number }) {
+function ArtifactList({
+  artifacts,
+  now,
+}: {
+  artifacts: Array<Artifact & { session?: string; key?: boolean }>
+  now: number
+}) {
   return (
     <ul className="artifact-list">
       {artifacts.map((a) => (
-        <li key={`${a.session ?? ''}${a.url}`} data-key={a.key ? 'true' : undefined}>
+        <li key={`${a.session ?? ''}${a.url}`}>
           <a href={a.url} target="_blank" rel="noreferrer noopener">
             {artifactName(a)}
+            {a.key ? (
+              <span className="artifact-key" title="named in the summary">
+                {' '}
+                ★
+              </span>
+            ) : null}
+            <span className="visually-hidden">{a.key ? ' (named in the summary)' : ''} (opens in a new tab)</span>
           </a>
-          {a.action ? <span className="artifact-action">{a.action}</span> : null}
-          {a.hits > 1 ? <span className="artifact-action">×{a.hits}</span> : null}
+          {a.action ? <span className="artifact-note">{a.action}</span> : null}
+          {a.hits > 1 ? <span className="artifact-note">×{a.hits}</span> : null}
           {a.session ? <span className="artifact-session">{a.session}</span> : null}
-          <span className="artifact-age">{ago(now, a.at)}</span>
+          <span className="artifact-note">{ago(now, a.session ? a.first : a.at)}</span>
         </li>
       ))}
     </ul>
@@ -115,7 +193,7 @@ function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: (
       <dl className="facts">
         <dt>State</dt>
         <dd>
-          <span className={`chip chip-${state.tone}`}>{state.text}</span> {ago(now, changedAt(row))} ago
+          <span className={`chip chip-${state.tone}`}>{state.text}</span> {ago(now, changeMark(session, insight))} ago
         </dd>
         {insight?.firstAsk ? (
           <>
@@ -135,7 +213,7 @@ function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: (
         {insight?.summary ? (
           <>
             <dt>Where it stands</dt>
-            <dd className="detail-summary">
+            <dd>
               {insight.summary}
               {insight.summaryAt ? <span className="when"> · {ago(now, insight.summaryAt)} ago</span> : null}
             </dd>
@@ -145,7 +223,8 @@ function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: (
           <>
             <dt>Tasks</dt>
             <dd>
-              <progress max={tasks.total} value={tasks.done} aria-label="tasks done" /> {tasks.done}/{tasks.total}
+              <progress max={tasks.total} value={tasks.done} aria-label={`${tasks.done} of ${tasks.total} tasks done`} />{' '}
+              {tasks.done}/{tasks.total}
               {tasks.current ? <span className="when"> · now: {tasks.current}</span> : null}
             </dd>
           </>
@@ -169,11 +248,19 @@ function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: (
   )
 }
 
+function ignoredTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest('input, textarea, select, [contenteditable], .terminals, a, summary, .detail-actions') !== null
+  )
+}
+
 export function Overview({
   sessions,
   insights,
   now,
   seenAt,
+  visible = true,
   notice,
   onOpen,
   onSeen,
@@ -182,46 +269,92 @@ export function Overview({
   insights: Map<string, AgentInsight>
   now: number
   seenAt: (name: string) => number
+  visible?: boolean
   notice?: string | null
   onOpen: (name: string) => void
-  onSeen: (name: string) => void
+  onSeen: (names: string[]) => void
 }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [parkedOpen, setParkedOpen] = useState(false)
-  const rootRef = useRef<HTMLElement | null>(null)
-  const moved = useRef(false)
-  useEffect(() => {
-    if (!moved.current || selected === null) return
-    moved.current = false
-    rootRef.current?.querySelector<HTMLElement>(`.card[data-session="${CSS.escape(selected)}"]`)?.focus()
-  }, [selected])
-  const rows: Row[] = sessions.map((session) => {
-    const insight = insights.get(session.name)
-    const seen = seenAt(session.name)
-    return {
-      session,
-      insight,
-      lane: laneOf(session, insight, seen, now),
-      fresh: insight?.state === 'ready' && unread(insight, seen),
-    }
-  })
-  const byLane = (lane: Lane) => rows.filter((r) => r.lane === lane)
-  const needs = byLane('needs').sort((a, b) => changedAt(a) - changedAt(b) || a.session.name.localeCompare(b.session.name))
-  const working = byLane('working').sort((a, b) => changedAt(a) - changedAt(b) || a.session.name.localeCompare(b.session.name))
-  const recent = byLane('recent').sort((a, b) => b.session.activityEpoch - a.session.activityEpoch)
-  const parked = byLane('parked').sort((a, b) => b.session.activityEpoch - a.session.activityEpoch)
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  const lanesRef = useRef<HTMLDivElement | null>(null)
+  const pointerInside = useRef(false)
+  const held = useRef<Record<Lane, string[]> | null>(null)
+  const refocus = useRef(false)
+  const keys = useRef<(event: KeyboardEvent) => void>(() => undefined)
+
+  const rows = new Map<string, Row>(
+    sessions.map((session) => {
+      const insight = insights.get(session.name)
+      const seen = seenAt(session.name)
+      return [
+        session.name,
+        { session, insight, lane: laneOf(session, insight, seen, now), fresh: isFresh(session, insight, seen) },
+      ]
+    }),
+  )
+  const live = layout([...rows.values()])
+  const holding = pointerInside.current || (lanesRef.current?.contains(document.activeElement) ?? false)
+  const placed = holding && held.current ? hold(held.current, live) : live
+  if (!holding) held.current = live
+  const lane = (l: Lane) => placed[l].map((n) => rows.get(n)).filter((r): r is Row => r !== undefined)
   const groups = new Map<string, Row[]>()
-  for (const row of recent) {
+  for (const row of lane('recent')) {
     const key = projectOf(row.session.path)
     groups.set(key, [...(groups.get(key) ?? []), row])
   }
-  const lanes: Record<Lane, Row[]> = { needs, working, recent: [...groups.values()].flat(), parked }
-  const visible = [...needs, ...working, ...lanes.recent, ...(parkedOpen ? parked : [])].map((r) => r.session.name)
-  const current = rows.find((r) => r.session.name === selected) ?? null
-  const ledger = rows
-    .flatMap((r) => (r.insight?.artifacts ?? []).filter((a) => a.said).map((a) => ({ ...a, session: r.session.name })))
-    .sort((a, b) => b.at - a.at)
-    .slice(0, 12)
+  const order = [
+    ...lane('blocked'),
+    ...lane('ready'),
+    ...lane('working'),
+    ...[...groups.values()].flat(),
+    ...(parkedOpen ? lane('parked') : []),
+  ].map((r) => r.session.name)
+  const current = selected === null ? null : (rows.get(selected) ?? null)
+  const tabStop = current && order.includes(current.session.name) ? current.session.name : order[0]
+  const readyNames = lane('ready')
+    .filter((r) => r.fresh)
+    .map((r) => r.session.name)
+
+  useEffect(() => {
+    if (!refocus.current || selected === null) return
+    refocus.current = false
+    lanesRef.current?.querySelector<HTMLElement>(`.card[data-session="${CSS.escape(selected)}"]`)?.focus()
+  })
+
+  const currentName = current?.session.name
+  const currentFresh = current?.fresh === true
+  useEffect(() => {
+    if (!visible || !currentFresh || currentName === undefined) return
+    const timer = setTimeout(() => onSeen([currentName]), AUTO_SEEN_MS)
+    return () => clearTimeout(timer)
+  }, [visible, currentName, currentFresh, onSeen])
+
+  keys.current = (event: KeyboardEvent) => {
+    if (!visible || event.metaKey || event.ctrlKey || event.altKey || ignoredTarget(event.target)) return
+    const index = selected === null ? -1 : order.indexOf(selected)
+    if (event.key === 'j' || event.key === 'k') {
+      const next = order[Math.min(order.length - 1, Math.max(0, index + (event.key === 'j' ? 1 : -1)))]
+      if (!next) return
+      refocus.current = true
+      setSelected(next)
+    } else if (event.key === 'Enter' && !event.repeat && current?.session.attachable) {
+      const onCard = event.target instanceof Element && event.target.closest('.card') !== null
+      if (!onCard && event.target !== document.body) return
+      onOpen(current.session.name)
+    } else if (event.key === 'e' && current) {
+      refocus.current = true
+      onSeen([current.session.name])
+    } else {
+      return
+    }
+    event.preventDefault()
+  }
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => keys.current(event)
+    document.addEventListener('keydown', listener)
+    return () => document.removeEventListener('keydown', listener)
+  }, [])
 
   const card = (row: Row) => (
     <Card
@@ -229,42 +362,45 @@ export function Overview({
       row={row}
       now={now}
       selected={row.session.name === selected}
+      tabbable={row.session.name === tabStop}
       onSelect={() => setSelected(row.session.name)}
     />
   )
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.target instanceof HTMLElement && event.target.closest('a, input, textarea, select, summary')) return
-    const index = selected === null ? -1 : visible.indexOf(selected)
-    if (event.key === 'j' || event.key === 'k') {
-      const next = visible[Math.min(visible.length - 1, Math.max(0, index + (event.key === 'j' ? 1 : -1)))]
-      if (!next) return
-      moved.current = true
-      setSelected(next)
-    } else if (
-      event.key === 'Enter' &&
-      current?.session.attachable &&
-      (event.target as HTMLElement).closest('.card')?.getAttribute('data-session') === current.session.name
-    ) {
-      onOpen(current.session.name)
-    } else if (event.key === 'e' && current) {
-      onSeen(current.session.name)
-    } else {
-      return
-    }
-    event.preventDefault()
-  }
+  const artifacts = ledger([...rows.values()].map((r) => ({ name: r.session.name, artifacts: r.insight?.artifacts ?? [] })))
 
   return (
-    <section ref={rootRef} className="overview" aria-label="overview" tabIndex={-1} onKeyDown={onKeyDown}>
-      <div className="lanes">
-        {notice ? <p className="overview-notice">{notice}</p> : null}
-        {LANES.map(({ lane, title, empty }) => (
-          <section key={lane} className="lane" aria-labelledby={`lane-${lane}`}>
-            <h2 id={`lane-${lane}`} className="lane-title">
-              {title} <span className="lane-count">{lanes[lane].length}</span>
-            </h2>
-            {lanes[lane].length === 0 ? <p className="lane-empty">{empty}</p> : null}
-            {lane === 'recent' ? (
+    <section className="overview" aria-label="overview">
+      <div
+        ref={lanesRef}
+        className="lanes"
+        onMouseEnter={() => {
+          pointerInside.current = true
+        }}
+        onMouseLeave={() => {
+          pointerInside.current = false
+          rerender()
+        }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) rerender()
+        }}
+      >
+        <p className="overview-notice" role="status" hidden={!notice}>
+          {notice}
+        </p>
+        {LANES.map(({ lane: l, title, empty }) => (
+          <section key={l} className="lane" aria-labelledby={`lane-${l}`}>
+            <div className="lane-head">
+              <h2 id={`lane-${l}`} className="lane-title">
+                {title} <span className="lane-count">{placed[l].length}</span>
+              </h2>
+              {l === 'ready' && readyNames.length > 1 ? (
+                <button type="button" className="lane-action" onClick={() => onSeen(readyNames)}>
+                  Mark all seen
+                </button>
+              ) : null}
+            </div>
+            {placed[l].length === 0 ? <p className="lane-empty">{empty}</p> : null}
+            {l === 'recent' ? (
               [...groups.entries()].map(([project, items]) => (
                 <div key={project} className="group">
                   <h3 className="group-title">{project}</h3>
@@ -272,17 +408,21 @@ export function Overview({
                 </div>
               ))
             ) : (
-              <ul className="cards">{lanes[lane].map(card)}</ul>
+              <ul className="cards">{lane(l).map(card)}</ul>
             )}
           </section>
         ))}
-        {parked.length > 0 ? (
-          <details className="lane parked" open={parkedOpen} onToggle={(e) => setParkedOpen(e.currentTarget.open)}>
-            <summary className="lane-title">
-              Parked · idle over a week <span className="lane-count">{parked.length}</span>
-            </summary>
-            <ul className="cards">{parked.map(card)}</ul>
-          </details>
+        {placed.parked.length > 0 ? (
+          <section className="lane" aria-labelledby="lane-parked">
+            <details open={parkedOpen} onToggle={(e) => setParkedOpen(e.currentTarget.open)}>
+              <summary className="parked-toggle">
+                <h2 id="lane-parked" className="lane-title">
+                  Parked · idle over a week <span className="lane-count">{placed.parked.length}</span>
+                </h2>
+              </summary>
+              <ul className="cards">{lane('parked').map(card)}</ul>
+            </details>
+          </section>
         ) : null}
       </div>
       <aside className="detail" aria-label="session details">
@@ -291,13 +431,14 @@ export function Overview({
             row={current}
             now={now}
             onOpen={() => onOpen(current.session.name)}
-            onSeen={() => onSeen(current.session.name)}
+            onSeen={() => onSeen([current.session.name])}
           />
         ) : (
           <div className="detail-body">
             <h2>Latest artifacts</h2>
-            {ledger.length > 0 ? (
-              <ArtifactList artifacts={ledger} now={now} />
+            {selected !== null ? <p className="lane-empty">{selected} has ended.</p> : null}
+            {artifacts.length > 0 ? (
+              <ArtifactList artifacts={artifacts} now={now} />
             ) : (
               <p className="lane-empty">No pull requests or reviews seen yet.</p>
             )}

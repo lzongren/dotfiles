@@ -28,7 +28,7 @@ describe('parseInsights', () => {
       waitingFor: 'permission prompt',
       title: 'Fix it',
       tasks: { done: 1, total: 2, current: 'Write' },
-      artifacts: [{ label: 'PR', url: 'https://github.com/o/r/pull/1', at: 5, hits: 1, said: false, action: 'created' }],
+      artifacts: [{ label: 'PR', url: 'https://github.com/o/r/pull/1', at: 5, first: 5, hits: 1, said: false, action: 'created' }],
       commits: 2,
     })
   })

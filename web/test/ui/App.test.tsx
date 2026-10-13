@@ -138,7 +138,7 @@ describe('App', () => {
       title: 'Fix flaky retry test',
       summary: 'Fix is up as PR 31; waiting on CI.',
       artifacts: [
-        { label: 'PR', url: 'https://github.com/o/r/pull/31', at: NOW_EPOCH - 200, hits: 2, said: true, action: 'created' },
+        { label: 'PR', url: 'https://github.com/o/r/pull/31', at: NOW_EPOCH - 200, first: NOW_EPOCH - 300, hits: 2, said: true, action: 'created' },
       ],
       commits: 1,
     }
@@ -147,14 +147,30 @@ describe('App', () => {
     render(<App />)
     await flush()
     expect(sidebar().getByRole('button', { name: /cc-atx/ })).toHaveTextContent('waiting')
-    const needs = within(screen.getByRole('region', { name: /Needs you/ }))
+    const needs = within(screen.getByRole('region', { name: /Blocked on you/ }))
     fireEvent.click(needs.getByRole('button', { name: /Fix flaky retry test/ }))
     const details = within(screen.getByRole('article', { name: 'cc-atx details' }))
     expect(details.getByText('Fix is up as PR 31; waiting on CI.', { exact: false })).toBeInTheDocument()
-    expect(details.getByRole('link', { name: 'PR #31' })).toHaveAttribute('href', 'https://github.com/o/r/pull/31')
+    expect(details.getByRole('link', { name: /^PR #31/ })).toHaveAttribute('href', 'https://github.com/o/r/pull/31')
     fireEvent.click(details.getByRole('button', { name: 'Open terminal' }))
     expect(screen.getByTestId('term-cc-atx')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'overview', hidden: true })).not.toBeVisible()
+  })
+
+  it('counts a turn that finished while you watched it in the terminal as seen', async () => {
+    const turn = (turnAt: number): AgentInsight => ({ session: 'cc-atx', agent: 'claude', state: 'ready', turnAt, title: 'Fix it', artifacts: [], commits: 0 })
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    insightsMock.mockImplementationOnce(async () => response({ fetchedAt: Date.now(), agents: [turn(NOW_EPOCH - 60)] }))
+    insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [turn(NOW_EPOCH - 5)] }))
+    render(<App />)
+    await flush()
+    expect(within(screen.getByRole('region', { name: /Ready to review/ })).getByRole('button', { name: 'Fix it' })).toBeInTheDocument()
+    fireEvent.click(sidebar().getByRole('button', { name: /cc-atx/ }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15100)
+    })
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }))
+    expect(within(screen.getByRole('region', { name: /Ready to review/ })).queryByRole('button', { name: 'Fix it' })).toBeNull()
   })
 
   it('keeps the overview usable when agent details fail, and says so', async () => {
