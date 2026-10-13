@@ -5,6 +5,8 @@ import { TerminalPane } from './Terminal'
 
 const NOTE_MS = 8000
 
+type UploadJob = { current: string; files: File[]; placed: string[]; problems: string[] }
+
 const carriesFiles = (event: { dataTransfer: DataTransfer | null }) => event.dataTransfer?.types.includes('Files') ?? false
 
 export function TerminalTabs({
@@ -23,7 +25,7 @@ export function TerminalTabs({
   const [over, setOver] = useState<string | null>(null)
   const [notes, setNotes] = useState<Record<string, string>>({})
   const timers = useRef(new Map<string, number>())
-  const jobs = useRef(new Map<string, { current: string; files: File[]; placed: string[]; problems: string[] }>())
+  const jobs = useRef(new Map<string, UploadJob>())
   const alive = useRef(true)
 
   useEffect(() => {
@@ -51,32 +53,38 @@ export function TerminalTabs({
     if (!sticky) timers.current.set(tab, window.setTimeout(() => setNotes((n) => ({ ...n, [tab]: '' })), NOTE_MS))
   }
 
-  const progress = (tab: string, job: { current: string; files: File[] }) =>
+  const progress = (tab: string, job: UploadJob) =>
     note(tab, `Copying ${job.current}…${job.files.length ? ` (${job.files.length} more)` : ''}`, true)
 
   const enqueue = (tab: string, files: File[], folders: number) => {
     const running = jobs.current.get(tab)
-    const job = running ?? { current: '', files: [], placed: [], problems: [] }
+    const job: UploadJob = running ?? { current: '', files: [], placed: [], problems: [] }
     job.files.push(...files)
     if (folders) job.problems.push(`${folders === 1 ? 'a folder' : `${folders} folders`} skipped, drop files instead`)
     if (running) return progress(tab, job)
     jobs.current.set(tab, job)
     void (async () => {
-      for (let file = job.files.shift(); file && alive.current; file = job.files.shift()) {
-        job.current = file.name
-        if (file.size > UPLOAD_MAX) {
-          job.problems.push(`${file.name} is ${UPLOAD_TOO_LARGE}`)
-          continue
+      try {
+        for (let file = job.files.shift(); file && alive.current; file = job.files.shift()) {
+          job.current = file.name
+          if (file.size > UPLOAD_MAX) {
+            job.problems.push(`${file.name} is ${UPLOAD_TOO_LARGE}`)
+            continue
+          }
+          progress(tab, job)
+          const result = await uploadFile(tab, file)
+          if (result.kind === 'ok' && typeof result.data.path === 'string') job.placed.push(result.data.path)
+          else job.problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.kind === 'ok' ? 'unexpected reply' : result.message}`)
         }
-        progress(tab, job)
-        const result = await uploadFile(tab, file)
-        if (result.kind === 'ok') job.placed.push(result.data.path)
-        else job.problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.message}`)
+      } catch {
+        job.problems.push(`${job.current}: upload failed`)
+      } finally {
+        jobs.current.delete(tab)
+        const { placed } = job
+        const folders = new Set(placed.map((p) => p.slice(0, p.lastIndexOf('/'))))
+        const done = placed.length === 1 ? `Copied to ${placed[0]}` : placed.length ? `Copied ${placed.length} files${folders.size === 1 ? ` to ${[...folders][0]}` : ''}` : ''
+        note(tab, [done, ...job.problems].filter(Boolean).join(' · '))
       }
-      jobs.current.delete(tab)
-      const { placed } = job
-      const done = placed.length === 1 ? `Copied to ${placed[0]}` : placed.length ? `Copied ${placed.length} files to ${placed[0].slice(0, placed[0].lastIndexOf('/'))}` : ''
-      note(tab, [done, ...job.problems].filter(Boolean).join(' · '))
     })()
   }
 

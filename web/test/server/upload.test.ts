@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { request } from 'node:http'
+import { createServer, request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp, type App } from '../../server/index.js'
+import { BodyError, readBody } from '../../server/body.js'
 import { parseUpload, UPLOAD_COMMAND, uploadInput } from '../../server/upload.js'
 import { isUploadName, UPLOAD_MAX } from '../../src/shared/validate.js'
 
@@ -118,5 +119,27 @@ describe('upload route', () => {
     process.env.SSH_STUB_UPLOAD_EXIT = '255'
     expect((await post('cc-demo', 'a.txt', Buffer.from('x')))?.status).toBe(502)
     delete process.env.SSH_STUB_UPLOAD_EXIT
+  })
+})
+
+describe('reading an upload body', () => {
+  it('gives up on a request the client abandons, even if it is read late', async () => {
+    const outcomes: unknown[] = []
+    const server = createServer((req) => {
+      setTimeout(() => {
+        readBody(req, UPLOAD_MAX).then(
+          () => outcomes.push('read'),
+          (err: unknown) => outcomes.push(err instanceof BodyError ? err.message : err),
+        )
+      }, 100)
+    })
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+    const { port } = server.address() as { port: number }
+    const req = request({ port, host: '127.0.0.1', method: 'POST', headers: { 'Content-Length': '1000' } })
+    req.on('error', () => undefined)
+    req.write('partial')
+    setTimeout(() => req.destroy(), 20)
+    await expect.poll(() => outcomes, { timeout: 2000 }).toEqual(['request aborted'])
+    await new Promise((ok) => server.close(ok))
   })
 })
