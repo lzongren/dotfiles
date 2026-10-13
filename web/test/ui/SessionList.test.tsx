@@ -218,6 +218,12 @@ describe('sessionSummary', () => {
 })
 
 describe('headline', () => {
+  it("drops an agent's default title, which says nothing about the work", () => {
+    expect(headline(session({ cmd: 'claude', title: '✳ Claude Code' }))).toBe('')
+    expect(headline(session({ cmd: 'codex', title: 'Codex' }))).toBe('')
+    expect(headline(session({ cmd: 'claude', title: '✳ Claude Code tag rollout' }))).toBe('Claude Code tag rollout')
+  })
+
   it('strips leading status glyphs and spaces but keeps the text', () => {
     expect(headline(session({ title: '✳ Fix it' }))).toBe('Fix it')
     expect(headline(session({ title: '⠂ Working on it' }))).toBe('Working on it')

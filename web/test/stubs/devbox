@@ -45,6 +45,7 @@ case "${1:-} ${2:-}" in
     printf 'sync\tdotfiles\t%s\t/home/me/dotfiles\n' "${DEVBOX_STUB_ROOT:-/home/me/dotfiles}"
     printf 'sync\tapi\t/home/me/my api\t/home/me/work/api\n'
     printf 'ignore\tbuild/\n'
+    printf 'artifact\tCR\t%s\n' 'https://code\.example\.com/reviews/CR-[0-9]+'
     ;;
   *)
     echo "devbox stub: unsupported: $*" >&2

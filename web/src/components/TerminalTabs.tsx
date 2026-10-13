@@ -10,13 +10,18 @@ export function TerminalTabs({
   tabs: string[]
   active: string | null
   focusSignal?: number
-  onSelect: (name: string) => void
+  onSelect: (name: string | null) => void
   onClose: (name: string) => void
 }) {
   if (tabs.length === 0) return null
   return (
-    <section className="terminals">
+    <section className="terminals" data-overview={active === null}>
       <div className="tabstrip" role="tablist">
+        <span className="tab" data-active={active === null}>
+          <button type="button" role="tab" aria-selected={active === null} onClick={() => onSelect(null)}>
+            Overview
+          </button>
+        </span>
         {tabs.map((tab) => (
           <span key={tab} className="tab" data-active={tab === active}>
             <button type="button" role="tab" aria-selected={tab === active} onClick={() => onSelect(tab)}>

@@ -552,6 +552,15 @@ if [[ "$1" == "web" ]]; then
         printf 'ignore\t%s\n' "$pattern"
       done
     fi
+    while IFS= read -r line; do
+      [[ "$line" == *"|"* ]] || continue
+      rest="${line#*|}" link="${line##*|}"
+      if [[ "$rest" == *"|"* && "$link" == http*"{0}"* ]]; then
+        printf 'artifact\t%s\t%s\t%s\n' "${line%%|*}" "${rest%|*}" "$link"
+      else
+        printf 'artifact\t%s\t%s\n' "${line%%|*}" "$rest"
+      fi
+    done <<<"${DEVBOX_ARTIFACTS:-}"
     exit 0
   fi
 

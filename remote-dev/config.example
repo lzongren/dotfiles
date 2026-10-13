@@ -20,5 +20,14 @@ work|$HOME/Documents/work|work
 notes|$HOME/Documents/notes|notes
 "
 
+# Links `devbox web` lists as a session's artifacts, one per line:
+# "label|regex" (Python syntax), or "label|regex|link" where {0} in the link
+# is replaced by the match, for ids printed without a URL. GitHub pull
+# requests are always found.
+# DEVBOX_ARTIFACTS="
+# MR|https://gitlab\.example\.com/[^ ]+/-/merge_requests/[0-9]+
+# TICKET|TICKET-[0-9]+|https://tickets.example.com/browse/{0}
+# "
+
 # Local web dashboard port for `devbox web`. Default 7733.
 # DEVBOX_WEB_PORT="7733"

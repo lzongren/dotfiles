@@ -120,8 +120,35 @@ devbox web stop
 ```
 browser ──HTTP + WebSocket──► node server on 127.0.0.1:7733 (per-run token)
                                  ├─ session list  ◄── devbox status --raw
+                                 ├─ agent details ◄── ssh HOST python3 -I - < web/probe/agent-probe.py
                                  └─ terminal tab  ◄── ssh -t HOST tmux attach
 ```
+
+The home view is an overview that sorts sessions by whose move it is:
+
+```
+Needs you   an agent waiting on a permission prompt or question, an error,
+            a finished turn you haven't looked at yet, or a ringing shell
+Working     agents mid-turn
+Recent      everything else active this week, grouped by project folder
+Parked      idle over a week (collapsed)
+```
+
+Each card shows the agent's title, where it stands (Claude Code's away
+summary or its last reply), task progress, and the pull requests or reviews
+it touched. Select one for the goal, the latest ask, and every artifact;
+`j`/`k` move, Enter opens the terminal, `e` marks it seen. "Seen" lives in
+the browser: opening a session or marking it moves a finished turn out of
+Needs you. With nothing selected, the side panel lists the latest artifacts
+across sessions.
+
+Agent details come from a script streamed to the host's `python3` (3.7+, no
+install): it reads Claude Code's live session registry under
+`~/.claude/sessions`, the tail of each transcript, and Codex rollouts, and
+keeps a cursor in `~/.cache/devbox/agent-probe.json` so each refresh only
+scans new transcript bytes. GitHub pull requests are found automatically;
+add other review links with `DEVBOX_ARTIFACTS` (see `config.example`),
+including ids printed without a URL.
 
 The sidebar lists every session, most recent first, with a headline: the
 title the agent gives its terminal (Claude Code and Codex keep it current).

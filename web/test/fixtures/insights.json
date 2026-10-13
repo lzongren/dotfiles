@@ -1,0 +1,4 @@
+{"v": 1, "now": 1791741600, "agents": [
+  {"session": "cc-atx", "agent": "claude", "state": "waiting", "waitingFor": "permission prompt", "since": 1791741000, "title": "Fix flaky retry test", "firstAsk": "/goal Fix the flaky retry test", "ask": "merge it once CI is green", "askAt": 1791740400, "summary": "Fix is up as PR 31; waiting on CI before merging.", "summaryAt": 1791740900, "model": "claude-opus-4-x", "branch": "fix-retry", "tasks": {"done": 1, "total": 2, "current": "Fix the backoff"}, "artifacts": [{"label": "PR", "url": "https://github.com/o/r/pull/31", "at": 1791740800, "action": "created"}, {"label": "CR", "url": "https://code.example.com/reviews/CR-42", "at": 1791740700}], "commits": 1},
+  {"session": "logs", "agent": "codex", "state": "working", "since": 1791741500, "title": "Port the parser", "ask": "Port the parser", "model": "gpt-codex-x", "tasks": {"done": 1, "total": 3, "current": "Write"}, "artifacts": [], "commits": 0}
+]}

@@ -14,7 +14,7 @@ vi.mock('../../src/components/WorkspacePalette', () => ({
 }))
 
 import { App } from '../../src/App'
-import type { Session, SessionsResponse } from '../../src/shared/types'
+import type { AgentInsight, InsightsResponse, Session, SessionsResponse } from '../../src/shared/types'
 
 const NOW_EPOCH = 1800000000
 
@@ -39,7 +39,7 @@ const ROWS: Session[] = [
   session({ name: 'main', activityEpoch: NOW_EPOCH - 40 }),
 ]
 
-function response(body: SessionsResponse | { error: string; message: string }, status = 200): Response {
+function response(body: SessionsResponse | InsightsResponse | { error: string; message: string }, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
@@ -48,13 +48,16 @@ function okBody(sessions: Session[]): SessionsResponse {
 }
 
 let fetchMock: ReturnType<typeof vi.fn>
+let insightsMock: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false })
   vi.setSystemTime(NOW_EPOCH * 1000)
   sessionStorage.setItem('devbox-web-token', 'tok')
+  localStorage.clear()
   fetchMock = vi.fn()
-  vi.stubGlobal('fetch', fetchMock)
+  insightsMock = vi.fn(async () => response({ fetchedAt: Date.now(), agents: [] }))
+  vi.stubGlobal('fetch', (url: string, init: RequestInit) => (url === '/api/insights' ? insightsMock(url, init) : fetchMock(url, init)))
 })
 
 afterEach(() => {
@@ -78,13 +81,13 @@ describe('App', () => {
     expect(screen.getByText(/loading sessions/)).toBeInTheDocument()
   })
 
-  it('lays out a sidebar of sessions beside an empty workspace with a hint', async () => {
+  it('lays out a sidebar of sessions beside the overview', async () => {
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
     expect(screen.getByRole('heading', { name: /devbox/ })).toHaveTextContent('stub-host')
     expect(sidebar().getAllByRole('button')).toHaveLength(3)
-    expect(screen.getByRole('main')).toHaveTextContent(/press \/ to find or start one/)
+    expect(screen.getByRole('region', { name: 'overview' })).toBeVisible()
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/sessions',
       expect.objectContaining({ headers: { Authorization: 'Bearer tok' } }),
@@ -122,7 +125,56 @@ describe('App', () => {
     expect(screen.getByRole('tab', { name: 'api' })).toHaveAttribute('aria-selected', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'close api' }))
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
-    expect(screen.getByRole('main')).toHaveTextContent(/press \/ to find or start one/)
+    expect(screen.getByRole('region', { name: 'overview' })).toBeVisible()
+  })
+
+  it('shows what each agent is doing and opens a session from its details', async () => {
+    const waiting: AgentInsight = {
+      session: 'cc-atx',
+      agent: 'claude',
+      state: 'waiting',
+      waitingFor: 'permission prompt',
+      since: NOW_EPOCH - 120,
+      title: 'Fix flaky retry test',
+      summary: 'Fix is up as PR 31; waiting on CI.',
+      artifacts: [
+        { label: 'PR', url: 'https://github.com/o/r/pull/31', at: NOW_EPOCH - 200, hits: 2, said: true, action: 'created' },
+      ],
+      commits: 1,
+    }
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [waiting] }))
+    render(<App />)
+    await flush()
+    expect(sidebar().getByRole('button', { name: /cc-atx/ })).toHaveTextContent('waiting')
+    const needs = within(screen.getByRole('region', { name: /Needs you/ }))
+    fireEvent.click(needs.getByRole('button', { name: /Fix flaky retry test/ }))
+    const details = within(screen.getByRole('article', { name: 'cc-atx details' }))
+    expect(details.getByText('Fix is up as PR 31; waiting on CI.', { exact: false })).toBeInTheDocument()
+    expect(details.getByRole('link', { name: 'PR #31' })).toHaveAttribute('href', 'https://github.com/o/r/pull/31')
+    fireEvent.click(details.getByRole('button', { name: 'Open terminal' }))
+    expect(screen.getByTestId('term-cc-atx')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'overview', hidden: true })).not.toBeVisible()
+  })
+
+  it('keeps the overview usable when agent details fail, and says so', async () => {
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    insightsMock.mockImplementation(async () => response({ error: 'insights_failed', message: 'python3 is not installed on the remote host' }, 500))
+    render(<App />)
+    await flush()
+    expect(screen.getByRole('region', { name: 'overview' })).toHaveTextContent('agent details unavailable: python3 is not installed')
+    expect(sidebar().getAllByRole('button')).toHaveLength(3)
+  })
+
+  it('polls agent details every 15 seconds', async () => {
+    fetchMock.mockImplementation(async () => response(okBody([])))
+    render(<App />)
+    await flush()
+    expect(insightsMock).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15100)
+    })
+    expect(insightsMock).toHaveBeenCalledTimes(2)
   })
 
   it('polls every 5 seconds and refetches on window focus', async () => {
