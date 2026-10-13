@@ -25,7 +25,7 @@ notes|$HOME/Documents/notes|notes
 # is replaced by the match, for ids printed without a URL. GitHub pull
 # requests are always found.
 # DEVBOX_ARTIFACTS="
-# MR|https://gitlab\.example\.com/[^ ]+/-/merge_requests/[0-9]+
+# MR|https://gitlab\.example\.com/\S+?/-/merge_requests/[0-9]+
 # TICKET|TICKET-[0-9]+|https://tickets.example.com/browse/{0}
 # "
 

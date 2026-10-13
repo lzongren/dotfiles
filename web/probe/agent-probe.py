@@ -5,9 +5,12 @@ server prepends one line, `ARGS = {...}`, carrying the artifact patterns.
 """
 import datetime
 import glob
+import hashlib
 import json
+import math
 import os
 import re
+import signal
 import subprocess
 import time
 
@@ -15,10 +18,11 @@ ARGS = globals().get("ARGS") or {}
 HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
-CACHE = os.path.join(HOME, ".cache", "devbox", "agent-probe.json")
-CACHE_VERSION = 4
+CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
+CACHE_VERSION = 6
+DEADLINE = 25
 TAIL = 256 * 1024
-HEAD = 64 * 1024
+HEAD = 512 * 1024
 SCAN_MAX = 32 * 1024 * 1024
 TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
@@ -32,15 +36,19 @@ def clip(text, limit=TEXT_MAX):
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def num(value):
+    return value if isinstance(value, (int, float)) and math.isfinite(value) else 0
+
+
 def epoch(stamp):
-    if isinstance(stamp, (int, float)):
-        return int(stamp / 1000) if stamp > 1e12 else int(stamp)
-    if not isinstance(stamp, str):
-        return None
     try:
-        return int(datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
-    except ValueError:
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            return int(stamp / 1000) if stamp > 1e12 else int(stamp)
+        if isinstance(stamp, str):
+            return int(datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
+    except (ValueError, OverflowError, TypeError):
         return None
+    return None
 
 
 def read_json(path):
@@ -51,14 +59,35 @@ def read_json(path):
         return None
 
 
-def alive(pid):
+def alive(pid, started):
     try:
         os.kill(int(pid), 0)
-    except PermissionError:
-        return True
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, OverflowError):
         return False
-    return True
+    try:
+        with open("/proc/{}/stat".format(int(pid))) as fh:
+            fields = fh.read().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return True
+    return started is None or len(fields) < 20 or fields[19] == str(started)
+
+
+def msg(rec):
+    message = rec.get("message")
+    return message if isinstance(message, dict) else {}
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            for text in strings(item):
+                yield text
+    elif isinstance(value, list):
+        for item in value:
+            for text in strings(item):
+                yield text
 
 
 def jsonl(data, partial_first):
@@ -68,9 +97,11 @@ def jsonl(data, partial_first):
     for line in lines:
         if line.strip():
             try:
-                yield json.loads(line)
+                rec = json.loads(line)
             except ValueError:
                 continue
+            if isinstance(rec, dict):
+                yield rec
 
 
 def read_range(path, start, length):
@@ -89,9 +120,9 @@ def text_of(content):
 
 
 def human_prompt(rec):
-    if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain"):
+    if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain") or rec.get("isCompactSummary"):
         return None
-    content = (rec.get("message") or {}).get("content")
+    content = msg(rec).get("content")
     if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
         return None
     text = text_of(content)
@@ -114,6 +145,7 @@ def tmux_panes():
             "#{window_active}",
             "#{pane_active}",
             "#{pane_current_command}",
+            "#{pane_pid}",
             "#{pane_current_path}",
         ]
     )
@@ -123,20 +155,22 @@ def tmux_panes():
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             universal_newlines=True,
+            timeout=5,
         ).stdout
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         return []
     panes = []
     for line in out.splitlines():
-        parts = line.split("\t")
-        if len(parts) == 6:
+        parts = line.split("\t", 6)
+        if len(parts) == 7:
             panes.append(
                 {
                     "id": parts[0],
                     "session": parts[1],
                     "active": parts[2] == "1" and parts[3] == "1",
                     "cmd": parts[4],
-                    "path": parts[5],
+                    "pid": parts[5],
+                    "path": parts[6],
                 }
             )
     return panes
@@ -153,13 +187,15 @@ def claude_registry():
         if not name.endswith(".json"):
             continue
         rec = read_json(os.path.join(folder, name))
-        if not isinstance(rec, dict) or not alive(rec.get("pid")):
+        if not isinstance(rec, dict) or rec.get("kind") not in (None, "interactive"):
+            continue
+        if not alive(rec.get("pid"), rec.get("procStart")):
             continue
         pane = str(rec.get("tmux") or "").rpartition(".")[2]
         if not pane.startswith("%"):
             continue
         seen = by_pane.get(pane)
-        if seen is None or (rec.get("statusUpdatedAt") or 0) > (seen.get("statusUpdatedAt") or 0):
+        if seen is None or num(rec.get("statusUpdatedAt")) > num(seen.get("statusUpdatedAt")):
             by_pane[pane] = rec
     return by_pane
 
@@ -209,8 +245,10 @@ def claude_tail(path, size):
             turn_end = epoch(rec.get("timestamp"))
         if kind in ("user", "assistant") and not rec.get("isSidechain"):
             last = rec
+        if kind == "user" and (text_of(msg(rec).get("content")) or "").startswith("[Request interrupted"):
+            turn_end = epoch(rec.get("timestamp"))
         if kind == "assistant" and not rec.get("isSidechain"):
-            message = rec.get("message") or {}
+            message = msg(rec)
             if rec.get("isApiErrorMessage"):
                 info["error"] = rec.get("error") or "api error"
                 continue
@@ -240,6 +278,7 @@ def claude_tail(path, size):
     elif last_text:
         info["summary"], info["summaryAt"] = last_text, last_text_at
     info["turnEnd"] = turn_end
+    info["lastTextAt"] = last_text_at
     info["last"] = last
     return info
 
@@ -247,7 +286,7 @@ def claude_tail(path, size):
 def claude_first_ask(path):
     for rec in jsonl(read_range(path, 0, HEAD), False):
         prompt = human_prompt(rec)
-        if prompt:
+        if prompt and not re.match(r"^/[\w:-]+$", prompt):
             return prompt
     return None
 
@@ -287,6 +326,8 @@ def scan_history(path, size, ino, cache, patterns):
     offset = entry["off"]
     data = read_range(path, offset, min(size - offset, SCAN_MAX)) if size > offset else b""
     end = data.rfind(b"\n") + 1
+    if end == 0 and len(data) >= SCAN_MAX:
+        end = len(data)
     artifacts = entry["artifacts"]
     links = any(link for _, _, link in patterns)
     for line in data[:end].split(b"\n"):
@@ -309,7 +350,9 @@ def scan_history(path, size, ino, cache, patterns):
         if rec.get("type") in ("last-prompt", "ai-title", "custom-title"):
             continue
         at = epoch(rec.get("timestamp")) or 0
-        said = rec.get("type") == "assistant" or (rec.get("type") == "user" and "toolUseResult" not in rec)
+        said = rec.get("type") == "assistant" or (
+            rec.get("type") == "user" and "toolUseResult" not in rec and not rec.get("isMeta")
+        )
         op = (rec.get("toolUseResult") or {}).get("gitOperation") if isinstance(rec.get("toolUseResult"), dict) else None
         found = {}
         if isinstance(op, dict):
@@ -321,10 +364,10 @@ def scan_history(path, size, ino, cache, patterns):
         track_tasks(entry["tasks"], rec)
         if rec.get("type") == "pr-link" and rec.get("prUrl"):
             found.setdefault(rec["prUrl"], ("PR", None, True))
-        text = line.decode("utf-8", "replace")
-        for label, regex, link in patterns:
-            for match in regex.finditer(text):
-                found.setdefault(link.replace("{0}", match.group(0)) if link else match.group(0), (label, None, said))
+        for text in strings(rec):
+            for label, regex, link in patterns:
+                for match in regex.finditer(text):
+                    found.setdefault(link.replace("{0}", match.group(0)) if link else match.group(0), (label, None, said))
         for url, (label, action, by_someone) in found.items():
             note(artifacts, label, url, at, action, by_someone)
     entry["off"] = offset + end
@@ -341,7 +384,7 @@ def track_tasks(tasks, rec):
     task = result.get("task") if isinstance(result, dict) else None
     if isinstance(task, dict) and task.get("id") and task.get("subject"):
         tasks.setdefault(str(task["id"]), {"status": "pending"})["subject"] = task["subject"]
-    for block in (rec.get("message") or {}).get("content") or []:
+    for block in msg(rec).get("content") or []:
         if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "TaskUpdate":
             update = block.get("input") or {}
             if update.get("taskId") and update.get("status"):
@@ -349,7 +392,9 @@ def track_tasks(tasks, rec):
 
 
 def note(artifacts, label, url, at, action, said):
-    seen = artifacts.setdefault(url, {"label": label, "url": url, "at": at, "action": None, "hits": 0, "said": False})
+    seen = artifacts.setdefault(
+        url, {"label": label, "url": url, "at": at, "first": at, "action": None, "hits": 0, "said": False}
+    )
     seen["at"] = max(seen["at"], at)
     seen["hits"] += 1
     seen["said"] = seen["said"] or said
@@ -374,11 +419,13 @@ def claude_insight(pane, reg, cache, patterns):
     info = claude_tail(path, stat.st_size)
     if not reg:
         last = info.get("last") or {}
-        message = last.get("message") or {}
+        message = msg(last)
         ended = info.get("turnEnd") and info["turnEnd"] >= (epoch(last.get("timestamp")) or 0)
         out["state"] = "ready" if ended or message.get("stop_reason") == "end_turn" else "working"
         out["since"] = info.get("turnEnd") or epoch(last.get("timestamp"))
-    if info.get("error"):
+    if info.get("error") and out.get("state") in (None, "ready", "unknown", "working") and not (
+        reg and reg.get("status") in ("busy", "waiting")
+    ):
         out["state"] = "error"
         out["error"] = clip(str(info["error"]), 120)
     entry = scan_history(path, stat.st_size, stat.st_ino, cache, patterns)
@@ -387,9 +434,12 @@ def claude_insight(pane, reg, cache, patterns):
     )
     out["ask"] = clip(info.get("ask"))
     out["askAt"] = info.get("askAt")
-    out["firstAsk"] = clip(claude_first_ask(path))
+    if "firstAsk" not in entry:
+        entry["firstAsk"] = claude_first_ask(path)
+    out["firstAsk"] = clip(entry["firstAsk"])
     out["summary"] = clip(info.get("summary"), 1200)
     out["summaryAt"] = info.get("summaryAt")
+    out["turnAt"] = info.get("turnEnd") or info.get("lastTextAt")
     out["model"] = info.get("model")
     out["branch"] = info.get("branch")
     tracked = [t for t in entry["tasks"].values() if t.get("subject") and t.get("status") != "deleted"]
@@ -409,28 +459,62 @@ def codex_rollouts(days=14):
                 meta = json.loads(fh.readline()).get("payload") or {}
         except (OSError, ValueError):
             continue
-        if meta.get("thread_source", "user") == "user" and meta.get("source") != "subagent" and meta.get("cwd"):
+        if meta.get("thread_source", "user") == "user" and meta.get("source", "cli") == "cli" and meta.get("cwd"):
             rollouts.append({"path": path, "cwd": os.path.realpath(meta["cwd"])})
     return rollouts
 
 
-def codex_insight(pane, rollouts, cache, patterns):
+def process_children():
+    children = {}
+    for pid in os.listdir("/proc") if os.path.isdir("/proc") else []:
+        if not pid.isdigit():
+            continue
+        try:
+            with open("/proc/{}/stat".format(pid)) as fh:
+                ppid = fh.read().rsplit(")", 1)[1].split()[1]
+        except (OSError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(pid)
+    return children
+
+
+def open_rollout(pane_pid, children):
+    todo, found = [pane_pid], []
+    while todo:
+        pid = todo.pop()
+        todo.extend(children.get(pid, []))
+        try:
+            fds = os.listdir("/proc/{}/fd".format(pid))
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink("/proc/{}/fd/{}".format(pid, fd))
+            except OSError:
+                continue
+            if os.path.basename(target).startswith("rollout-") and target.endswith(".jsonl"):
+                found.append(target)
+    return max(found, key=os.path.getmtime) if found else None
+
+
+def codex_insight(pane, rollouts, children, cache, patterns):
     out = {"agent": "codex", "state": "unknown"}
     real = os.path.realpath(pane["path"])
-    rollout = next((r["path"] for r in rollouts if r["cwd"] == real), None)
+    rollout = open_rollout(pane["pid"], children) or next((r["path"] for r in rollouts if r["cwd"] == real), None)
     if not rollout:
         return out
     stat = os.stat(rollout)
     start = max(0, stat.st_size - TAIL)
     state_at = None
     for rec in jsonl(read_range(rollout, start, TAIL), start > 0):
-        payload = rec.get("payload") or {}
+        payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
         kind = payload.get("type")
         at = epoch(rec.get("timestamp"))
         if kind == "task_started":
             out["state"], state_at = "working", at
         elif kind in ("task_complete", "turn_aborted"):
             out["state"], state_at = "ready", at
+            out["turnAt"] = at
             if payload.get("last_agent_message"):
                 out["summary"], out["summaryAt"] = clip(payload["last_agent_message"], 1200), at
         elif rec.get("type") == "turn_context" and payload.get("model"):
@@ -471,26 +555,35 @@ def codex_title(rollout_name):
     return title
 
 
-def save_cache(cache, key):
-    live = {"v": CACHE_VERSION, "key": key, "files": {path: e for path, e in cache.items() if os.path.exists(path)}}
+def save_cache(path, cache, key):
+    live = {"v": CACHE_VERSION, "key": key, "files": {p: e for p, e in cache.items() if os.path.exists(p)}}
     try:
-        os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-        tmp = "{}.{}".format(CACHE, os.getpid())
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = "{}.{}".format(path, os.getpid())
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(live, fh)
-        os.replace(tmp, CACHE)
+        os.replace(tmp, path)
+        for old in glob.glob(os.path.join(CACHE_DIR, "agent-probe*.json")):
+            if old != path and os.path.getmtime(old) < time.time() - 7 * 86400:
+                os.remove(old)
     except OSError:
         pass
 
 
 def main():
+    os.umask(0o077)
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, lambda *_: os._exit(124))
+        signal.alarm(DEADLINE)
     patterns = compile_patterns()
-    key = json.dumps([[label, regex.pattern, link] for label, regex, link in patterns])
-    stored = read_json(CACHE)
+    key = json.dumps([CACHE_VERSION] + [[label, regex.pattern, link] for label, regex, link in patterns])
+    cache_path = os.path.join(CACHE_DIR, "agent-probe-{}.json".format(hashlib.sha1(key.encode()).hexdigest()[:12]))
+    stored = read_json(cache_path)
     fresh = isinstance(stored, dict) and stored.get("v") == CACHE_VERSION and stored.get("key") == key
     cache = stored["files"] if fresh else {}
     registry = claude_registry()
     rollouts = None
+    children = None
     chosen = {}
     for pane in tmux_panes():
         reg = registry.get(pane["id"])
@@ -510,13 +603,14 @@ def main():
                 insight = claude_insight(pane, reg, cache, patterns)
             else:
                 rollouts = codex_rollouts() if rollouts is None else rollouts
-                insight = codex_insight(pane, rollouts, cache, patterns)
-        except (OSError, ValueError) as err:
+                children = process_children() if children is None else children
+                insight = codex_insight(pane, rollouts, children, cache, patterns)
+        except Exception as err:
             insight = {"agent": kind, "state": "unknown", "error": clip("probe: {}".format(err), 120)}
         insight["session"] = session
         agents.append({k: v for k, v in insight.items() if v is not None})
-    save_cache(cache, key)
-    print(json.dumps({"v": 1, "now": int(time.time()), "agents": agents}, ensure_ascii=False))
+    save_cache(cache_path, cache, key)
+    print(json.dumps({"v": 1, "now": int(time.time()), "agents": agents}))
 
 
 main()

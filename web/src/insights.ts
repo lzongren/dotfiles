@@ -1,23 +1,27 @@
 import type { AgentInsight, Artifact, Session } from './shared/types'
 
-export type Lane = 'needs' | 'working' | 'recent' | 'parked'
+export type Lane = 'blocked' | 'ready' | 'working' | 'recent' | 'parked'
 
 const KEY = 'devbox.seen'
 const PARK_AFTER = 7 * 86400
 const FIRST_VISIT_LOOKBACK = 12 * 3600
 
-export function unread(insight: AgentInsight, seenAt: number): boolean {
-  const changed = insight.summaryAt ?? insight.since
-  return changed !== undefined && changed > seenAt
+export function changeMark(session: Session, insight: AgentInsight | undefined): number {
+  if (!insight) return session.activityEpoch
+  return insight.turnAt ?? insight.since ?? session.activityEpoch
+}
+
+export function isFresh(session: Session, insight: AgentInsight | undefined, seenAt: number): boolean {
+  if (insight) return (insight.state === 'ready' || insight.state === 'error') && changeMark(session, insight) > seenAt
+  return session.bell && session.activityEpoch > seenAt
 }
 
 export function laneOf(session: Session, insight: AgentInsight | undefined, seenAt: number, nowMs: number): Lane {
-  if (insight?.state === 'waiting' || insight?.state === 'error') return 'needs'
+  if (insight?.state === 'waiting') return 'blocked'
   if (insight?.state === 'working') return 'working'
-  const idle = Math.floor(nowMs / 1000) - session.activityEpoch
-  if (idle >= PARK_AFTER) return 'parked'
-  if (session.bell || (insight?.state === 'ready' && unread(insight, seenAt))) return 'needs'
-  return 'recent'
+  if (Math.floor(nowMs / 1000) - session.activityEpoch >= PARK_AFTER) return 'parked'
+  if (!isFresh(session, insight, seenAt)) return 'recent'
+  return insight?.state === 'error' ? 'blocked' : 'ready'
 }
 
 interface Stored {
@@ -25,7 +29,10 @@ interface Stored {
   sessions: Record<string, number>
 }
 
+let memory: Stored | null = null
+
 function read(nowMs: number): Stored {
+  if (memory) return memory
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Stored | null
     if (raw && typeof raw.since === 'number' && raw.sessions && typeof raw.sessions === 'object') return raw
@@ -33,8 +40,17 @@ function read(nowMs: number): Stored {
     void 0
   }
   const fresh = { since: Math.floor(nowMs / 1000) - FIRST_VISIT_LOOKBACK, sessions: {} }
-  localStorage.setItem(KEY, JSON.stringify(fresh))
+  write(fresh)
   return fresh
+}
+
+function write(stored: Stored): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(stored))
+    memory = null
+  } catch {
+    memory = stored
+  }
 }
 
 export function loadSeen(nowMs: number): { seenAt(name: string): number } {
@@ -42,10 +58,10 @@ export function loadSeen(nowMs: number): { seenAt(name: string): number } {
   return { seenAt: (name) => stored.sessions[name] ?? stored.since }
 }
 
-export function markSeen(name: string, nowMs: number): void {
+export function markSeen(names: string[], mark: (name: string) => number, nowMs: number): void {
   const stored = read(nowMs)
-  stored.sessions[name] = Math.floor(nowMs / 1000)
-  localStorage.setItem(KEY, JSON.stringify(stored))
+  for (const name of names) stored.sessions[name] = Math.max(stored.sessions[name] ?? 0, mark(name))
+  write(stored)
 }
 
 export function projectOf(path: string): string {
@@ -76,8 +92,27 @@ export function rankArtifacts(artifacts: Artifact[], summary = ''): Array<Artifa
 export function displayTitle(paneHeadline: string, insight: AgentInsight | undefined): string {
   if (insight?.title) return insight.title
   if (paneHeadline) return paneHeadline
-  const ask = (insight?.firstAsk ?? insight?.ask ?? '').replace(/^\/[\w:-]+\s*/, '').trim()
+  const ask = [insight?.firstAsk, insight?.ask]
+    .map((text) => (text ?? '').replace(/^\/[\w:-]+\s*/, '').trim())
+    .find((text) => text !== '') ?? ''
   return ask.length > 80 ? `${ask.slice(0, 79)}…` : ask
+}
+
+export function ledger(
+  rows: Array<{ name: string; artifacts: Artifact[] }>,
+  limit = 12,
+  perSession = 3,
+): Array<Artifact & { session: string }> {
+  return rows
+    .flatMap((r) =>
+      r.artifacts
+        .filter((a) => a.said)
+        .sort((a, b) => b.first - a.first)
+        .slice(0, perSession)
+        .map((a) => ({ ...a, session: r.name })),
+    )
+    .sort((a, b) => b.first - a.first)
+    .slice(0, limit)
 }
 
 export function modelName(model: string): string {

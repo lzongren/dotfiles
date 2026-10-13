@@ -22,6 +22,7 @@ export interface Artifact {
   label: string
   url: string
   at: number
+  first: number
   hits: number
   said: boolean
   action?: string
@@ -39,6 +40,7 @@ export interface AgentInsight {
   firstAsk?: string
   summary?: string
   summaryAt?: number
+  turnAt?: number
   model?: string
   branch?: string
   tasks?: { done: number; total: number; current?: string }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getInsights, getSessions } from './api'
 import type { AgentInsight, SessionsResponse } from './shared/types'
-import { loadSeen, markSeen } from './insights'
+import { changeMark, loadSeen, markSeen } from './insights'
 import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
@@ -26,17 +26,33 @@ export function App() {
   const [, setSeenVersion] = useState(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
-  const seen = useCallback((name: string) => {
-    markSeen(name, Date.now())
+  const latest = useRef<{ sessions: SessionsResponse['sessions']; insights: Map<string, AgentInsight> }>({
+    sessions: [],
+    insights: new Map(),
+  })
+  const seen = useCallback((names: string[]) => {
+    const { sessions, insights: byName } = latest.current
+    markSeen(
+      names,
+      (name) => {
+        const session = sessions.find((s) => s.name === name)
+        return session ? changeMark(session, byName.get(name)) : Math.floor(Date.now() / 1000)
+      },
+      Date.now(),
+    )
     setSeenVersion((n) => n + 1)
   }, [])
+  const leaving = useRef<string | null>(null)
+  useEffect(() => {
+    if (leaving.current !== null && leaving.current !== activeTab) seen([leaving.current])
+    leaving.current = activeTab
+  }, [activeTab, seen])
   const openTerminal = useCallback((name: string) => {
-    markSeen(name, Date.now())
-    setSeenVersion((n) => n + 1)
+    seen([name])
     setTabs((prev) => (prev.includes(name) ? prev : [...prev, name]))
     setActiveTab(name)
     setOpenCount((n) => n + 1)
-  }, [])
+  }, [seen])
   const closeTerminal = useCallback(
     (name: string) => {
       const index = tabs.indexOf(name)
@@ -136,6 +152,7 @@ export function App() {
   }
 
   const { data, staleSince, staleCause } = view
+  latest.current = { sessions: data.sessions, insights }
   return (
     <div className="app">
       <header className="topbar">
@@ -184,6 +201,7 @@ export function App() {
             insights={insights}
             now={now}
             seenAt={loadSeen(now).seenAt}
+            visible={activeTab === null}
             notice={insightsNotice}
             onOpen={openTerminal}
             onSeen={seen}

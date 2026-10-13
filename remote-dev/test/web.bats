@@ -175,6 +175,7 @@ api|/home/me/my api|api
 DEVBOX_ARTIFACTS="
 MR|https://git\.example\.com/[^ |]+/merge_requests/[0-9]+
 TICKET|T-[0-9]+|(old|new)|https://tickets.example.com/{0}
+BAD|B-[0-9]+|https://tickets.example.com/
 "
 EOF
   run "$DEVBOX" web --print-config
@@ -184,8 +185,10 @@ EOF
   [ "${lines[2]}" = "$(printf 'sync\tapi\t/home/me/my api\tapi')" ]
   printf '%s\n' "${lines[@]}" | grep -qx "$(printf 'ignore\tbuild/')"
   printf '%s\n' "${lines[@]}" | grep -qx "$(printf 'ignore\tnode_modules/')"
-  [ "${lines[${#lines[@]} - 2]}" = "$(printf 'artifact\tMR\t%s' 'https://git\.example\.com/[^ |]+/merge_requests/[0-9]+')" ]
-  [ "${lines[${#lines[@]} - 1]}" = "$(printf 'artifact\tTICKET\t%s\t%s' 'T-[0-9]+|(old|new)' 'https://tickets.example.com/{0}')" ]
+  [ "${lines[${#lines[@]} - 3]}" = "$(printf 'artifact\tMR\t%s' 'https://git\.example\.com/[^ |]+/merge_requests/[0-9]+')" ]
+  [ "${lines[${#lines[@]} - 2]}" = "$(printf 'artifact\tTICKET\t%s\t%s' 'T-[0-9]+|(old|new)' 'https://tickets.example.com/{0}')" ]
+  [ "${lines[${#lines[@]} - 1]}" = "devbox: DEVBOX_ARTIFACTS link has no {0} for the match: BAD|B-[0-9]+|https://tickets.example.com/" ]
+  ! printf '%s\n' "${lines[@]}" | grep -q "^artifact.BAD"
 }
 
 @test "web: an unresponsive server is replaced, not leaked" {
