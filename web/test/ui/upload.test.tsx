@@ -89,6 +89,28 @@ describe('dropping files on a terminal tab', () => {
     expect(pane('web')).toHaveTextContent('Copied 2 files to /home/me/work/api')
   })
 
+  it('reports an odd reply, files in different folders, and files left behind by an error', async () => {
+    vi.mocked(fetch)
+      .mockImplementationOnce(async () => Response.json({ path: '' }, { status: 201 }))
+      .mockImplementationOnce(async () => Response.json({ path: '/a/one.md' }, { status: 201 }))
+      .mockImplementationOnce(async () => Response.json({ path: '/b/two.md' }, { status: 201 }))
+    const { pane } = setup()
+    await act(async () => {
+      fireEvent.drop(pane('web'), { dataTransfer: transfer(item(new File(['x'], 'odd.md')), item(new File(['1'], 'one.md')), item(new File(['2'], 'two.md'))) })
+    })
+    expect(pane('web')).toHaveTextContent(/^Copied 2 files · odd\.md: unexpected reply$/)
+
+    vi.mocked(fetch).mockImplementationOnce(async () => ({ get status(): number { throw new Error('boom') } }) as unknown as Response)
+    await act(async () => {
+      fireEvent.drop(pane('web'), { dataTransfer: transfer(item(new File(['a'], 'a.md')), item(new File(['b'], 'b.md')), item(new File(['c'], 'c.md'))) })
+    })
+    expect(pane('web')).toHaveTextContent('a.md: upload failed, 2 more not copied')
+    await act(async () => {
+      fireEvent.drop(pane('web'), { dataTransfer: transfer(item(new File(['d'], 'd.md'))) })
+    })
+    expect(pane('web')).toHaveTextContent('Copied to /home/me/work/api/d.md')
+  })
+
   it('keeps a file dropped anywhere else from replacing the dashboard', () => {
     setup()
     const drop = new Event('drop', { bubbles: true, cancelable: true })

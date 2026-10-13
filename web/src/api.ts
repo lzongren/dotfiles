@@ -81,6 +81,9 @@ export function openFile(session: string, path: string): Promise<ApiResult<{ ope
   return fetchJson<{ opened: string; revealed: boolean }>('/api/file/open', { method: 'POST', body: { session, path } })
 }
 
-export function uploadFile(session: string, file: File): Promise<ApiResult<{ path: string }>> {
-  return fetchJson(`/api/upload?${new URLSearchParams({ session, name: file.name }).toString()}`, { method: 'POST', body: file })
+export async function uploadFile(session: string, file: File): Promise<ApiResult<{ path: string }>> {
+  const result = await fetchJson<{ path?: unknown }>(`/api/upload?${new URLSearchParams({ session, name: file.name }).toString()}`, { method: 'POST', body: file })
+  if (result.kind !== 'ok') return result
+  const { path } = result.data
+  return typeof path === 'string' && path.startsWith('/') ? { kind: 'ok', data: { path } } : { kind: 'error', message: 'unexpected reply' }
 }

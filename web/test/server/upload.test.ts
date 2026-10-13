@@ -125,7 +125,10 @@ describe('upload route', () => {
 describe('reading an upload body', () => {
   it('gives up on a request the client abandons, even if it is read late', async () => {
     const outcomes: unknown[] = []
+    let arrived = () => undefined as void
+    const received = new Promise<void>((ok) => (arrived = ok))
     const server = createServer((req) => {
+      arrived()
       setTimeout(() => {
         readBody(req, UPLOAD_MAX).then(
           () => outcomes.push('read'),
@@ -134,12 +137,17 @@ describe('reading an upload body', () => {
       }, 100)
     })
     await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
-    const { port } = server.address() as { port: number }
-    const req = request({ port, host: '127.0.0.1', method: 'POST', headers: { 'Content-Length': '1000' } })
-    req.on('error', () => undefined)
-    req.write('partial')
-    setTimeout(() => req.destroy(), 20)
-    await expect.poll(() => outcomes, { timeout: 2000 }).toEqual(['request aborted'])
-    await new Promise((ok) => server.close(ok))
+    try {
+      const { port } = server.address() as { port: number }
+      const req = request({ port, host: '127.0.0.1', method: 'POST', headers: { 'Content-Length': '1000' } })
+      req.on('error', () => undefined)
+      req.write('partial')
+      await received
+      req.destroy()
+      await expect.poll(() => outcomes, { timeout: 2000 }).toEqual(['request aborted'])
+    } finally {
+      server.closeAllConnections()
+      await new Promise((ok) => server.close(ok))
+    }
   })
 })

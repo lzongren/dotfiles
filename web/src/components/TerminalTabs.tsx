@@ -73,16 +73,16 @@ export function TerminalTabs({
           }
           progress(tab, job)
           const result = await uploadFile(tab, file)
-          if (result.kind === 'ok' && typeof result.data.path === 'string') job.placed.push(result.data.path)
-          else job.problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.kind === 'ok' ? 'unexpected reply' : result.message}`)
+          if (result.kind === 'ok') job.placed.push(result.data.path)
+          else job.problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.message}`)
         }
       } catch {
-        job.problems.push(`${job.current}: upload failed`)
+        job.problems.push(`${job.current}: upload failed${job.files.length ? `, ${job.files.length} more not copied` : ''}`)
       } finally {
         jobs.current.delete(tab)
         const { placed } = job
-        const folders = new Set(placed.map((p) => p.slice(0, p.lastIndexOf('/'))))
-        const done = placed.length === 1 ? `Copied to ${placed[0]}` : placed.length ? `Copied ${placed.length} files${folders.size === 1 ? ` to ${[...folders][0]}` : ''}` : ''
+        const dirs = new Set(placed.map((p) => p.slice(0, p.lastIndexOf('/')) || '/'))
+        const done = placed.length === 1 ? `Copied to ${placed[0]}` : placed.length ? `Copied ${placed.length} files${dirs.size === 1 ? ` to ${[...dirs][0]}` : ''}` : ''
         note(tab, [done, ...job.problems].filter(Boolean).join(' · '))
       }
     })()
