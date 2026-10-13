@@ -227,6 +227,7 @@ describe('file viewer', () => {
     expect(parseDelimited('1\n2\n3\n', ',', 2)).toEqual([['1'], ['2']])
     expect(parseDelimited('name\n""\n\nbob\n\n', ',')).toEqual([['name'], [''], ['bob']])
     expect(parseDelimited('name\n""', ',')).toEqual([['name'], ['']])
+    expect(parseDelimited('a\n"', ',')).toEqual([['a']])
     text('/w/t.tsv', 'name\tcount\nfoo\t3\n')
     const dialog = preview('/w/t.tsv')
     const table = within(await dialog.findByRole('table'))

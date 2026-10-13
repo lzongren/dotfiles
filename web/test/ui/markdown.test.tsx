@@ -71,6 +71,8 @@ describe('markdown rendering', () => {
   it('resolves dot segments without climbing above the root', () => {
     expect(resolvePath('/a/b', '../../../c')).toBe('/c')
     expect(resolvePath('/a/b', './c/../d')).toBe('/a/b/d')
+    expect(render('[d](///etc/x.md)')).toContain('data-path="/etc/x.md"')
+    expect(renderMarkdown('[a](plan.md#x)', 'plan.md')).toContain('data-anchor="md-x"')
   })
 })
 

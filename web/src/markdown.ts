@@ -45,7 +45,7 @@ export function resolvePath(dir: string, ref: string): string {
 
 function local(href: string, env: Env): string | null {
   const bare = href.split(/[?#]/)[0]
-  if (!bare || bare.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(bare)) return null
+  if (!bare || /^\/\/[^/]/.test(bare) || /^[a-z][a-z0-9+.-]*:/i.test(bare)) return null
   return resolvePath(env.dir, decode(bare))
 }
 
@@ -114,6 +114,7 @@ md.renderer.rules.image = (tokens: Token[], i, options, env: Env, self) => {
 }
 
 export function renderMarkdown(text: string, file: string): string {
-  const env: Env = { file: resolvePath('/', file), dir: file.slice(0, file.lastIndexOf('/')) || '/', slugs: new Map() }
+  const at = resolvePath('/', file)
+  const env: Env = { file: at, dir: at.slice(0, at.lastIndexOf('/')) || '/', slugs: new Map() }
   return md.render(text, env).replace(/<(pre|table)>/g, '<$1 tabindex="0">')
 }
