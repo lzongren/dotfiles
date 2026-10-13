@@ -258,6 +258,7 @@ beforeAll(() => {
       line({ type: 'response_item', timestamp: '2026-10-12T10:50:02.900Z', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: '*** Begin Patch\n*** Add File: /work/fork/own.md\n*** End Patch' } }),
       line({ type: 'event_msg', timestamp: '2026-10-12T10:50:02.950Z', payload: { type: 'patch_apply_end', call_id: 'call_1', success: true, changes: { '/work/fork/own.md': { type: 'add', content: '' } } } }),
       line({ type: 'event_msg', timestamp: at(53), payload: { type: 'patch_apply_end', call_id: 'shell9', success: true, changes: { '/work/fork/via-shell.md': { type: 'add', content: '' } } } }),
+      line({ type: 'event_msg', payload: { type: 'patch_apply_end', call_id: 'shell10', success: true, changes: { '/work/fork/undated.md': { type: 'add', content: '' } } } }),
     ].join(''),
   )
   const decoys = [
@@ -364,7 +365,7 @@ describe('agent probe', () => {
     ])
     const count = (name: string) => (agents.cdx.files as Array<{ path: string; count: number }>).find((f) => f.path === name)?.count
     expect([count('/work/cdx/paired.rs'), count('/work/cdx/m1.rs')]).toEqual([1, 1])
-    expect((agents.fork.files as Array<{ path: string }>).map((f) => f.path)).toEqual(['/work/fork/via-shell.md', '/work/fork/own.md'])
+    expect((agents.fork.files as Array<{ path: string }>).map((f) => f.path)).toEqual(['/work/fork/via-shell.md', '/work/fork/own.md', '/work/fork/undated.md'])
   })
 
   it('keeps a title written long before the tail it reads, and sees a finished turn without a registry', () => {
