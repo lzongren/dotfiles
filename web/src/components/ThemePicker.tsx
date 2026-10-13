@@ -6,6 +6,7 @@ export function ThemePicker() {
   const [selected, setSelected] = useState<Look>(() => savedLook() ?? DEVBOX)
   const [ghostty, setGhostty] = useState<Look | null>(() => (selected.id === 'ghostty' ? selected : null))
   const [prefs, setPrefs] = useState(mediaPrefs)
+  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1)
 
   useEffect(() => {
     let live = true
@@ -43,8 +44,22 @@ export function ThemePicker() {
   }, [])
 
   useEffect(() => {
-    applyLook(selected, prefs)
-  }, [selected, prefs])
+    if (typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia(`(resolution: ${dpr}dppx)`)
+    const update = () => setDpr(window.devicePixelRatio || 1)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [dpr])
+
+  useEffect(() => {
+    try {
+      applyLook(selected, prefs)
+    } catch {
+      saveLook(null)
+      applyLook(DEVBOX, prefs)
+      setSelected(DEVBOX)
+    }
+  }, [selected, prefs, dpr])
 
   const looks = ghostty ? [ghostty, ...PRESETS] : PRESETS
   return (

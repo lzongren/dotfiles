@@ -134,7 +134,7 @@ describe('Notes', () => {
     expect(puts).toEqual([])
   })
 
-  it('saves an edit on one day even after you move on and edit another while offline', async () => {
+  it('stays on a day until its edit is saved, so nothing unsaved hides on another day', async () => {
     store['2026-10-12'] = 'monday'
     failPuts = 2
     render(<Notes />)
@@ -143,21 +143,24 @@ describe('Notes', () => {
     await settle(700)
     fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
     await settle()
+    expect(pad()).toHaveValue('tuesday plan')
+    expect(screen.getByRole('status')).toHaveTextContent('retrying')
+    await settle(5100)
+    expect(store['2026-10-13']).toBe('tuesday plan')
+    fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
+    await settle()
     expect(pad()).toHaveValue('monday')
-    fireEvent.change(pad(), { target: { value: 'monday, revised' } })
-    await settle(700)
-    expect(store).toEqual({ '2026-10-12': 'monday, revised', '2026-10-13': 'tuesday plan' })
   })
 
   it('restores a draft the page never got to save, and saves it', async () => {
     store['2026-10-13'] = 'old'
-    sessionStorage.setItem('devbox.notes.draft.2026-10-13', JSON.stringify({ text: 'newer, typed before a reload', base: 'h:old' }))
+    localStorage.setItem('devbox.notes.draft.2026-10-13', JSON.stringify({ text: 'newer, typed before a reload', base: 'h:old' }))
     render(<Notes />)
     await settle()
     expect(pad()).toHaveValue('newer, typed before a reload')
     await settle()
     expect(store['2026-10-13']).toBe('newer, typed before a reload')
-    expect(sessionStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
+    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
   })
 
   it('does not retry a save the server refuses, and says why', async () => {
@@ -184,7 +187,7 @@ describe('Notes', () => {
     const attempts = failPuts
     await settle(30_000)
     expect(failPuts).toBe(attempts)
-    expect(JSON.parse(sessionStorage.getItem('devbox.notes.draft.2026-10-13')!)).toEqual({ text: 'keep me', base: '' })
+    expect(JSON.parse(localStorage.getItem('devbox.notes.draft.2026-10-13')!)).toEqual({ text: 'keep me', base: '' })
   })
 
   it('stays read-only until the day it shows has loaded', async () => {
@@ -234,22 +237,52 @@ describe('Notes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use saved' }))
     await settle()
     expect(pad()).toHaveValue('v2 from elsewhere')
-    expect(sessionStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
+    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
     fireEvent.change(pad(), { target: { value: 'v2 from elsewhere, then mine' } })
     await settle(700)
     expect(store['2026-10-13']).toBe('v2 from elsewhere, then mine')
   })
 
-  it('does not let a refused draft for another day hold up today', async () => {
-    sessionStorage.setItem('devbox.notes.draft.2026-10-01', JSON.stringify({ text: 'huge', base: '' }))
+  it('keeps a refused edit on screen, stays on its day, and warns before the tab closes', async () => {
+    store['2026-10-12'] = 'monday'
     failPuts = 1
     failStatus = 413
     render(<Notes />)
     await settle()
-    fireEvent.change(pad(), { target: { value: 'today still saves' } })
+    fireEvent.change(pad(), { target: { value: 'far too long' } })
     await settle(700)
-    expect(store['2026-10-13']).toBe('today still saves')
+    fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
+    await settle()
+    expect(pad()).toHaveValue('far too long')
+    const leave = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(leave)
+    expect(leave.defaultPrevented).toBe(true)
+    fireEvent.change(pad(), { target: { value: 'shorter' } })
+    await settle(700)
+    expect(store['2026-10-13']).toBe('shorter')
+  })
+
+  it('counts a retried save that already landed as saved, not as a conflict', async () => {
+    store['2026-10-13'] = 'start'
+    render(<Notes />)
+    await settle()
+    store['2026-10-13'] = 'start, then this'
+    fireEvent.change(pad(), { target: { value: 'start, then this' } })
+    await settle(700)
     expect(shown()).toBe('saved')
+    expect(screen.queryByRole('button', { name: 'Keep mine' })).toBeNull()
+  })
+
+  it('treats a draft left by an older version as possibly stale and asks', async () => {
+    store['2026-10-13'] = 'server copy'
+    localStorage.setItem('devbox.notes.draft.2026-10-13', 'old-style draft')
+    render(<Notes />)
+    await settle()
+    expect(pad()).toHaveValue('old-style draft')
+    expect(screen.getByRole('status')).toHaveTextContent('changed elsewhere')
+    fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }))
+    await settle()
+    expect(store['2026-10-13']).toBe('old-style draft')
   })
 
   it('keeps the day you cleared in reach of the arrows', async () => {

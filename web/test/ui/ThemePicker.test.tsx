@@ -134,14 +134,15 @@ describe('ThemePicker', () => {
     localStorage.setItem('devbox.look', JSON.stringify(look))
     const saved = savedLook()!
     expect(saved.palette).toEqual(GHOSTTY.dark.palette)
-    expect([saved.cellHeight, saved.padding, saved.minimumContrast, saved.fontSize, saved.fontFamily, saved.cursorStyle]).toEqual(
-      Array(6).fill(undefined),
-    )
+    expect([saved.cellHeight, saved.padding, saved.fontSize, saved.fontFamily, saved.cursorStyle]).toEqual(Array(5).fill(undefined))
+    expect(saved.minimumContrast).toBe(21)
     expect(() => applyLook(saved)).not.toThrow()
   })
 
   it('applies the same limits to a fresh Ghostty look as to a saved one', () => {
-    expect(ghosttyLook({ ...GHOSTTY, fontSize: 80, padding: [8, 250, 8, 10] })).not.toHaveProperty('fontSize')
+    const look = ghosttyLook({ ...GHOSTTY, fontSize: 80, padding: [8, 250, 8, 10.4], cellHeight: { value: 120, unit: '%' } })
+    expect(look).toMatchObject({ fontSize: 72, padding: [8, 200, 8, 10], cellHeight: { value: 100, unit: '%' } })
+    expect(ghosttyLook({ ...GHOSTTY, fontFamily: Array.from({ length: 9 }, (_, i) => `Font ${i}`) }).fontFamily).toHaveLength(8)
   })
 
   it('puts padding, weight, line height, and contrast back when you leave the Ghostty theme', async () => {

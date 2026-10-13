@@ -8,7 +8,14 @@ const locks = new Map<string, Promise<unknown>>()
 
 function locked<T>(key: string, run: () => Promise<T>): Promise<T> {
   const next = (locks.get(key) ?? Promise.resolve()).then(run, run)
-  locks.set(key, next.catch(() => undefined))
+  const settled = next.then(
+    () => undefined,
+    () => undefined,
+  )
+  locks.set(key, settled)
+  void settled.then(() => {
+    if (locks.get(key) === settled) locks.delete(key)
+  })
   return next
 }
 

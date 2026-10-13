@@ -272,27 +272,31 @@ function validPalette(p: unknown): boolean {
 }
 
 function sane(look: Look): Look {
-  const between = (n: unknown, lo: number, hi: number): n is number => typeof n === 'number' && n >= lo && n <= hi
+  const clamp = (n: unknown, lo: number, hi: number): number | undefined =>
+    typeof n === 'number' && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : undefined
   const flag = (v: unknown): v is boolean => typeof v === 'boolean'
   const { id, label, palette, lightPalette, fontFamily, fontSize, cursorStyle, cursorBlink } = look
   const { minimumContrast, boldIsBright, thicken, cellHeight, padding } = look
+  const size = clamp(fontSize, 6, 72)
+  const contrast = clamp(minimumContrast, 1, 21)
+  const cell = clamp(cellHeight?.value, -100, 100)
+  const families = Array.isArray(fontFamily) ? fontFamily.filter((f): f is string => typeof f === 'string').slice(0, 8) : []
+  const pads = Array.isArray(padding) && padding.length === 4 ? padding.map((n) => clamp(n, 0, 200)) : []
   return {
     id,
     label: typeof label === 'string' ? label : 'Ghostty',
     ...(validPalette(palette) ? { palette } : {}),
     ...(lightPalette !== undefined && validPalette(lightPalette) ? { lightPalette } : {}),
-    ...(Array.isArray(fontFamily) && fontFamily.length <= 8 && fontFamily.every((f) => typeof f === 'string') ? { fontFamily } : {}),
-    ...(between(fontSize, 6, 72) ? { fontSize } : {}),
+    ...(families.length ? { fontFamily: families } : {}),
+    ...(size !== undefined ? { fontSize: size } : {}),
     ...(cursorStyle === 'block' || cursorStyle === 'bar' || cursorStyle === 'underline' ? { cursorStyle } : {}),
     ...(flag(cursorBlink) ? { cursorBlink } : {}),
-    ...(between(minimumContrast, 1, 21) ? { minimumContrast } : {}),
+    ...(contrast !== undefined ? { minimumContrast: contrast } : {}),
     ...(flag(boldIsBright) ? { boldIsBright } : {}),
     ...(flag(thicken) ? { thicken } : {}),
-    ...(cellHeight && between(cellHeight.value, -100, 100) && (cellHeight.unit === 'px' || cellHeight.unit === '%')
-      ? { cellHeight }
-      : {}),
-    ...(Array.isArray(padding) && padding.length === 4 && padding.every((n) => Number.isInteger(n) && between(n, 0, 200))
-      ? { padding }
+    ...(cell !== undefined && (cellHeight?.unit === 'px' || cellHeight?.unit === '%') ? { cellHeight: { value: cell, unit: cellHeight.unit } } : {}),
+    ...(pads.length === 4 && pads.every((n) => n !== undefined)
+      ? { padding: pads.map((n) => Math.round(n!)) as [number, number, number, number] }
       : {}),
   }
 }
