@@ -256,8 +256,8 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
   for (const listener of listeners) {
     try {
       listener()
-    } catch {
-      void 0
+    } catch (err) {
+      console.error(err)
     }
   }
 }

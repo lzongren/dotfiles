@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { getNote, getNoteDays, putNote, type ApiResult } from '../api'
 import { ignoredTarget } from './Overview'
 
@@ -29,48 +29,36 @@ function stored(text: string): string {
   return text.trim() === '' ? '' : text
 }
 
+function quietly<T>(run: () => T, fallback: T): T {
+  try {
+    return run()
+  } catch {
+    return fallback
+  }
+}
+
+function remember(key: string, value: string): void {
+  quietly(() => localStorage.setItem(key, value), undefined)
+}
+
 function readDraft(day: string): Draft | null {
-  try {
-    const raw = localStorage.getItem(DRAFT + day)
-    if (raw === null) return null
-    try {
-      const parsed = JSON.parse(raw) as Partial<Draft> | null
-      if (parsed && typeof parsed.text === 'string' && typeof parsed.base === 'string') return { day, text: parsed.text, base: parsed.base }
-    } catch {
-      void 0
-    }
-    return { day, text: raw, base: LEGACY_BASE }
-  } catch {
-    return null
-  }
-}
-
-function writeDraft(draft: Draft): void {
-  try {
-    localStorage.setItem(DRAFT + draft.day, JSON.stringify({ text: draft.text, base: draft.base }))
-  } catch {
-    void 0
-  }
-}
-
-function dropDraft(day: string, ifText: string): void {
-  try {
-    const current = readDraft(day)
-    if (current && stored(current.text) === stored(ifText)) localStorage.removeItem(DRAFT + day)
-  } catch {
-    void 0
-  }
+  const raw = quietly(() => localStorage.getItem(DRAFT + day), null)
+  if (raw === null) return null
+  const parsed = quietly(() => JSON.parse(raw) as Partial<Draft> | null, null)
+  return parsed && typeof parsed.text === 'string' && typeof parsed.base === 'string'
+    ? { day, text: parsed.text, base: parsed.base }
+    : { day, text: raw, base: LEGACY_BASE }
 }
 
 function draftDays(): string[] {
-  try {
-    return Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? '')
-      .filter((key) => key.startsWith(DRAFT) && DAY.test(key.slice(DRAFT.length)))
-      .map((key) => key.slice(DRAFT.length))
-      .sort()
-  } catch {
-    return []
-  }
+  const keys = quietly(() => Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? ''), [])
+  return keys.filter((key) => key.startsWith(DRAFT) && DAY.test(key.slice(DRAFT.length))).map((key) => key.slice(DRAFT.length)).sort()
+}
+
+function dropDraft(day: string, ifText: string): string[] {
+  const current = readDraft(day)
+  if (current && stored(current.text) === stored(ifText)) quietly(() => localStorage.removeItem(DRAFT + day), undefined)
+  return draftDays()
 }
 
 export function localDay(date = new Date()): string {
@@ -88,21 +76,15 @@ function openItems(text: string): string[] {
   return text.match(OPEN_ITEM) ?? []
 }
 
-function readOpen(): boolean {
-  try {
-    return localStorage.getItem(OPEN_KEY) !== '0'
-  } catch {
-    return true
-  }
-}
-
 function retriable(result: ApiResult<unknown>): boolean {
   return result.kind === 'network' || result.kind === 'unreachable' || (result.kind === 'error' && (result.status ?? 500) >= 500)
 }
 
 export function Notes() {
   const [today, setToday] = useState(localDay)
-  const [day, setDay] = useState(() => draftDays()[0] ?? today)
+  const [drafts, setDrafts] = useState(draftDays)
+  const [day, setDay] = useState(() => drafts[0] ?? today)
+  const [editor, setEditor] = useState(() => !navigator.locks)
   const [text, setText] = useState('')
   const [days, setDays] = useState<string[]>([])
   const [loaded, setLoaded] = useState<string | null>(null)
@@ -112,26 +94,37 @@ export function Notes() {
   const [phase, setPhaseState] = useState<Phase>(IDLE)
   const [blocked, setBlocked] = useState(false)
   const [reload, setReload] = useState(0)
-  const [open, setOpen] = useState(readOpen)
-  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  const [open, setOpen] = useState(() => quietly(() => localStorage.getItem(OPEN_KEY) !== '0', true))
   const draftRef = useRef<Draft | null>(null)
   const phaseRef = useRef<Phase>(IDLE)
   const versionRef = useRef('')
   const sent = useRef(new Set<string>())
   const textRef = useRef('')
-  const loadedRef = useRef<string | null>(null)
+  const following = useRef<{ from: string; to: string } | null>(null)
   const chain = useRef<Promise<void>>(Promise.resolve())
   const debounce = useRef<number | null>(null)
   const retry = useRef<number | null>(null)
   const disposed = useRef(false)
   const area = useRef<HTMLTextAreaElement | null>(null)
   const toggleRef = useRef<HTMLButtonElement | null>(null)
-  loadedRef.current = loaded
 
+  const follow = () => {
+    const move = following.current
+    if (!move || draftRef.current) return
+    following.current = null
+    setDay((current) => (current === move.from ? move.to : current))
+  }
+  const show = (value: string) => {
+    setText(value)
+    textRef.current = value
+  }
   const setDraft = (next: Draft | null) => {
     draftRef.current = next
-    if (next) writeDraft(next)
-    else setBlocked(false)
+    if (next) remember(DRAFT + next.day, JSON.stringify({ text: next.text, base: next.base }))
+    else {
+      setBlocked(false)
+      follow()
+    }
     setDraftState(next)
   }
   const setPhase = (next: Phase) => {
@@ -144,7 +137,7 @@ export function Notes() {
       if (timer.current !== null) window.clearTimeout(timer.current)
       timer.current = null
     }
-    const step = async () => {
+    const step = async (): Promise<void> => {
       const job = draftRef.current
       const now = phaseRef.current
       if (!job || now.kind === 'conflict' || (now.kind === 'rejected' && now.text === job.text)) return
@@ -153,28 +146,29 @@ export function Notes() {
       const result = await putNote(job.day, job.text, job.base)
       const body = result.kind === 'error' ? ((result.body ?? {}) as { text?: unknown; version?: unknown }) : {}
       const theirs = typeof body.text === 'string' ? body.text : ''
-      const version = result.kind === 'ok' ? result.data.version : body.version
+      const raw = result.kind === 'ok' ? result.data.version : body.version
+      const version = typeof raw === 'string' ? raw : ''
       const known = [...sent.current, stored(draftRef.current?.text ?? job.text)].includes(stored(theirs))
       const conflict = result.kind === 'error' && result.status === 409
       const saved = result.kind === 'ok' ? job.text : conflict && known ? theirs : null
       if (saved !== null) {
-        dropDraft(job.day, saved)
+        setDrafts(dropDraft(job.day, saved))
         if (disposed.current) return
-        versionRef.current = typeof version === 'string' ? version : ''
+        versionRef.current = version
         sent.current.clear()
+        setDays((prev) => (stored(saved) ? (prev.includes(job.day) ? prev : [...prev, job.day].sort().reverse()) : prev.filter((d) => d !== job.day)))
         const current = draftRef.current
         if (current && stored(current.text) === stored(saved)) setDraft(null)
         else if (current) {
-          setDraft({ ...current, base: versionRef.current })
-          if (result.kind !== 'ok') void save()
+          setDraft({ ...current, base: version })
+          if (result.kind !== 'ok') return step()
         }
-        setDays((prev) => (stored(saved) ? (prev.includes(job.day) ? prev : [...prev, job.day].sort().reverse()) : prev.filter((d) => d !== job.day)))
         setPhase(IDLE)
         return
       }
       if (disposed.current) return
       if (!draftRef.current) setPhase(IDLE)
-      else if (conflict) setPhase({ kind: 'conflict', text: theirs, version: typeof version === 'string' ? version : '' })
+      else if (conflict) setPhase({ kind: 'conflict', text: theirs, version })
       else if (retriable(result)) {
         setPhase({ kind: 'offline' })
         retry.current = window.setTimeout(() => void save(), RETRY_MS)
@@ -186,10 +180,23 @@ export function Notes() {
 
   const go = async (target: string | undefined) => {
     if (!target) return
+    following.current = null
     await save()
     if (draftRef.current) setBlocked(true)
     else setDay(target)
   }
+
+  useEffect(() => {
+    if (!navigator.locks) return
+    const stop = new AbortController()
+    const held = new Promise<void>((resolve) => stop.signal.addEventListener('abort', () => resolve()))
+    const hold = () => {
+      setEditor(true)
+      return held
+    }
+    navigator.locks.request('devbox.notes', { signal: stop.signal }, hold).catch(() => undefined)
+    return () => stop.abort()
+  }, [])
 
   useEffect(() => {
     let live = true
@@ -211,20 +218,19 @@ export function Notes() {
       const server = ok ? result.data.text : null
       versionRef.current = ok ? (typeof result.data.version === 'string' ? result.data.version : '') : (kept?.base ?? '')
       if (kept && server !== null && kept.text === server) {
-        dropDraft(day, server)
+        if (editor) setDrafts(dropDraft(day, server))
         kept = null
       }
       const shown = kept?.text ?? server ?? ''
-      setText(shown)
-      textRef.current = shown
-      setDraft(kept)
+      show(shown)
+      setDraft(editor ? kept : null)
       setLoaded(day)
-      if (kept) void save()
+      if (kept && editor) void save()
       const list = await getNoteDays()
       if (!live || list.kind !== 'ok' || !Array.isArray(list.data.days)) return
       setDays(list.data.days)
       const previous = list.data.days.find((d) => d < day)
-      if (shown.trim() !== '' || !previous) return
+      if (!editor || shown.trim() !== '' || !previous) return
       const before = await getNote(previous)
       const items = before.kind === 'ok' && typeof before.data.text === 'string' ? openItems(before.data.text) : []
       if (live && items.length > 0 && textRef.current.trim() === '') setCarry({ from: previous, items })
@@ -232,36 +238,31 @@ export function Notes() {
     return () => {
       live = false
     }
-  }, [day, reload])
+  }, [day, reload, editor])
 
   useEffect(() => {
     const tick = window.setInterval(() => {
       const now = localDay()
       if (now === today) return
       setToday(now)
-      void save().then(() => setDay((current) => (current === today && !draftRef.current ? now : current)))
+      following.current = { from: today, to: now }
+      void save().then(follow)
     }, 60_000)
     return () => window.clearInterval(tick)
   }, [today, save])
 
   useEffect(() => {
-    const adopt = (event: StorageEvent) => {
+    const mirror = (event: StorageEvent) => {
       if (!event.key?.startsWith(DRAFT)) return
-      rerender()
-      if (event.key !== DRAFT + day || loadedRef.current !== day) return
+      setDrafts(draftDays())
+      if (editor || event.key !== DRAFT + day) return
       const next = readDraft(day)
-      draftRef.current = next
-      setDraftState(next)
-      if (!next) {
-        setReload((n) => n + 1)
-        return
-      }
-      setText(next.text)
-      textRef.current = next.text
+      if (next) show(next.text)
+      else setReload((n) => n + 1)
     }
-    window.addEventListener('storage', adopt)
-    return () => window.removeEventListener('storage', adopt)
-  }, [day])
+    window.addEventListener('storage', mirror)
+    return () => window.removeEventListener('storage', mirror)
+  }, [day, editor])
 
   useEffect(() => {
     disposed.current = false
@@ -286,9 +287,8 @@ export function Notes() {
 
   const edit = (next: string) => {
     const now = phaseRef.current
-    if (loadedRef.current !== day || now.kind === 'conflict') return
-    setText(next)
-    textRef.current = next
+    if (!editor || loaded !== day || now.kind === 'conflict') return
+    show(next)
     setCarry(null)
     setDraft({ day, text: next, base: draftRef.current?.base ?? versionRef.current })
     if (now.kind === 'rejected' && now.text !== next) setPhase(IDLE)
@@ -296,35 +296,27 @@ export function Notes() {
     debounce.current = window.setTimeout(() => void save(), SAVE_MS)
   }
 
-  const resolve = (keep: boolean) => {
+  const discard = () => {
+    if (draftRef.current) setDrafts(dropDraft(day, draftRef.current.text))
+    setDraft(null)
+    setReload((n) => n + 1)
+  }
+
+  const keep = () => {
     const conflict = phaseRef.current
-    if (conflict.kind !== 'conflict') return
-    versionRef.current = conflict.version
+    if (conflict.kind !== 'conflict' || !draftRef.current) return
     sent.current.clear()
     setPhase(IDLE)
-    if (keep && draftRef.current) {
-      setDraft({ ...draftRef.current, base: conflict.version })
-      void save()
-    } else {
-      if (draftRef.current) dropDraft(day, draftRef.current.text)
-      setDraft(null)
-      setText(conflict.text)
-      textRef.current = conflict.text
-    }
+    setDraft({ ...draftRef.current, base: conflict.version })
+    void save()
   }
 
   const toggle = () => {
-    setOpen((was) => {
-      try {
-        localStorage.setItem(OPEN_KEY, was ? '0' : '1')
-      } catch {
-        void 0
-      }
-      return !was
-    })
+    remember(OPEN_KEY, open ? '0' : '1')
+    setOpen(!open)
   }
 
-  const timeline = [...new Set([today, day, ...days, ...draftDays()])].sort().reverse()
+  const timeline = [...new Set([today, day, ...days, ...drafts])].sort().reverse()
   const index = timeline.indexOf(day)
   const older = timeline[index + 1]
   const newer = index > 0 ? timeline[index - 1] : undefined
@@ -334,16 +326,19 @@ export function Notes() {
     ? ["couldn't load this note", true]
     : loaded !== day
       ? ['', false]
-      : phase.kind === 'conflict'
-        ? ['changed elsewhere', true]
-        : phase.kind === 'rejected'
-          ? [`not saved: ${phase.problem}`, true]
-          : phase.kind === 'offline'
-            ? ['not saved yet, retrying', true]
-            : draft
-              ? [phase.kind === 'saving' ? 'saving…' : 'editing…', false]
-              : ['saved', false]
-  const [shown, alarming] = blocked && draft ? [`${warning ? status : 'not saved yet'} — switch days once it saves`, true] : [status, warning]
+      : !editor
+        ? ['editing in another tab', false]
+        : phase.kind === 'conflict'
+          ? ['changed elsewhere', true]
+          : phase.kind === 'rejected'
+            ? [`not saved: ${phase.problem}`, true]
+            : phase.kind === 'offline'
+              ? ['not saved yet, retrying', true]
+              : draft
+                ? [phase.kind === 'saving' ? 'saving…' : 'editing…', false]
+                : ['saved', false]
+  const then = phase.kind === 'conflict' ? 'resolve the conflict first' : 'switch days once it saves'
+  const [shown, alarming] = blocked && draft ? [`${warning ? status : 'not saved yet'} — ${then}`, true] : [status, warning]
 
   return (
     <section className="notes" aria-label="notes">
@@ -371,7 +366,7 @@ export function Notes() {
             aria-label={`notes for ${label.toLowerCase()}`}
             placeholder={'What are you on today?\n- [ ] a thing to finish\n- [x] a thing done'}
             spellCheck
-            readOnly={loaded !== day || phase.kind === 'conflict'}
+            readOnly={!editor || loaded !== day || phase.kind === 'conflict'}
             value={text}
             onChange={(e) => edit(e.target.value)}
             onBlur={() => void save()}
@@ -397,15 +392,15 @@ export function Notes() {
                 Retry
               </button>
             ) : null}
+            {phase.kind === 'rejected' || phase.kind === 'conflict' ? (
+              <button type="button" className="notes-carry" onClick={discard}>
+                {phase.kind === 'conflict' ? 'Use saved' : 'Discard unsaved'}
+              </button>
+            ) : null}
             {phase.kind === 'conflict' ? (
-              <>
-                <button type="button" className="notes-carry" onClick={() => resolve(false)}>
-                  Use saved
-                </button>
-                <button type="button" className="notes-carry" onClick={() => resolve(true)}>
-                  Keep mine
-                </button>
-              </>
+              <button type="button" className="notes-carry" onClick={keep}>
+                Keep mine
+              </button>
             ) : null}
             <span className={`notes-status${alarming ? ' notes-status-error' : ''}`}>{shown}</span>
             <span className="visually-hidden" role="status">

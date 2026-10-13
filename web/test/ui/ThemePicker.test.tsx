@@ -172,20 +172,23 @@ describe('ThemePicker', () => {
     expect(bg()).toBe('#282828')
   })
 
-  it('keeps your theme when a terminal fails to take it', async () => {
+  it('keeps your theme when a terminal fails to take it, and reports the failure', async () => {
     localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const stop = onTerminalLook(() => {
       throw new Error('terminal disposed')
     })
     serve(null)
     await renderPicker()
     stop()
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({ message: 'terminal disposed' }))
+    errors.mockRestore()
     expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Dracula')
     expect(savedLook()?.id).toBe('dracula')
     expect(bg()).not.toBe('')
   })
 
-  it('stays up when even the fallback look cannot be painted', async () => {
+  it('stays up when even the fallback look cannot be painted, and keeps your choice for next time', async () => {
     localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
     vi.spyOn(document.documentElement.style, 'removeProperty').mockImplementation(() => {
       throw new Error('style locked')
@@ -193,6 +196,7 @@ describe('ThemePicker', () => {
     serve(null)
     await renderPicker()
     expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Devbox')
+    expect(savedLook()?.id).toBe('dracula')
   })
 
   it('repaints terminals on zoom only when the line height depends on it', async () => {

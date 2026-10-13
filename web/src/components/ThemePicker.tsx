@@ -55,7 +55,6 @@ export function ThemePicker() {
     try {
       applyLook(selected, prefs)
     } catch {
-      saveLook(null)
       try {
         applyLook(DEVBOX, prefs)
       } catch {

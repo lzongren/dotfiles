@@ -218,7 +218,8 @@ describe('Notes', () => {
     expect(store['2026-10-12']).toBe('monday')
   })
 
-  it('asks before overwriting a note that changed in another tab or editor', async () => {
+  it('asks before overwriting a note that changed in another editor, and says to settle it before moving', async () => {
+    store['2026-10-12'] = 'monday'
     store['2026-10-13'] = 'morning'
     render(<Notes />)
     await settle()
@@ -228,6 +229,9 @@ describe('Notes', () => {
     expect(store['2026-10-13']).toBe('morning\nedited in vim')
     expect(screen.getByRole('status')).toHaveTextContent('changed elsewhere')
     expect(pad()).toHaveAttribute('readonly')
+    fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
+    await settle()
+    expect(screen.getByRole('status')).toHaveTextContent('changed elsewhere — resolve the conflict first')
     fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }))
     await settle()
     expect(store['2026-10-13']).toBe('morning, from the browser')
@@ -322,42 +326,93 @@ describe('Notes', () => {
     expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBeNull()
   })
 
-  it('follows a draft typed in another tab, and reloads once that tab has saved it', async () => {
+  it('mirrors the tab that holds the pad, read-only, and takes over its draft when that tab goes', async () => {
     store['2026-10-13'] = 'start'
-    render(<Notes />)
-    await settle()
-    const key = 'devbox.notes.draft.2026-10-13'
-    const draft = JSON.stringify({ text: 'start, from tab two', base: 'h:start' })
-    localStorage.setItem(key, draft)
-    act(() => {
-      window.dispatchEvent(new StorageEvent('storage', { key, newValue: draft }))
-    })
-    expect(pad()).toHaveValue('start, from tab two')
-    store['2026-10-13'] = 'start, from tab two, saved'
-    localStorage.removeItem(key)
-    act(() => {
-      window.dispatchEvent(new StorageEvent('storage', { key, newValue: null }))
-    })
-    await settle()
-    expect(pad()).toHaveValue('start, from tab two, saved')
-    expect(shown()).toBe('saved')
-    expect(puts).toEqual([])
+    let grant = () => undefined as void
+    const request = (_name: string, _options: object, hold: () => Promise<void>) =>
+      new Promise<void>((done) => {
+        grant = () => void hold().then(done)
+      })
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true })
+    try {
+      render(<Notes />)
+      await settle()
+      expect(pad()).toHaveValue('start')
+      expect(pad()).toHaveAttribute('readonly')
+      expect(shown()).toBe('editing in another tab')
+      const key = 'devbox.notes.draft.2026-10-13'
+      const typed = (text: string, base: string) => {
+        const value = JSON.stringify({ text, base })
+        localStorage.setItem(key, value)
+        act(() => {
+          window.dispatchEvent(new StorageEvent('storage', { key, newValue: value }))
+        })
+      }
+      typed('start, typed there', 'h:start')
+      expect(pad()).toHaveValue('start, typed there')
+      fireEvent.change(pad(), { target: { value: 'typed here' } })
+      await settle(700)
+      expect(pad()).toHaveValue('start, typed there')
+      store['2026-10-13'] = 'start, typed there, saved'
+      localStorage.removeItem(key)
+      act(() => {
+        window.dispatchEvent(new StorageEvent('storage', { key, newValue: null }))
+      })
+      await settle()
+      expect(pad()).toHaveValue('start, typed there, saved')
+      typed('last words before that tab closed', 'h:start, typed there, saved')
+      expect(puts).toEqual([])
+      act(() => grant())
+      await settle()
+      expect(store['2026-10-13']).toBe('last words before that tab closed')
+      expect(pad()).not.toHaveAttribute('readonly')
+      expect(shown()).toBe('saved')
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks')
+    }
   })
 
-  it("keeps another tab's draft when you take the saved version here", async () => {
-    store['2026-10-13'] = 'v1'
+  it('lets you discard a draft the server keeps refusing, so it cannot pin the pad to its day', async () => {
+    store['2026-10-13'] = 'today'
+    failPuts = 100
+    failStatus = 413
+    localStorage.setItem('devbox.notes.draft.2026-10-11', JSON.stringify({ text: 'a huge paste', base: '' }))
     render(<Notes />)
     await settle()
-    store['2026-10-13'] = 'v2 from elsewhere'
-    fireEvent.change(pad(), { target: { value: 'v1 local' } })
+    expect(screen.getByRole('status')).toHaveTextContent('not saved: request body too large')
+    fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved' }))
+    await settle()
+    expect(localStorage.getItem('devbox.notes.draft.2026-10-11')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'newer notes' }))
+    await settle()
+    expect(pad()).toHaveValue('today')
+  })
+
+  it('switches days in one click when a lost reply is matched and the rest saves', async () => {
+    store['2026-10-12'] = 'monday'
+    store['2026-10-13'] = 'start'
+    loseReplies = 1
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: 'a' } })
     await settle(700)
-    const theirs = JSON.stringify({ text: 'typed in tab two', base: 'h:v1' })
-    localStorage.setItem('devbox.notes.draft.2026-10-13', theirs)
-    fireEvent.click(screen.getByRole('button', { name: 'Use saved' }))
-    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toBe(theirs)
+    fireEvent.change(pad(), { target: { value: 'ab' } })
+    fireEvent.click(screen.getByRole('button', { name: 'older notes' }))
+    await settle()
+    expect(store['2026-10-13']).toBe('ab')
+    expect(pad()).toHaveValue('monday')
   })
 
-  it('stops calling yesterday Today after midnight, and only moves on once nothing is unsaved', async () => {
+  it('does not scan stored drafts while you type', async () => {
+    render(<Notes />)
+    await settle()
+    const scans = vi.spyOn(Storage.prototype, 'key')
+    for (const text of ['a', 'ab', 'abc']) fireEvent.change(pad(), { target: { value: text } })
+    expect(scans).not.toHaveBeenCalled()
+    scans.mockRestore()
+  })
+
+  it('stops calling yesterday Today after midnight, and moves on once the draft has saved', async () => {
     vi.setSystemTime(new Date(2026, 9, 13, 23, 59, 30))
     store['2026-10-13'] = 'late'
     failPuts = 100
@@ -370,6 +425,8 @@ describe('Notes', () => {
     failPuts = 0
     await settle(5100)
     expect(store['2026-10-13']).toBe('late, still typing')
+    expect(screen.getByRole('button', { name: /Notes · Today/ })).toBeInTheDocument()
+    expect(pad()).toHaveValue('')
   })
 
   it('moves to the new day at midnight when everything is saved', async () => {
