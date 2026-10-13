@@ -201,6 +201,22 @@ beforeAll(() => {
     [
       line({ type: 'session_meta', timestamp: at(30), payload: { cwd: '/work/cdx', thread_source: 'user', source: 'cli' } }),
       line({ type: 'turn_context', timestamp: at(30), payload: { model: 'gpt-codex-x', cwd: '/work/cdx/crate' } }),
+      line({
+        type: 'response_item',
+        timestamp: at(41),
+        payload: {
+          type: 'function_call',
+          name: 'shell_command',
+          arguments: JSON.stringify({
+            command: `apply_patch${' '.repeat(40_000)}x\n${"apply_patch '*** Begin Patch\n".repeat(4_000)}apply_patch <<'END-P' 2>&1\n*** Begin Patch\n*** Add File: f.md\n context *** Delete File: /work/cdx/src/lib.rs\n+x *** End Patch here\n*** End Patch\nEND-P\napply_patch <<'EOF'\n*** Begin Patch\n*** Add File: g.md\n*** End Patch\nEOF`,
+          }),
+        },
+      }),
+      line({
+        type: 'response_item',
+        timestamp: at(42),
+        payload: { type: 'function_call', name: 'shell_command', arguments: JSON.stringify({ command: "cd sub && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: h.md\n*** End Patch\nEOF", workdir: '~/elsewhere' }) },
+      }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'user_message', message: 'Port the parser' } }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'task_started' } }),
       line({
@@ -359,6 +375,8 @@ describe('agent probe', () => {
       { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
     ])
     expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
+      ['/work/cdx/crate/f.md', 'created'],
+      ['/work/cdx/crate/g.md', 'created'],
       ['/work/cdx/crate/e.md', 'created'],
       ['/work/cdx/crate/c.md', 'created'],
       ['/work/cdx/crate/obj.md', 'created'],

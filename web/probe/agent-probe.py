@@ -28,8 +28,10 @@ TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
-PATCH_RE = re.compile(r"^[ \t]*\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
-SHELL_PATCH_RE = re.compile(r"(?:^|[\s;&|(])apply_patch\s*(?:<<-?\s*['\"]?\w+['\"]?\s*)?['\"]?\s*(\*\*\* Begin Patch.*?\*\*\* End Patch)", re.S)
+PATCH_RE = re.compile(r"^\t*\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
+SHELL_PATCH_RE = re.compile(r"(?:^|[\s;&|(])apply_patch[ \t]{0,8}(?:<<-?[ \t]{0,4}['\"]?[\w-]{1,32}['\"]?[^\n]{0,64})?\r?\n?\t{0,8}['\"]?\*\*\* Begin Patch")
+END_PATCH_RE = re.compile(r"^\t*\*\*\* End Patch[ \t]*\r?$", re.M)
+CD_RE = re.compile(r"(?:^|[\s;&|(])cd[ \t]")
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -413,14 +415,13 @@ def track_files(files, rec, at, cwd):
             parts = [c for c in (command if isinstance(command, list) else [command]) if isinstance(c, str)]
             workdir = args.get("workdir")
             if isinstance(workdir, str) and workdir:
-                cwd = os.path.join(cwd, workdir) if cwd else workdir
-            call = SHELL_PATCH_RE.search(parts[-1]) if parts else None
+                cwd = os.path.join(cwd, os.path.expanduser(workdir)) if cwd else os.path.expanduser(workdir)
             if payload["name"] == "apply_patch":
                 patch = args.get("input")
             elif len(parts) == 2 and parts[0] == "apply_patch":
                 patch = parts[1]
-            elif call:
-                patch = call.group(1)
+            elif parts:
+                patch = shell_patches(parts[-1])
     if not isinstance(patch, str):
         return
     last = None
@@ -431,6 +432,20 @@ def track_files(files, rec, at, cwd):
             touch(files, last, "deleted", at)
         touch(files, full, {"Add File": "created", "Update File": "edited", "Delete File": "deleted", "Move to": "created"}[match.group(1)], at)
         last = full
+
+
+def shell_patches(script):
+    found, at = [], 0
+    while True:
+        call = SHELL_PATCH_RE.search(script, at)
+        if not call or CD_RE.search(script, 0, call.start()):
+            break
+        end = END_PATCH_RE.search(script, call.end())
+        if not end:
+            break
+        found.append(script[call.end() - len("*** Begin Patch"):end.end()])
+        at = end.end()
+    return "\n".join(found) or None
 
 
 def touch(files, path, action, at):
