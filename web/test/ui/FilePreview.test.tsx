@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FilePreview, parseDelimited } from '../../src/components/FilePreview'
+import { FilePreview, indentJson, parseDelimited } from '../../src/components/FilePreview'
 import { Overview } from '../../src/components/Overview'
 import type { AgentInsight, FileView, Session } from '../../src/shared/types'
 
@@ -179,20 +179,33 @@ describe('file viewer', () => {
     Element.prototype.scrollIntoView = scroll
     const dialog = preview('/w/docs/plan.md', ['/w/docs/plan.md', '/w/src/x.ts'])
     fireEvent.click(await dialog.findByRole('link', { name: 'top' }))
-    expect(scroll).toHaveBeenCalled()
     expect(scroll.mock.contexts[0]).toBe(dialog.getByRole('heading', { name: 'Plan' }))
+    expect(document.activeElement).toBe(dialog.getByRole('heading', { name: 'Plan' }))
+    const middle = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 })
+    dialog.getByRole('link', { name: 'the code' }).dispatchEvent(middle)
+    expect(middle.defaultPrevented).toBe(true)
 
     fireEvent.click(dialog.getByRole('link', { name: 'elsewhere' }))
     expect(dialog.getByRole('status')).toHaveTextContent("hosts isn't a file this agent wrote")
 
     fireEvent.click(dialog.getByRole('link', { name: 'the code' }))
-    expect(await dialog.findByRole('heading', { name: 'x.ts' })).toBeInTheDocument()
+    expect(await dialog.findByRole('heading', { name: 'x.ts' })).toHaveFocus()
     expect(await dialog.findByLabelText('x.ts contents')).toContainHTML('<span class="hljs-keyword">const</span>')
     expect(location.hash).toBe('')
 
     fireEvent.click(dialog.getByRole('button', { name: 'Back' }))
+    await waitFor(() => expect(dialog.getByRole('heading', { name: 'plan.md' })).toHaveFocus())
     expect(await dialog.findByRole('heading', { name: 'Plan' })).toBeInTheDocument()
     expect(dialog.queryByRole('button', { name: 'Back' })).toBeNull()
+  })
+
+  it('re-indents JSON without changing a single value', () => {
+    for (const sample of ['{"a":[1,"x",{},[]],"b":{"c":null,"d":[true,false]}}', '[]', '"s"', '{ "e" : [ ] }']) {
+      expect(indentJson(sample)).toBe(JSON.stringify(JSON.parse(sample), null, 2))
+    }
+    expect(indentJson('{"id":12345678901234567890,"n":1.0,"k":1,"k":2,"s":"a\\"},[:"}')).toBe(
+      '{\n  "id": 12345678901234567890,\n  "n": 1.0,\n  "k": 1,\n  "k": 2,\n  "s": "a\\"},[:"\n}',
+    )
   })
 
   it('pretty-prints JSON, and shows broken JSON as it is', async () => {
@@ -217,6 +230,20 @@ describe('file viewer', () => {
     const table = within(await dialog.findByRole('table'))
     expect(table.getByRole('columnheader', { name: 'count' })).toBeInTheDocument()
     expect(table.getByRole('cell', { name: 'foo' })).toBeInTheDocument()
+    expect(dialog.getByRole('region', { name: 't.tsv, as a table' })).toBeInTheDocument()
+    cleanup()
+
+    const lines = (n: number) => ['h', ...Array.from({ length: n }, (_, i) => `${i}`)].join('\n')
+    text('/w/full.csv', lines(1000))
+    const full = preview('/w/full.csv')
+    expect(await full.findAllByRole('row')).toHaveLength(1001)
+    expect(full.queryByText(/Showing the first/)).toBeNull()
+    cleanup()
+
+    text('/w/more.csv', lines(1001))
+    const more = preview('/w/more.csv')
+    expect(await more.findAllByRole('row')).toHaveLength(1001)
+    expect(more.getByText('Showing the first 1000 rows.')).toBeInTheDocument()
   })
 
   it('renders HTML in a sandbox with scripts off', async () => {

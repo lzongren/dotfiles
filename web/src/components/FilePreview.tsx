@@ -107,12 +107,42 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
   return rows
 }
 
+export function indentJson(text: string): string {
+  let out = ''
+  let depth = 0
+  const pad = () => `\n${'  '.repeat(depth)}`
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '"') {
+      let end = i + 1
+      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1
+      out += text.slice(i, end + 1)
+      i = end
+    } else if (c === '{' || c === '[') {
+      const next = text.slice(i + 1).search(/\S/) + i + 1
+      if (text[next] === (c === '{' ? '}' : ']')) {
+        out += c + text[next]
+        i = next
+      } else {
+        depth++
+        out += c + pad()
+      }
+    } else if (c === '}' || c === ']') {
+      depth--
+      out += pad() + c
+    } else if (c === ',') out += `,${pad()}`
+    else if (c === ':') out += ': '
+    else if (!/\s/.test(c)) out += c
+  }
+  return out
+}
+
 function Formatted({ format, text, path, onLink }: { format: Format; text: string; path: string; onLink: (path: string) => void }) {
   const html = useMemo(() => (format === 'markdown' ? renderMarkdown(text, path) : ''), [format, text, path])
-  const rows = useMemo(() => (format === 'table' ? parseDelimited(text, extension(path) === '.tsv' ? '\t' : ',') : []), [format, text, path])
+  const rows = useMemo(() => (format === 'table' ? parseDelimited(text, extension(path) === '.tsv' ? '\t' : ',', TABLE_ROWS + 2) : []), [format, text, path])
   const json = useMemo(() => {
     if (format !== 'json') return null
-    const pretty = JSON.stringify(JSON.parse(text), null, 2)
+    const pretty = indentJson(text)
     return { pretty, html: highlight(pretty, 'json') }
   }, [format, text])
   const name = baseName(path)
@@ -123,10 +153,17 @@ function Formatted({ format, text, path, onLink }: { format: Format; text: strin
       event.preventDefault()
       const anchor = link.getAttribute('data-anchor')
       const target = link.getAttribute('data-path')
-      if (anchor) document.getElementById(anchor)?.scrollIntoView?.({ block: 'start' })
-      else if (target) onLink(target)
+      const heading = anchor ? document.getElementById(anchor) : null
+      if (heading) {
+        heading.tabIndex = -1
+        heading.focus({ preventScroll: true })
+        heading.scrollIntoView?.({ block: 'start' })
+      } else if (target) onLink(target)
     }
-    return <article className="md" aria-label={`${name}, rendered`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} />
+    const auxClick = (event: MouseEvent<HTMLElement>) => {
+      if ((event.target as Element).closest('a')?.getAttribute('href') === '#') event.preventDefault()
+    }
+    return <article className="md" aria-label={`${name}, rendered`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} onAuxClick={auxClick} />
   }
   if (json) {
     return json.html !== null ? (
@@ -138,9 +175,9 @@ function Formatted({ format, text, path, onLink }: { format: Format; text: strin
     )
   }
   if (format === 'html') return <iframe className="file-frame" sandbox="" srcDoc={text} title={`${name}, rendered without scripts`} />
-  const [head, ...body] = rows
+  const [head, ...body] = rows.slice(0, TABLE_ROWS + 1)
   return (
-    <div className="file-table-wrap" tabIndex={0} aria-label={`${name}, as a table`}>
+    <div className="file-table-wrap" role="region" tabIndex={0} aria-label={`${name}, as a table`}>
       <table className="file-table">
         <thead>
           <tr>
@@ -161,7 +198,7 @@ function Formatted({ format, text, path, onLink }: { format: Format; text: strin
           ))}
         </tbody>
       </table>
-      {rows.length >= TABLE_ROWS ? <p className="hint">Showing the first {TABLE_ROWS} rows.</p> : null}
+      {rows.length > TABLE_ROWS + 1 ? <p className="hint">Showing the first {TABLE_ROWS} rows.</p> : null}
     </div>
   )
 }
@@ -207,6 +244,8 @@ function formatOf(view: FileView): Format | null {
 export function FilePreview({ file, known, onClose }: { file: FileRef; known: string[]; onClose: () => void }) {
   const id = useId()
   const ref = useRef<HTMLDialogElement | null>(null)
+  const title = useRef<HTMLHeadingElement | null>(null)
+  const moved = useRef(false)
   const [trail, setTrail] = useState([file.path])
   const [result, setResult] = useState<ApiResult<FileView> | null>(null)
   const [note, setNote] = useState('')
@@ -215,6 +254,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const path = trail[trail.length - 1]
   const follow = (target: string) => {
     if (known.includes(target)) {
+      moved.current = true
       setTrail((t) => [...t, target])
       setSource(false)
     } else setNote(`${baseName(target)} isn't a file this agent wrote, so it can't be opened here`)
@@ -239,6 +279,10 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     }
   }, [file.session, path])
 
+  useEffect(() => {
+    if (moved.current) title.current?.focus()
+  }, [path])
+
   const close = () => {
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
@@ -257,13 +301,15 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
 
   const view = result?.kind === 'ok' ? result.data : null
   const name = baseName(path)
-  const format = view ? formatOf(view) : null
+  const format = useMemo(() => (view ? formatOf(view) : null), [view])
   const showSource = !format || source
   return (
     <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
       <header className="file-head">
         <div className="file-title">
-          <h2 id={id}>{name}</h2>
+          <h2 id={id} ref={title} tabIndex={-1}>
+            {name}
+          </h2>
           <p className="file-path">{path}</p>
           {view ? (
             <p className="file-facts">
@@ -276,6 +322,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
             <button
               type="button"
               onClick={() => {
+                moved.current = true
                 setTrail((t) => t.slice(0, -1))
                 setSource(false)
               }}

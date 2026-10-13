@@ -38,9 +38,9 @@ const MAX = 512 * 1024
 
 export function languageOf(file: string): string | null {
   const name = file.slice(file.lastIndexOf('/') + 1)
-  if (BY_NAME[name]) return BY_NAME[name]
+  if (Object.hasOwn(BY_NAME, name)) return BY_NAME[name]
   const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : ''
-  const lang = BY_EXTENSION[ext] ?? ext
+  const lang = Object.hasOwn(BY_EXTENSION, ext) ? BY_EXTENSION[ext] : ext
   return hljs.getLanguage(lang) ? lang : null
 }
 

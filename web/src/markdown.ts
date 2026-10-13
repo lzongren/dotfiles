@@ -7,6 +7,7 @@ interface Env {
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, highlight: (code, lang) => highlight(code, lang.trim().split(/\s+/)[0] || null) ?? '' })
+md.linkify.set({ fuzzyLink: false })
 type Token = ReturnType<MarkdownIt['parse']>[number]
 const EXTERNAL = /^(https?:|mailto:)/i
 
@@ -14,8 +15,16 @@ export function slug(text: string): string {
   return text
     .toLowerCase()
     .trim()
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .replace(/\s+/g, '-')
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s/g, '-')
+}
+
+function decode(text: string): string {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
 }
 
 export function resolvePath(dir: string, ref: string): string {
@@ -31,11 +40,7 @@ export function resolvePath(dir: string, ref: string): string {
 function local(href: string, env: Env): string | null {
   const bare = href.split(/[?#]/)[0]
   if (!bare || /^[a-z][a-z0-9+.-]*:/i.test(bare)) return null
-  try {
-    return resolvePath(env.dir, decodeURIComponent(bare))
-  } catch {
-    return resolvePath(env.dir, bare)
-  }
+  return resolvePath(env.dir, decode(bare))
 }
 
 md.renderer.rules.heading_open = (tokens, i, options, env: Env, self) => {
@@ -51,7 +56,7 @@ md.renderer.rules.link_open = (tokens, i, options, env: Env, self) => {
   const href = token.attrGet('href') ?? ''
   if (href.startsWith('#')) {
     token.attrSet('href', '#')
-    token.attrSet('data-anchor', `md-${slug(decodeURIComponent(href.slice(1)))}`)
+    token.attrSet('data-anchor', `md-${slug(decode(href.slice(1)))}`)
   } else if (EXTERNAL.test(href)) {
     token.attrSet('target', '_blank')
     token.attrSet('rel', 'noopener noreferrer')
@@ -81,6 +86,6 @@ export function renderMarkdown(text: string, file: string): string {
     .render(text, env)
     .replace(/<(pre|table)>/g, '<$1 tabindex="0">')
     .replace(/<li>(<p>)?\[([ xX])\] /g, (_, p: string | undefined, mark: string) =>
-      `<li class="md-task">${p ?? ''}<input type="checkbox" disabled${mark === ' ' ? '' : ' checked'}> `,
+      `<li class="md-task">${p ?? ''}<input type="checkbox" aria-label="task" disabled${mark === ' ' ? '' : ' checked'}> `,
     )
 }

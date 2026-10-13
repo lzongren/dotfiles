@@ -34,6 +34,13 @@ describe('markdown rendering', () => {
     expect(html).toContain('<h1 id="md-open-questions">')
     expect(html).toContain('<h2 id="md-open-questions-1">')
     expect(html).toContain('href="#" data-anchor="md-open-questions"')
+    expect(render('## Setup & Install_now\n\n[toc](#setup--install_now)')).toMatch(/id="md-setup--install_now".*data-anchor="md-setup--install_now"/s)
+  })
+
+  it('survives malformed escapes and leaves bare file names as text', () => {
+    expect(render('[a](#%E0%A4) [b](x%E0%A4.md)')).toMatch(/data-anchor="md-e0a4".*data-path="\/home\/me\/work\/api\/docs\/x%E0%A4.md"/)
+    const html = render('see README.md, setup.py and https://example.com')
+    expect(html.match(/<a /g)).toHaveLength(1)
   })
 
   it('shows images it cannot load as links, and keeps inline data images', () => {
@@ -45,8 +52,8 @@ describe('markdown rendering', () => {
 
   it('renders task lists as checkboxes, tables, and highlighted code that keyboard users can scroll', () => {
     const html = render('- [ ] todo\n- [x] done\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst x = "y"\n```')
-    expect(html).toContain('<li class="md-task"><input type="checkbox" disabled> todo')
-    expect(html).toContain('<input type="checkbox" disabled checked> done')
+    expect(html).toContain('<li class="md-task"><input type="checkbox" aria-label="task" disabled> todo')
+    expect(html).toContain('<input type="checkbox" aria-label="task" disabled checked> done')
     expect(html).toContain('<table tabindex="0">')
     expect(html).toMatch(/<pre tabindex="0"><code class="language-ts"><span class="hljs-keyword">const<\/span>/)
   })
@@ -64,5 +71,6 @@ describe('code highlighting', () => {
     expect(languageOf('/w/notes.unknownext')).toBeNull()
     expect(highlight('x'.repeat(600 * 1024), 'python')).toBeNull()
     expect(highlight('<b>"x"</b>', 'xml')).not.toContain('<b>')
+    for (const name of ['/w/constructor', '/w/a.__proto__', '/w/x.toString']) expect(languageOf(name)).toBeNull()
   })
 })
