@@ -201,22 +201,6 @@ beforeAll(() => {
     [
       line({ type: 'session_meta', timestamp: at(30), payload: { cwd: '/work/cdx', thread_source: 'user', source: 'cli' } }),
       line({ type: 'turn_context', timestamp: at(30), payload: { model: 'gpt-codex-x', cwd: '/work/cdx/crate' } }),
-      line({
-        type: 'response_item',
-        timestamp: at(41),
-        payload: {
-          type: 'function_call',
-          name: 'shell_command',
-          arguments: JSON.stringify({
-            command: `apply_patch${' '.repeat(40_000)}x\n${"apply_patch '*** Begin Patch\n".repeat(4_000)}apply_patch <<'END-P' 2>&1\n*** Begin Patch\n*** Add File: f.md\n context *** Delete File: /work/cdx/src/lib.rs\n+x *** End Patch here\n*** End Patch\nEND-P\napply_patch <<'EOF'\n*** Begin Patch\n*** Add File: g.md\n*** End Patch\nEOF`,
-          }),
-        },
-      }),
-      line({
-        type: 'response_item',
-        timestamp: at(42),
-        payload: { type: 'function_call', name: 'shell_command', arguments: JSON.stringify({ command: "cd sub && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: h.md\n*** End Patch\nEOF", workdir: '~/elsewhere' }) },
-      }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'user_message', message: 'Port the parser' } }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'task_started' } }),
       line({
@@ -234,55 +218,20 @@ beforeAll(() => {
         },
       }),
       line({
-        type: 'response_item',
+        type: 'event_msg',
         timestamp: at(33),
-        payload: { type: 'function_call', name: 'apply_patch', arguments: JSON.stringify({ input: '*** Begin Patch\n*** Update File: /work/cdx/a.rs\n*** Move to: /work/cdx/b.rs\n@@\n*** End Patch' }) },
-      }),
-      line({
-        type: 'response_item',
-        timestamp: at(34),
-        payload: { type: 'function_call', name: 'shell', arguments: JSON.stringify({ command: ['apply_patch', '*** Begin Patch\n*** Add File: notes.md\n+x\n*** End Patch'] }) },
-      }),
-      line({
-        type: 'response_item',
-        timestamp: at(35),
         payload: {
-          type: 'function_call',
-          name: 'shell',
-          arguments: JSON.stringify({ command: ['bash', '-lc', "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: doc.md\n+x\n*** End Patch\nEOF"], workdir: 'docs' }),
+          type: 'patch_apply_end',
+          success: true,
+          changes: {
+            '/work/cdx/a.rs': { type: 'update', move_path: '/work/cdx/b.rs', unified_diff: '' },
+            '/work/cdx/crate/notes.md': { type: 'add', content: 'x' },
+            '/work/cdx/gone.rs': { type: 'delete', content: '' },
+          },
         },
       }),
-      line({ type: 'response_item', timestamp: at(36), payload: { type: 'function_call', name: 'apply_patch', arguments: { input: '*** Begin Patch\n*** Add File: obj.md\n*** End Patch' } } }),
-      line({
-        type: 'response_item',
-        timestamp: at(37),
-        payload: { type: 'function_call', name: 'shell_command', arguments: JSON.stringify({ command: "command -v apply_patch && apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: c.md\n*** End Patch\nEOF" }) },
-      }),
-      line({
-        type: 'response_item',
-        timestamp: at(39),
-        payload: {
-          type: 'function_call',
-          name: 'shell_command',
-          arguments: JSON.stringify({
-            command: "set -e\napply_patch <<-'EOF'\r\n\t*** Begin Patch\r\n\t*** Add File: e.md\r\n\t*** End Patch\r\nEOF\nrg -n apply_patch src; cat > f <<'X'\n*** Begin Patch\n*** Delete File: /work/cdx/src/lib.rs\n*** End Patch\nX\ncd foo\\ bar",
-          }),
-        },
-      }),
-      line({
-        type: 'response_item',
-        timestamp: at(40),
-        payload: { type: 'function_call', name: 'shell_command', arguments: JSON.stringify({ command: "apply_patch.py <<'EOF'\n*** Begin Patch\n*** Delete File: /work/cdx/src/lib.rs\n*** End Patch\nEOF" }) },
-      }),
-      line({
-        type: 'response_item',
-        timestamp: at(38),
-        payload: {
-          type: 'function_call',
-          name: 'exec_command',
-          arguments: JSON.stringify({ cmd: "cat > case.txt <<'EOF'\n*** Begin Patch\n*** Delete File: src/lib.rs\n*** End Patch\nEOF\npython3 test_apply_patch.py case.txt" }),
-        },
-      }),
+      line({ type: 'event_msg', timestamp: at(34), payload: { type: 'patch_apply_end', success: false, changes: { '/work/cdx/never.rs': { type: 'add', content: '' } } } }),
+      line({ type: 'event_msg', timestamp: at(35), payload: { type: 'patch_apply_end', success: true, changes: { 'rel.md': { type: 'update', unified_diff: '' }, '/work/cdx/odd.rs': 'nope' } } }),
     ].join(''),
   )
   write('.codex/session_index.jsonl', line({ id: uuid, thread_name: 'Port the parser to Rust' }))
@@ -375,15 +324,11 @@ describe('agent probe', () => {
       { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
     ])
     expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
-      ['/work/cdx/crate/f.md', 'created'],
-      ['/work/cdx/crate/g.md', 'created'],
-      ['/work/cdx/crate/e.md', 'created'],
-      ['/work/cdx/crate/c.md', 'created'],
-      ['/work/cdx/crate/obj.md', 'created'],
-      ['/work/cdx/crate/docs/doc.md', 'created'],
-      ['/work/cdx/crate/notes.md', 'created'],
+      ['/work/cdx/crate/rel.md', 'edited'],
       ['/work/cdx/a.rs', 'deleted'],
       ['/work/cdx/b.rs', 'created'],
+      ['/work/cdx/crate/notes.md', 'created'],
+      ['/work/cdx/gone.rs', 'deleted'],
       ['/work/cdx/src/lib.rs', 'created'],
       ['/work/cdx/crate/src/parser.rs', 'edited'],
       ['/work/cdx/old.py', 'deleted'],

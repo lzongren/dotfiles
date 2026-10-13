@@ -19,7 +19,7 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 9
+CACHE_VERSION = 10
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
@@ -28,10 +28,8 @@ TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
-PATCH_RE = re.compile(r"^\t*\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
-SHELL_PATCH_RE = re.compile(r"(?:^|[\s;&|(])apply_patch[ \t]{0,8}(?:<<-?[ \t]{0,4}['\"]?[\w-]{1,32}['\"]?[^\n]{0,64})?\r?\n?\t{0,8}['\"]?\*\*\* Begin Patch")
-END_PATCH_RE = re.compile(r"^\t*\*\*\* End Patch[ \t]*\r?$", re.M)
-CD_RE = re.compile(r"(?:^|[\s;&|(])cd[ \t]")
+PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
+PATCH_ACTIONS = {"add": "created", "update": "edited", "delete": "deleted"}
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -346,6 +344,7 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
             and b"-title" not in line
             and b"filePath" not in line
             and b"apply_patch" not in line
+            and b"patch_apply_end" not in line
             and b"turn_context" not in line
             and b"session_meta" not in line
             and not (links and any(regex.search(line.decode("utf-8", "replace")) for _, regex, link in patterns if link))
@@ -403,49 +402,27 @@ def track_files(files, rec, at, cwd):
     if isinstance(result, dict) and isinstance(result.get("filePath"), str):
         touch(files, result["filePath"], "created" if result.get("type") == "create" else "edited", at)
     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    resolve = lambda name: name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
+    changes = payload.get("changes") if payload.get("type") == "patch_apply_end" and payload.get("success") is not False else None
+    if isinstance(changes, dict):
+        for name, change in changes.items():
+            kind = change.get("type") if isinstance(change, dict) else None
+            moved = change.get("move_path") if isinstance(change, dict) else None
+            if isinstance(moved, str) and moved:
+                touch(files, resolve(name), "deleted", at)
+                touch(files, resolve(moved), "created", at)
+            elif kind in PATCH_ACTIONS:
+                touch(files, resolve(name), PATCH_ACTIONS[kind], at)
     patch = payload.get("input") if payload.get("type") == "custom_tool_call" and payload.get("name") == "apply_patch" else None
-    if payload.get("type") == "function_call" and payload.get("name") in ("apply_patch", "shell", "shell_command", "exec_command"):
-        raw = payload.get("arguments")
-        try:
-            args = raw if isinstance(raw, dict) else json.loads(raw or "{}")
-        except (TypeError, ValueError):
-            args = None
-        if isinstance(args, dict):
-            command = args.get("command") or args.get("cmd")
-            parts = [c for c in (command if isinstance(command, list) else [command]) if isinstance(c, str)]
-            workdir = args.get("workdir")
-            if isinstance(workdir, str) and workdir:
-                cwd = os.path.join(cwd, os.path.expanduser(workdir)) if cwd else os.path.expanduser(workdir)
-            if payload["name"] == "apply_patch":
-                patch = args.get("input")
-            elif len(parts) == 2 and parts[0] == "apply_patch":
-                patch = parts[1]
-            elif parts:
-                patch = shell_patches(parts[-1])
     if not isinstance(patch, str):
         return
     last = None
     for match in PATCH_RE.finditer(patch):
-        name = match.group(2).strip()
-        full = name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
+        full = resolve(match.group(2).strip())
         if match.group(1) == "Move to" and last:
             touch(files, last, "deleted", at)
         touch(files, full, {"Add File": "created", "Update File": "edited", "Delete File": "deleted", "Move to": "created"}[match.group(1)], at)
         last = full
-
-
-def shell_patches(script):
-    found, at = [], 0
-    while True:
-        call = SHELL_PATCH_RE.search(script, at)
-        if not call or CD_RE.search(script, 0, call.start()):
-            break
-        end = END_PATCH_RE.search(script, call.end())
-        if not end:
-            break
-        found.append(script[call.end() - len("*** Begin Patch"):end.end()])
-        at = end.end()
-    return "\n".join(found) or None
 
 
 def touch(files, path, action, at):
