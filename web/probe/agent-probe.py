@@ -19,13 +19,18 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 6
+CACHE_VERSION = 13
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
 SCAN_MAX = 32 * 1024 * 1024
 TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
+KEEP_FILES = 40
+SHOW_FILES = 20
+PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
+PATCH_ACTIONS = {"add": "created", "update": "edited", "delete": "deleted"}
+FORK_REPLAY = 1.0
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -39,6 +44,13 @@ def clip(text, limit=TEXT_MAX):
 
 def num(value):
     return value if isinstance(value, (int, float)) and math.isfinite(value) else 0
+
+
+def precise(stamp):
+    try:
+        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp() if isinstance(stamp, str) else None
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def epoch(stamp):
@@ -321,10 +333,10 @@ def compile_patterns():
     return patterns
 
 
-def scan_history(path, size, ino, cache, patterns):
+def scan_history(path, size, ino, cache, patterns, cwd=None):
     entry = cache.get(path)
     if not isinstance(entry, dict) or entry.get("ino") != ino or entry.get("off", 0) > size:
-        entry = {"ino": ino, "off": max(0, size - SCAN_MAX), "artifacts": {}, "commits": 0, "tasks": {}}
+        entry = {"ino": ino, "off": max(0, size - SCAN_MAX), "artifacts": {}, "commits": 0, "tasks": {}, "files": {}}
     offset = entry["off"]
     data = read_range(path, offset, min(size - offset, SCAN_MAX)) if size > offset else b""
     end = data.rfind(b"\n") + 1
@@ -338,6 +350,12 @@ def scan_history(path, size, ino, cache, patterns):
             and b"gitOperation" not in line
             and b'"task' not in line.lower()
             and b"-title" not in line
+            and b"filePath" not in line
+            and b"apply_patch" not in line
+            and b"patch_apply_end" not in line
+            and not (b"custom_tool_call_output" in line and any(c.encode() in line for c in entry.get("pending", {})))
+            and b"turn_context" not in line
+            and b"session_meta" not in line
             and not (links and any(regex.search(line.decode("utf-8", "replace")) for _, regex, link in patterns if link))
         ):
             continue
@@ -364,6 +382,10 @@ def scan_history(path, size, ino, cache, patterns):
             if isinstance(pr, dict) and pr.get("url"):
                 found[pr["url"]] = ("PR", pr.get("action"), True)
         track_tasks(entry["tasks"], rec)
+        meta = rec.get("payload") if rec.get("type") in ("session_meta", "turn_context") else None
+        if isinstance(meta, dict) and isinstance(meta.get("cwd"), str):
+            entry["cwd"] = meta["cwd"]
+        track_files(entry, rec, at, entry.get("cwd") or cwd)
         if rec.get("type") == "pr-link" and rec.get("prUrl"):
             found.setdefault(rec["prUrl"], ("PR", None, True))
         for text in strings(rec):
@@ -377,9 +399,71 @@ def scan_history(path, size, ino, cache, patterns):
         rank = lambda kv: (kv[1].get("said", False), kv[1].get("hits", 1), kv[1]["at"])
         keep = sorted(artifacts.items(), key=rank)[-KEEP_ARTIFACTS:]
         entry["artifacts"] = artifacts = dict(keep)
+    if len(entry["files"]) > KEEP_FILES:
+        entry["files"] = dict(sorted(entry["files"].items(), key=lambda kv: kv[1]["at"])[-KEEP_FILES:])
     cache[path] = entry
     SCANNED.add(path)
     return entry
+
+
+def track_files(entry, rec, at, cwd):
+    files = entry["files"]
+    pending = entry.setdefault("pending", {})
+    result = rec.get("toolUseResult")
+    if isinstance(result, dict) and isinstance(result.get("filePath"), str):
+        touch(files, result["filePath"], "created" if result.get("type") == "create" else "edited", at)
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    kind, call = payload.get("type"), payload.get("call_id")
+    call = call if isinstance(call, str) else None
+    forking = rec.get("type") == "session_meta" and payload.get("forked_from_id") and "replayed" not in entry
+    stamp = precise(rec.get("timestamp")) if forking or "replayed" in entry else None
+    if forking and stamp is not None:
+        entry["replayed"] = stamp + FORK_REPLAY
+    if "replayed" in entry and stamp is not None and stamp <= entry["replayed"]:
+        return
+    resolve = lambda name: name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
+    if kind == "patch_apply_end":
+        pending.pop(call, None)
+        changes = payload.get("changes") if payload.get("success") is not False else None
+        for name, change in (changes.items() if isinstance(changes, dict) else []):
+            change = change if isinstance(change, dict) else {}
+            moved = change.get("move_path")
+            if isinstance(moved, str) and moved:
+                touch(files, resolve(name), "deleted", at)
+                touch(files, resolve(moved), "created", at)
+            elif change.get("type") in PATCH_ACTIONS:
+                touch(files, resolve(name), PATCH_ACTIONS[change["type"]], at)
+    elif kind == "custom_tool_call_output" and call in pending:
+        found, output = pending.pop(call), payload.get("output")
+        if isinstance(output, str) and output.startswith("Exit code: 0"):
+            for path, action in found:
+                touch(files, path, action, at)
+    elif kind == "custom_tool_call" and payload.get("name") == "apply_patch" and isinstance(payload.get("input"), str) and call:
+        found = []
+        for match in PATCH_RE.finditer(payload["input"]):
+            full, verb = resolve(match.group(2).strip()), match.group(1)
+            if verb == "Move to" and found:
+                found[-1][1] = "deleted"
+            found.append([full, "created" if verb == "Move to" else PATCH_ACTIONS[verb.split()[0].lower()]])
+        pending[call] = found
+        while len(pending) > 20:
+            pending.pop(next(iter(pending)))
+
+
+def touch(files, path, action, at):
+    path = os.path.normpath(path)
+    if not os.path.isabs(path) or "/.claude/" in path or "/.codex/" in path:
+        return
+    seen = files.setdefault(path, {"action": action, "at": at, "count": 0})
+    seen["count"] += 1
+    seen["at"] = max(seen["at"], at)
+    if action != "edited" or seen["action"] == "deleted":
+        seen["action"] = action
+
+
+def files_out(files):
+    ranked = sorted(files.items(), key=lambda kv: -kv[1]["at"])[:SHOW_FILES]
+    return [dict(f, path=p, gone=not os.path.exists(p)) for p, f in ranked]
 
 
 def track_tasks(tasks, rec):
@@ -449,6 +533,7 @@ def claude_insight(pane, reg, cache, patterns):
     out["tasks"] = claude_tasks(session_id) or task_counts(tracked) or info.get("tasks")
     out["artifacts"] = sorted(entry["artifacts"].values(), key=lambda a: -a["at"])
     out["commits"] = entry["commits"]
+    out["files"] = files_out(entry["files"])
     return out
 
 
@@ -534,9 +619,10 @@ def codex_insight(pane, rollouts, children, cache, patterns):
             out["tasks"] = task_counts([{"status": p.get("status"), "activeForm": p.get("step")} for p in plan])
     out["since"] = state_at
     out["title"] = clip(codex_title(os.path.basename(rollout)), 120)
-    entry = scan_history(rollout, stat.st_size, stat.st_ino, cache, patterns)
+    entry = scan_history(rollout, stat.st_size, stat.st_ino, cache, patterns, real)
     out["artifacts"] = sorted(entry["artifacts"].values(), key=lambda a: -a["at"])
     out["commits"] = entry["commits"]
+    out["files"] = files_out(entry["files"])
     return out
 
 
@@ -613,7 +699,7 @@ def main():
         insight["session"] = session
         agents.append({k: v for k, v in insight.items() if v is not None})
     save_cache(cache_path, cache, key)
-    print(json.dumps({"v": 1, "now": int(time.time()), "agents": agents}))
+    print(json.dumps({"v": 1, "now": int(time.time()), "home": HOME, "agents": agents}))
 
 
 main()

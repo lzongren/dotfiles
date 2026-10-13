@@ -1,4 +1,4 @@
-import type { AgentInsight, AgentState, Artifact, InsightsResponse } from '../src/shared/types.js'
+import type { AgentInsight, AgentState, Artifact, FileTouch, InsightsResponse } from '../src/shared/types.js'
 import type { RunResult } from './exec.js'
 import { RemoteUnreachableError } from './sessions.js'
 
@@ -27,6 +27,16 @@ function artifact(raw: unknown): Artifact | null {
   const action = str(a.action, 24)
   const at = num(a.at) ?? 0
   return { label, url, at, first: num(a.first) ?? at, hits: num(a.hits) ?? 1, said: a.said === true, ...(action ? { action } : {}) }
+}
+
+const ACTIONS: Array<FileTouch['action']> = ['created', 'edited', 'deleted']
+
+function fileTouch(raw: unknown): FileTouch | null {
+  const f = (raw ?? {}) as Record<string, unknown>
+  const path = str(f.path, 1000)
+  if (!path || !path.startsWith('/') || path.includes('\0')) return null
+  const action = ACTIONS.includes(f.action as FileTouch['action']) ? (f.action as FileTouch['action']) : 'edited'
+  return { path, action, at: num(f.at) ?? 0, count: num(f.count) ?? 1, gone: f.gone === true }
 }
 
 function insight(raw: unknown): AgentInsight | null {
@@ -58,6 +68,10 @@ function insight(raw: unknown): AgentInsight | null {
     const value = num(r[key])
     if (value !== undefined) out[key] = value
   }
+  if (Array.isArray(r.files)) {
+    const files = r.files.slice(0, 30).map(fileTouch).filter((f): f is FileTouch => f !== null)
+    if (files.length) out.files = files
+  }
   const t = (r.tasks ?? null) as Record<string, unknown> | null
   const done = num(t?.done)
   const total = num(t?.total)
@@ -68,14 +82,19 @@ function insight(raw: unknown): AgentInsight | null {
   return out
 }
 
-export function parseInsights(stdout: string): AgentInsight[] {
-  const doc = JSON.parse(stdout) as { agents?: unknown }
+export function parseProbe(stdout: string): { home?: string; agents: AgentInsight[] } {
+  const doc = JSON.parse(stdout) as { agents?: unknown; home?: unknown }
   if (!Array.isArray(doc.agents)) throw new Error('probe output has no agents')
-  return doc.agents.map(insight).filter((a): a is AgentInsight => a !== null)
+  const home = str(doc.home, 500)
+  return { ...(home?.startsWith('/') ? { home } : {}), agents: doc.agents.map(insight).filter((a): a is AgentInsight => a !== null) }
 }
 
-export function probeScript(source: string, artifacts: ArtifactPattern[]): string {
-  return `ARGS = __import__("json").loads(${JSON.stringify(JSON.stringify({ artifacts }))})\n${source}`
+export function parseInsights(stdout: string): AgentInsight[] {
+  return parseProbe(stdout).agents
+}
+
+export function probeScript(source: string, args: object): string {
+  return `ARGS = __import__("json").loads(${JSON.stringify(JSON.stringify(args))})\n${source}`
 }
 
 export function createInsightsSource(runner: () => Promise<RunResult>, ttlMs = 10000): () => Promise<InsightsResponse> {
@@ -89,7 +108,7 @@ export function createInsightsSource(runner: () => Promise<RunResult>, ttlMs = 1
         if (res.exitCode === SSH_FAILED) throw new RemoteUnreachableError(reason || 'remote unreachable')
         if (res.exitCode === 127) throw new Error('python3 is not installed on the remote host')
         if (res.exitCode !== 0) throw new Error(`agent probe failed: ${reason || `exit ${res.exitCode}`}`)
-        cached = { fetchedAt: Date.now(), agents: parseInsights(res.stdout) }
+        cached = { fetchedAt: Date.now(), ...parseProbe(res.stdout) }
         return cached
       })
       .finally(() => {

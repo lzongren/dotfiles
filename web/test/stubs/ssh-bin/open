@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '%s\n' "$*" >>"${OPEN_STUB_LOG:-/dev/null}"

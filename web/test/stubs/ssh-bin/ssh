@@ -1,7 +1,10 @@
 #!/bin/sh
+script=$(cat)
 if [ -n "${SSH_STUB_LOG:-}" ]; then
   printf '%s\n' "$*" >>"$SSH_STUB_LOG"
-  head -n 1 >>"$SSH_STUB_LOG"
+  printf '%s\n' "$script" | head -n 1 >>"$SSH_STUB_LOG"
 fi
-cat >/dev/null
-cat "$(dirname "$0")/../../fixtures/insights.json"
+case "$script" in
+  *'"limit"'*) cat "$(dirname "$0")/../../fixtures/remote-file.json" ;;
+  *) cat "$(dirname "$0")/../../fixtures/insights.json" ;;
+esac

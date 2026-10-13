@@ -57,7 +57,9 @@ beforeAll(() => {
     ['%8', 'messy', '1', '1', 'claude', '1', '/work/messy'],
     ['%9', 'busyerr', '1', '1', 'claude', '1', '/work/busyerr'],
     ['%10', 'stopped', '1', '1', 'claude', '1', '/work/stopped'],
+    ['%11', 'fork', '1', '1', 'codex', '1', '/work/fork'],
   ]
+  write('work/fix/plan.md', '# plan\n')
   write('bin/tmux', `#!/bin/sh\nprintf '%s\\n' ${panes.map((p) => `'${p.join('\t')}'`).join(' ')}\n`)
   chmodSync(path.join(home, 'bin/tmux'), 0o755)
 
@@ -145,6 +147,11 @@ beforeAll(() => {
         },
       }),
       line({ type: 'pr-link', prUrl: 'https://github.com/o/r/pull/31', prNumber: 31, timestamp: at(4) }),
+      line({ type: 'user', timestamp: at(3), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { filePath: '/work/fix/src/retry.ts', oldString: 'a', newString: 'b' } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'create', filePath: path.join(home, 'work/fix/plan.md') } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'update', filePath: path.join(home, 'work/fix/plan.md') } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'create', filePath: path.join(home, '.claude/plans/p.md') } }),
+      line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { type: 'create', filePath: 'relative.txt' } }),
       line({ type: 'user', timestamp: at(4), message: { content: [{ type: 'tool_result' }] }, toolUseResult: { stdout: PLACEHOLDER } }),
       line({ type: 'user', timestamp: at(5), message: { role: 'user', content: 'merge it once CI is green' } }),
       line({ type: 'user', timestamp: at(5), isCompactSummary: true, message: { content: 'This session is being continued from a previous conversation.' } }),
@@ -194,7 +201,7 @@ beforeAll(() => {
     `.codex/sessions/2026/10/12/rollout-2026-10-12T10-00-00-${uuid}.jsonl`,
     [
       line({ type: 'session_meta', timestamp: at(30), payload: { cwd: '/work/cdx', thread_source: 'user', source: 'cli' } }),
-      line({ type: 'turn_context', timestamp: at(30), payload: { model: 'gpt-codex-x' } }),
+      line({ type: 'turn_context', timestamp: at(30), payload: { model: 'gpt-codex-x', cwd: '/work/cdx/crate' } }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'user_message', message: 'Port the parser' } }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'task_started' } }),
       line({
@@ -202,9 +209,58 @@ beforeAll(() => {
         timestamp: at(32),
         payload: { type: 'function_call', name: 'update_plan', arguments: JSON.stringify({ plan: [{ step: 'Read', status: 'completed' }, { step: 'Write', status: 'in_progress' }] }) },
       }),
+      line({
+        type: 'response_item',
+        timestamp: at(32),
+        payload: {
+          type: 'custom_tool_call',
+          name: 'apply_patch',
+          call_id: 'c1',
+          input: '*** Begin Patch\n*** Add File: /work/cdx/src/lib.rs\n+fn main() {}\n*** Update File: src/parser.rs\n@@\n-a\n+b\n*** Delete File: /work/cdx/old.py\n*** End Patch',
+        },
+      }),
+      line({ type: 'response_item', timestamp: at(32), payload: { type: 'custom_tool_call_output', call_id: 'c1', output: 'Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess.' } }),
+      line({ type: 'response_item', timestamp: at(36), payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c2', input: '*** Begin Patch\n*** Add File: /work/cdx/failed.rs\n*** End Patch' } }),
+      line({ type: 'response_item', timestamp: at(36), payload: { type: 'custom_tool_call_output', call_id: 'c2', output: 'apply_patch verification failed: Failed to find expected lines' } }),
+      line({ type: 'event_msg', payload: { type: 'patch_apply_end', call_id: 'c9', success: true, changes: { '/work/cdx/undated.rs': { type: 'add', content: '' } } } }),
+      line({ type: 'response_item', timestamp: at(37), payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c3', input: '*** Begin Patch\n*** Update File: /work/cdx/paired.rs\n*** End Patch' } }),
+      line({ type: 'event_msg', timestamp: at(37), payload: { type: 'patch_apply_end', call_id: 'c3', success: true, changes: { '/work/cdx/paired.rs': { type: 'update', unified_diff: '' } } } }),
+      line({ type: 'response_item', timestamp: at(37), payload: { type: 'custom_tool_call_output', call_id: 'c3', output: 'Exit code: 0\nWall time: 0 seconds' } }),
+      line({ type: 'response_item', timestamp: at(38), payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'c4', input: '*** Begin Patch\n*** Update File: /work/cdx/m1.rs\n*** Move to: /work/cdx/m2.rs\n*** End Patch' } }),
+      line({ type: 'response_item', timestamp: at(38), payload: { type: 'custom_tool_call_output', call_id: 'c4', output: 'Exit code: 0' } }),
+      line({ type: 'response_item', timestamp: at(38), payload: { type: 'custom_tool_call_output', call_id: ['c4'], output: 'Exit code: 0' } }),
+      line({
+        type: 'event_msg',
+        timestamp: at(33),
+        payload: {
+          type: 'patch_apply_end',
+          success: true,
+          changes: {
+            '/work/cdx/a.rs': { type: 'update', move_path: '/work/cdx/b.rs', unified_diff: '' },
+            '/work/cdx/crate/notes.md': { type: 'add', content: 'x' },
+            '/work/cdx/gone.rs': { type: 'delete', content: '' },
+          },
+        },
+      }),
+      line({ type: 'event_msg', timestamp: at(34), payload: { type: 'patch_apply_end', success: false, changes: { '/work/cdx/never.rs': { type: 'add', content: '' } } } }),
+      line({ type: 'event_msg', timestamp: at(35), payload: { type: 'patch_apply_end', success: true, changes: { 'rel.md': { type: 'update', unified_diff: '' }, '/work/cdx/odd.rs': 'nope' } } }),
     ].join(''),
   )
   write('.codex/session_index.jsonl', line({ id: uuid, thread_name: 'Port the parser to Rust' }))
+  write(
+    '.codex/sessions/2026/10/12/rollout-2026-10-12T12-00-00-0199bbbb-0000-0000-0000-000000000001.jsonl',
+    [
+      line({ type: 'session_meta', timestamp: '2026-10-12T10:50:00.100Z', payload: { cwd: '/work/fork', thread_source: 'user', source: 'cli', forked_from_id: uuid } }),
+      line({ type: 'response_item', timestamp: '2026-10-12T10:50:00.150Z', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: '*** Begin Patch\n*** Update File: /work/cdx/parent.rs\n*** End Patch' } }),
+      line({ type: 'event_msg', timestamp: '2026-10-12T10:50:00.200Z', payload: { type: 'patch_apply_end', call_id: 'call_1', success: true, changes: { '/work/cdx/parent.rs': { type: 'update', unified_diff: '' } } } }),
+      line({ type: 'response_item', timestamp: '2026-10-12T10:50:00.300Z', payload: { type: 'custom_tool_call_output', call_id: 'call_1', output: 'Exit code: 0' } }),
+      line({ type: 'event_msg', timestamp: '2026-10-12T10:50:01.000Z', payload: { type: 'user_message', message: 'Keep going in the fork' } }),
+      line({ type: 'response_item', timestamp: '2026-10-12T10:50:02.900Z', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: '*** Begin Patch\n*** Add File: /work/fork/own.md\n*** End Patch' } }),
+      line({ type: 'event_msg', timestamp: '2026-10-12T10:50:02.950Z', payload: { type: 'patch_apply_end', call_id: 'call_1', success: true, changes: { '/work/fork/own.md': { type: 'add', content: '' } } } }),
+      line({ type: 'event_msg', timestamp: at(53), payload: { type: 'patch_apply_end', call_id: 'shell9', success: true, changes: { '/work/fork/via-shell.md': { type: 'add', content: '' } } } }),
+      line({ type: 'event_msg', payload: { type: 'patch_apply_end', call_id: 'shell10', success: true, changes: { '/work/fork/undated.md': { type: 'add', content: '' } } } }),
+    ].join(''),
+  )
   const decoys = [
     { source: 'exec', thread_source: 'user', message: 'a one-off exec run' },
     { source: { subagent: { parent: uuid } }, message: 'a subagent' },
@@ -284,7 +340,32 @@ describe('agent probe', () => {
   it('skips shells and keeps the active pane when a session has several agents', () => {
     const agents = run()
     expect(agents.notes).toBeUndefined()
-    expect(Object.keys(agents).sort()).toEqual(['broken', 'busyerr', 'cdx', 'eval', 'fix-retry', 'longrun', 'messy', 'stopped'])
+    expect(Object.keys(agents).sort()).toEqual(['broken', 'busyerr', 'cdx', 'eval', 'fix-retry', 'fork', 'longrun', 'messy', 'stopped'])
+  })
+
+  it('lists the files each agent wrote, newest first, resolving codex paths against the turn folder', () => {
+    const agents = run()
+    expect(agents['fix-retry'].files).toEqual([
+      { path: path.join(home, 'work/fix/plan.md'), action: 'created', at: Date.parse(at(4)) / 1000, count: 2, gone: false },
+      { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
+    ])
+    expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
+      ['/work/cdx/m1.rs', 'deleted'],
+      ['/work/cdx/m2.rs', 'created'],
+      ['/work/cdx/paired.rs', 'edited'],
+      ['/work/cdx/crate/rel.md', 'edited'],
+      ['/work/cdx/a.rs', 'deleted'],
+      ['/work/cdx/b.rs', 'created'],
+      ['/work/cdx/crate/notes.md', 'created'],
+      ['/work/cdx/gone.rs', 'deleted'],
+      ['/work/cdx/src/lib.rs', 'created'],
+      ['/work/cdx/crate/src/parser.rs', 'edited'],
+      ['/work/cdx/old.py', 'deleted'],
+      ['/work/cdx/undated.rs', 'created'],
+    ])
+    const count = (name: string) => (agents.cdx.files as Array<{ path: string; count: number }>).find((f) => f.path === name)?.count
+    expect([count('/work/cdx/paired.rs'), count('/work/cdx/m1.rs')]).toEqual([1, 1])
+    expect((agents.fork.files as Array<{ path: string }>).map((f) => f.path)).toEqual(['/work/fork/via-shell.md', '/work/fork/own.md', '/work/fork/undated.md'])
   })
 
   it('keeps a title written long before the tail it reads, and sees a finished turn without a registry', () => {

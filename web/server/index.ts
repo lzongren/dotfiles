@@ -14,8 +14,10 @@ import {
 } from './auth.js'
 import { loadConfig } from './config.js'
 import { BodyError, readJson } from './body.js'
-import { detach, runAgentProbe, spawnAttachPty, statusRaw } from './exec.js'
+import { detach, openLocal, runAgentProbe, spawnAttachPty, statusRaw } from './exec.js'
+import { allowed, localMirror, openable, parseRemoteRead, readMirror, remoteReadScript, resolveMirror } from './files.js'
 import { readGhostty } from './ghostty.js'
+import type { InsightsResponse } from '../src/shared/types.js'
 import { DAY_RE, listDays, readNote, writeNote } from './notes.js'
 import { createInsightsSource, probeScript } from './insights.js'
 import { isAgentChoice, SESSION_NAME_RE } from '../src/shared/validate.js'
@@ -54,9 +56,16 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const getSessions = createSessionSource(config.host, () => statusRaw(opts.bin))
   const probePath = path.resolve(opts.distRoot, '../probe/agent-probe.py')
   const getInsights = createInsightsSource(async () =>
-    runAgentProbe(config.host, probeScript(await readFile(probePath, 'utf8'), config.artifacts)),
+    runAgentProbe(config.host, probeScript(await readFile(probePath, 'utf8'), { artifacts: config.artifacts })),
   )
   const distRoot = path.resolve(opts.distRoot)
+  let lastInsights: InsightsResponse | null = null
+  const fetchInsights = () => getInsights().then((body) => (lastInsights = body))
+  const fileAccess = async (sessionName: string, target: string) => {
+    const insights = lastInsights ?? (await fetchInsights())
+    const touched = insights.agents.find((a) => a.session === sessionName)?.files?.map((f) => f.path) ?? []
+    return allowed(target, touched) ? { mirror: localMirror(target, insights.home, config.syncs) } : null
+  }
   const notesDir =
     opts.notesDir ??
     process.env.DEVBOX_NOTES_DIR ??
@@ -126,6 +135,49 @@ export async function createApp(opts: AppOptions): Promise<App> {
           })
         return
       }
+      if (url.pathname === '/api/file' && req.method === 'GET') {
+        const sessionName = url.searchParams.get('session') ?? ''
+        const target = url.searchParams.get('path') ?? ''
+        fileAccess(sessionName, target)
+          .then(async (access) => {
+            if (!access) return sendJson(res, 403, { error: 'forbidden', message: 'not a file this session wrote' })
+            const local = access.mirror ? await readMirror(access.mirror, target) : null
+            if (local) return sendJson(res, 200, local)
+            const result = await runAgentProbe(config.host, remoteReadScript(target), 20000)
+            if (result.exitCode === 255) return sendJson(res, 502, { error: 'remote_unreachable', message: 'host unreachable' })
+            if (result.exitCode !== 0) return sendJson(res, 500, { error: 'read_failed', message: 'could not read the file' })
+            const view = parseRemoteRead(target, result.stdout)
+            if ('error' in view) return sendJson(res, 404, { error: 'not_found', message: view.error })
+            return sendJson(res, 200, view)
+          })
+          .catch((err: unknown) => {
+            if (err instanceof RemoteUnreachableError) sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
+            else sendJson(res, 500, { error: 'read_failed', message: 'could not read the file' })
+          })
+        return
+      }
+      if (url.pathname === '/api/file/open' && req.method === 'POST') {
+        readJson(req)
+          .then(async (raw) => {
+            const { session, path: target } = (raw ?? {}) as { session?: unknown; path?: unknown }
+            if (typeof session !== 'string' || typeof target !== 'string') {
+              return sendJson(res, 400, { error: 'bad_request', message: 'session and path must be strings' })
+            }
+            const access = await fileAccess(session, target)
+            if (!access) return sendJson(res, 403, { error: 'forbidden', message: 'not a file this session wrote' })
+            const local = access.mirror ? await resolveMirror(access.mirror) : null
+            if (!local) return sendJson(res, 404, { error: 'not_synced', message: 'no synced copy on this laptop' })
+            const revealed = !openable(local)
+            openLocal(local, revealed)
+            return sendJson(res, 200, { opened: local, revealed })
+          })
+          .catch((err: unknown) => {
+            if (err instanceof BodyError) sendJson(res, err.status, { error: 'bad_request', message: err.message })
+            else if (err instanceof RemoteUnreachableError) sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
+            else sendJson(res, 500, { error: 'internal', message: 'could not open the file' })
+          })
+        return
+      }
       if (url.pathname === '/api/notes' && req.method === 'GET') {
         listDays(notesDir)
           .then((days) => sendJson(res, 200, { days }))
@@ -172,7 +224,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
         return
       }
       if (url.pathname === '/api/insights' && req.method === 'GET') {
-        getInsights()
+        fetchInsights()
           .then((body) => sendJson(res, 200, body))
           .catch((err: unknown) => {
             if (err instanceof RemoteUnreachableError) {
