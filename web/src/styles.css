@@ -637,7 +637,7 @@ details[open] > .parked-toggle::before {
   background: var(--raised);
 }
 
-.card[aria-current='true'] {
+.card[aria-pressed='true'] {
   background: var(--selected);
   border-color: var(--control);
   box-shadow: inset 3px 0 0 var(--accent);
@@ -777,7 +777,7 @@ details[open] > .parked-toggle::before {
   font-weight: 600;
 }
 
-.detail-actions .primary:hover {
+.detail-actions .primary:hover:not(:disabled) {
   background: var(--text);
 }
 

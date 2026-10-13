@@ -76,6 +76,11 @@ describe('laneOf', () => {
     expect(laneOf(session(), agent({ state: 'working' }), sec(0), NOW)).toBe('working')
   })
 
+  it('falls back to the bell when the probe could not tell what the agent is doing', () => {
+    const rang = session({ bell: true, activityEpoch: sec(30) })
+    expect(laneOf(rang, agent({ state: 'unknown', error: 'probe: boom' }), sec(60), NOW)).toBe('ready')
+  })
+
   it('parks a week of inactivity, errors included', () => {
     const old = session({ activityEpoch: sec(8 * 86400) })
     expect(laneOf(old, undefined, 0, NOW)).toBe('parked')

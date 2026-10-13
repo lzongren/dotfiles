@@ -64,7 +64,7 @@ describe('http server', () => {
     const body = JSON.parse(res.body) as { host: string; fetchedAt: number; sessions: unknown[] }
     expect(body.host).toBe('stub-host')
     expect(body.sessions).toHaveLength(4)
-    expect(body.sessions[1]).toMatchObject({ name: 'cc-atx', clients: 2, attached: true, bell: true })
+    expect(body.sessions[1]).toMatchObject({ name: 'cc-demo', clients: 2, attached: true, bell: true })
     expect(body.sessions[2]).toMatchObject({ name: 'api - ~/work/api', attachable: false })
   })
 

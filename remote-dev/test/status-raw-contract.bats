@@ -25,7 +25,7 @@ setup() {
 }
 
 @test "the fixture keeps the rows the web parser depends on" {
-  grep -q '^cc-atx|2|' "$REPO/web/test/fixtures/status-raw.txt"
+  grep -q '^cc-demo|2|' "$REPO/web/test/fixtures/status-raw.txt"
   grep -q '^api - ~/work/api|' "$REPO/web/test/fixtures/status-raw.txt"
   grep -q '|1|claude|' "$REPO/web/test/fixtures/status-raw.txt"
 }

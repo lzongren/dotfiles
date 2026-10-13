@@ -335,6 +335,24 @@ describe('agent probe', () => {
     expect(agents.longrun.artifacts).toEqual([expect.objectContaining({ label: 'CR', url: 'https://code.example.com/reviews/CR-77' })])
   })
 
+  it('gives two agents in one folder different transcripts and forgets the ones no session uses', () => {
+    const tmux = path.join(home, 'bin/tmux')
+    const panes = readFileSync(tmux, 'utf8')
+    writeFileSync(tmux, `#!/bin/sh\nprintf '%s\\n' '%21\ttwin-a\t1\t1\tclaude\t1\t/work/eval' '%22\ttwin-b\t1\t1\tclaude\t1\t/work/eval'\n`)
+    try {
+      const agents = run()
+      expect([agents['twin-a'].ask, agents['twin-b'].ask].sort()).toEqual(['Build the latency dashboard', 'an older task'])
+      const dir = path.join(home, '.cache/devbox')
+      const files = readdirSync(dir)
+        .filter((f) => f.startsWith('agent-probe-'))
+        .map((f) => JSON.parse(readFileSync(path.join(dir, f), 'utf8')) as { key: string; files: Record<string, unknown> })
+        .find((c) => c.key.includes('reviews/CR') && !c.key.includes('{0}'))!.files
+      expect(Object.keys(files).map((f) => path.basename(f)).sort()).toEqual(['new.jsonl', 'old.jsonl'])
+    } finally {
+      writeFileSync(tmux, panes)
+    }
+  })
+
   it('scans only new transcript bytes on the next run and still finds new artifacts', () => {
     run()
     const transcript = path.join(home, '.claude/projects/-work-fix/s1.jsonl')

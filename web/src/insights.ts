@@ -12,7 +12,8 @@ export function changeMark(session: Session, insight: AgentInsight | undefined):
 }
 
 export function isFresh(session: Session, insight: AgentInsight | undefined, seenAt: number): boolean {
-  if (insight) return (insight.state === 'ready' || insight.state === 'error') && changeMark(session, insight) > seenAt
+  if (insight && insight.state !== 'unknown')
+    return (insight.state === 'ready' || insight.state === 'error') && changeMark(session, insight) > seenAt
   return session.bell && session.activityEpoch > seenAt
 }
 

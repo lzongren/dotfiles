@@ -27,6 +27,7 @@ SCAN_MAX = 32 * 1024 * 1024
 TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
+SCANNED = set()
 
 
 def clip(text, limit=TEXT_MAX):
@@ -217,6 +218,7 @@ def claude_transcript(session_id, cwd):
     folder = os.path.join(projects, re.sub(r"[^a-zA-Z0-9]", "-", cwd or ""))
     try:
         files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".jsonl")]
+        files = [f for f in files if f not in SCANNED]
     except OSError:
         return None
     return max(files, key=os.path.getmtime) if files else None
@@ -376,6 +378,7 @@ def scan_history(path, size, ino, cache, patterns):
         keep = sorted(artifacts.items(), key=rank)[-KEEP_ARTIFACTS:]
         entry["artifacts"] = artifacts = dict(keep)
     cache[path] = entry
+    SCANNED.add(path)
     return entry
 
 
@@ -500,7 +503,7 @@ def open_rollout(pane_pid, children):
 def codex_insight(pane, rollouts, children, cache, patterns):
     out = {"agent": "codex", "state": "unknown"}
     real = os.path.realpath(pane["path"])
-    rollout = open_rollout(pane["pid"], children) or next((r["path"] for r in rollouts if r["cwd"] == real), None)
+    rollout = open_rollout(pane["pid"], children) or next((r["path"] for r in rollouts if r["cwd"] == real and r["path"] not in SCANNED), None)
     if not rollout:
         return out
     stat = os.stat(rollout)
@@ -556,14 +559,14 @@ def codex_title(rollout_name):
 
 
 def save_cache(path, cache, key):
-    live = {"v": CACHE_VERSION, "key": key, "files": {p: e for p, e in cache.items() if os.path.exists(p)}}
+    live = {"v": CACHE_VERSION, "key": key, "files": {p: e for p, e in cache.items() if p in SCANNED}}
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         tmp = "{}.{}".format(path, os.getpid())
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(live, fh)
         os.replace(tmp, path)
-        for old in glob.glob(os.path.join(CACHE_DIR, "agent-probe*.json")):
+        for old in glob.glob(os.path.join(CACHE_DIR, "agent-probe*.json*")):
             if old != path and os.path.getmtime(old) < time.time() - 7 * 86400:
                 os.remove(old)
     except OSError:
@@ -597,7 +600,7 @@ def main():
         if best is None or (pane["active"] and not best[0]["active"]):
             chosen[pane["session"]] = (pane, kind, reg)
     agents = []
-    for session, (pane, kind, reg) in chosen.items():
+    for session, (pane, kind, reg) in sorted(chosen.items(), key=lambda item: item[1][2] is None):
         try:
             if kind == "claude":
                 insight = claude_insight(pane, reg, cache, patterns)
