@@ -225,6 +225,7 @@ describe('file viewer', () => {
   it('shows CSV and TSV as tables, keeping quoted separators and newlines inside a cell', async () => {
     expect(parseDelimited('a,b\r\n"x, ""y""","multi\nline"\n', ',')).toEqual([['a', 'b'], ['x, "y"', 'multi\nline']])
     expect(parseDelimited('1\n2\n3\n', ',', 2)).toEqual([['1'], ['2']])
+    expect(parseDelimited('name\n""\n\nbob\n\n', ',')).toEqual([['name'], [''], ['bob']])
     text('/w/t.tsv', 'name\tcount\nfoo\t3\n')
     const dialog = preview('/w/t.tsv')
     const table = within(await dialog.findByRole('table'))

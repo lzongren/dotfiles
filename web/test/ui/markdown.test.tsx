@@ -35,14 +35,19 @@ describe('markdown rendering', () => {
     expect(html).toContain('<h1 id="md-open-questions" tabindex="-1">')
     expect(html).toContain('<h2 id="md-open-questions-1" tabindex="-1">')
     expect(html).toContain('<a data-anchor="md-open-questions" role="link" tabindex="0">jump</a>')
-    const ids = [...render('## Setup & Install_now\n## _Draft_ plan\n## See [docs](https://x.io)\n## Q&amp;A\n## The `foo` option').matchAll(/id="([^"]+)"/g)].map((m) => m[1])
-    expect(ids).toEqual(['md-setup--install_now', 'md-draft-plan', 'md-see-docs', 'md-qa', 'md-the-foo-option'])
+    const ids = [...render('## Setup & Install_now\n## _Draft_ plan\n## See [docs](https://x.io)\n## Q&amp;A\n## The `foo` option\n\nFoo\nbar\n===').matchAll(/id="([^"]+)"/g)].map((m) => m[1])
+    expect(ids).toEqual(['md-setup--install_now', 'md-draft-plan', 'md-see-docs', 'md-qa', 'md-the-foo-option', 'md-foo-bar'])
   })
 
   it('survives malformed escapes and leaves bare file names as text', () => {
     expect(render('[a](#%E0%A4) [b](x%E0%A4.md)')).toMatch(/data-anchor="md-e0a4".*data-path="\/home\/me\/work\/api\/docs\/x%E0%A4.md"/)
-    const html = render('see README.md, setup.py, main.rs and https://example.com or www.example.com')
-    expect([...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(['https://example.com', 'http://www.example.com'])
+    const html = render('see README.md, setup.py, Ghostty.app, logo.ai and https://example.com, not www.example.com')
+    expect([...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual(['https://example.com'])
+    expect(render('[ftp](ftp://h/x)')).toContain('<p><span>ftp</span></p>')
+    const self = render('[setup](plan.md#setup) [same](./plan.md) [there](spec.md#intro)')
+    expect(self).toContain('<a data-anchor="md-setup" role="link" tabindex="0">setup</a>')
+    expect(self).toContain('<a data-path="/home/me/work/api/docs/plan.md" role="link" tabindex="0">same</a>')
+    expect(self).toContain('<a data-path="/home/me/work/api/docs/spec.md" role="link" tabindex="0">there</a>')
   })
 
   it('shows images it cannot load as links, and keeps inline data images', () => {
@@ -57,6 +62,7 @@ describe('markdown rendering', () => {
     const html = render('- [ ] todo\n- [x] done\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst x = "y"\n```')
     expect(html).toContain('<li class="md-task"><label><input type="checkbox" disabled> todo</label></li>')
     expect(html).toContain('<li class="md-task"><label><input type="checkbox" disabled checked> done</label></li>')
+    expect(render('- \\[ \\] escaped\n- [x]\ttabbed')).toMatch(/<li>\[ \] escaped<\/li>\n<li class="md-task"><label><input type="checkbox" disabled checked> tabbed/)
     expect(render('- [ ] loose\n\n  more\n- not [ ] a task')).toMatch(/<li class="md-task">\s*<p><label><input type="checkbox" disabled> loose<\/label><\/p>[\s\S]*<li>\s*<p>not \[ \] a task<\/p>/)
     expect(html).toContain('<table tabindex="0">')
     expect(html).toMatch(/<pre tabindex="0"><code class="language-ts"><span class="hljs-keyword">const<\/span>/)

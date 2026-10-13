@@ -83,6 +83,7 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
   let row: string[] = []
   let cell = ''
   let quoted = false
+  let touched = false
   for (let i = 0; i < text.length && rows.length < max; i++) {
     const c = text[i]
     if (quoted) {
@@ -91,17 +92,18 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
         i++
       } else if (c === '"') quoted = false
       else cell += c
-    } else if (c === '"' && cell === '') quoted = true
+    } else if (c === '"' && cell === '') quoted = touched = true
     else if (c === sep) {
       row.push(cell)
       cell = ''
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && text[i + 1] === '\n') i++
-      if (row.length === 0 && cell === '') continue
+      if (row.length === 0 && cell === '' && !touched) continue
       row.push(cell)
       rows.push(row)
       row = []
       cell = ''
+      touched = false
     } else cell += c
   }
   if ((cell !== '' || row.length > 0) && rows.length < max) rows.push([...row, cell])
