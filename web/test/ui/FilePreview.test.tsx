@@ -48,14 +48,14 @@ let calls: Array<{ url: string; method: string; body?: string }>
 beforeEach(() => {
   calls = []
   views = {
-    '/home/me/work/api/docs/plan.md': { path: '/home/me/work/api/docs/plan.md', size: 9, mtime: sec(30), kind: 'text', text: '# The plan', truncated: false, local: '/Users/me/api/docs/plan.md' },
+    '/home/me/work/api/docs/plan.md': { path: '/home/me/work/api/docs/plan.md', size: 9, mtime: sec(30), kind: 'text', text: '# The plan', data: 'data:application/octet-stream;base64,IyBUaGUgcGxhbg==', truncated: false, local: '/Users/me/api/docs/plan.md' },
     '/tmp/shot.png': { path: '/tmp/shot.png', size: 4, mtime: sec(10), kind: 'image', data: 'data:image/png;base64,AAAA', truncated: false },
   }
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init: RequestInit = {}) => {
       calls.push({ url, method: init.method ?? 'GET', body: init.body as string | undefined })
-      if (url.startsWith('/api/file/open')) return Response.json({ opened: '/Users/me/api/docs/plan.md' })
+      if (url.startsWith('/api/file/open')) return Response.json({ opened: '/Users/me/api/docs/plan.md', revealed: false })
       const view = views[new URL(url, 'http://x').searchParams.get('path') ?? '']
       return view ? Response.json(view) : Response.json({ error: 'not_found', message: 'No such file or directory' }, { status: 404 })
     }),
@@ -136,6 +136,17 @@ describe('agent files', () => {
     const dialog = screen.getByRole('dialog', { name: 'shot.png' })
     await within(dialog).findByRole('img', { name: 'shot.png' })
     fireEvent.keyDown(within(dialog).getByRole('img', { name: 'shot.png' }), { key: 'j' })
+    fireEvent.keyDown(document.body, { key: 'j' })
     expect(screen.queryByRole('article')).toBeNull()
+  })
+
+  it('says when a file that could run is only shown in its folder', async () => {
+    vi.mocked(fetch).mockImplementation(async (url) =>
+      String(url).startsWith('/api/file/open') ? Response.json({ opened: '/Users/me/x.command', revealed: true }) : Response.json(views['/home/me/work/api/docs/plan.md']),
+    )
+    renderOverview()
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open on laptop' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('shown in its folder'))
   })
 })

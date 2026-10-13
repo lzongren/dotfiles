@@ -19,7 +19,7 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 7
+CACHE_VERSION = 8
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
@@ -28,7 +28,7 @@ TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
-PATCH_RE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$", re.M)
+PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -343,6 +343,8 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
             and b"-title" not in line
             and b"filePath" not in line
             and b"apply_patch" not in line
+            and b"turn_context" not in line
+            and b"session_meta" not in line
             and not (links and any(regex.search(line.decode("utf-8", "replace")) for _, regex, link in patterns if link))
         ):
             continue
@@ -369,7 +371,10 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
             if isinstance(pr, dict) and pr.get("url"):
                 found[pr["url"]] = ("PR", pr.get("action"), True)
         track_tasks(entry["tasks"], rec)
-        track_files(entry["files"], rec, at, cwd)
+        meta = rec.get("payload") if rec.get("type") in ("session_meta", "turn_context") else None
+        if isinstance(meta, dict) and isinstance(meta.get("cwd"), str):
+            entry["cwd"] = meta["cwd"]
+        track_files(entry["files"], rec, at, entry.get("cwd") or cwd)
         if rec.get("type") == "pr-link" and rec.get("prUrl"):
             found.setdefault(rec["prUrl"], ("PR", None, True))
         for text in strings(rec):
@@ -395,12 +400,27 @@ def track_files(files, rec, at, cwd):
     if isinstance(result, dict) and isinstance(result.get("filePath"), str):
         touch(files, result["filePath"], "created" if result.get("type") == "create" else "edited", at)
     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
-    patch = payload.get("input")
-    if payload.get("type") == "custom_tool_call" and payload.get("name") == "apply_patch" and isinstance(patch, str):
-        for match in PATCH_RE.finditer(patch):
-            name = match.group(2).strip()
-            full = name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
-            touch(files, full, {"Add": "created", "Update": "edited", "Delete": "deleted"}[match.group(1)], at)
+    patch = payload.get("input") if payload.get("type") == "custom_tool_call" and payload.get("name") == "apply_patch" else None
+    if payload.get("type") == "function_call" and payload.get("name") in ("apply_patch", "shell"):
+        try:
+            args = json.loads(payload.get("arguments") or "{}")
+        except ValueError:
+            args = {}
+        command = args.get("command") if isinstance(args, dict) else None
+        if isinstance(args, dict) and payload["name"] == "apply_patch":
+            patch = args.get("input")
+        elif isinstance(command, list) and len(command) == 2 and command[0] == "apply_patch":
+            patch = command[1]
+    if not isinstance(patch, str):
+        return
+    last = None
+    for match in PATCH_RE.finditer(patch):
+        name = match.group(2).strip()
+        full = name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
+        if match.group(1) == "Move to" and last:
+            touch(files, last, "deleted", at)
+        touch(files, full, {"Add File": "created", "Update File": "edited", "Delete File": "deleted", "Move to": "created"}[match.group(1)], at)
+        last = full
 
 
 def touch(files, path, action, at):

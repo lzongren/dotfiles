@@ -76,6 +76,6 @@ export function getFile(session: string, path: string): Promise<ApiResult<FileVi
   return fetchJson<FileView>(`/api/file?${new URLSearchParams({ session, path }).toString()}`)
 }
 
-export function openFile(session: string, path: string): Promise<ApiResult<{ opened: string }>> {
-  return fetchJson<{ opened: string }>('/api/file/open', { method: 'POST', body: { session, path } })
+export function openFile(session: string, path: string): Promise<ApiResult<{ opened: string; revealed: boolean }>> {
+  return fetchJson<{ opened: string; revealed: boolean }>('/api/file/open', { method: 'POST', body: { session, path } })
 }

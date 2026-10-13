@@ -93,8 +93,8 @@ export function parseInsights(stdout: string): AgentInsight[] {
   return parseProbe(stdout).agents
 }
 
-export function probeScript(source: string, artifacts: ArtifactPattern[]): string {
-  return `ARGS = __import__("json").loads(${JSON.stringify(JSON.stringify({ artifacts }))})\n${source}`
+export function probeScript(source: string, args: object): string {
+  return `ARGS = __import__("json").loads(${JSON.stringify(JSON.stringify(args))})\n${source}`
 }
 
 export function createInsightsSource(runner: () => Promise<RunResult>, ttlMs = 10000): () => Promise<InsightsResponse> {

@@ -157,11 +157,11 @@ including ids printed without a URL.
 The same scan records the files each agent wrote (Claude Code's Write and
 Edit, Codex patches), so a card counts them and the detail panel lists them
 by folder; with nothing selected, the side panel shows the latest ones across
-sessions. Click one to preview it: text and images show inline, anything up
-to 1 MB can be downloaded, and a file under a `DEVBOX_SYNCS` folder is read from
-the laptop copy and can be opened in its default app. Other files are read
-over ssh, and only if the agent touched them or they sit under the session's
-folder.
+sessions. Click one to preview it: text and images show inline, and anything
+up to 1 MB can be downloaded. A file under a `DEVBOX_SYNCS` folder is read
+from the laptop copy; "Open on laptop" opens documents and images in their
+default app and only shows anything else (scripts, apps) in its folder. Other
+files are read over ssh. Only files the agent wrote can be read this way.
 
 The theme picker in the top bar starts on your Ghostty theme when it finds
 one: the server reads your Ghostty config for its colors (a `light:…,dark:…`

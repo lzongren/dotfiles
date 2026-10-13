@@ -9,14 +9,13 @@ import { createApp, type App } from '../../server/index.js'
 const stubsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../stubs')
 
 describe('file access rules', () => {
-  it('allows files the agent touched or that sit under its folder, nothing else', () => {
-    expect(allowed('/home/me/work/demo/src/a.ts', '/home/me/work/demo', [])).toBe(true)
-    expect(allowed('/tmp/report.html', '/home/me/work/demo', ['/tmp/report.html'])).toBe(true)
-    expect(allowed('/home/me/.ssh/id_ed25519', '/home/me/work/demo', [])).toBe(false)
-    expect(allowed('/home/me/work/demo/../../.ssh/id_ed25519', '/home/me/work/demo', [])).toBe(false)
-    expect(allowed('/home/me/work/demo-other/a', '/home/me/work/demo', [])).toBe(false)
-    expect(allowed('src/a.ts', '/home/me/work/demo', ['src/a.ts'])).toBe(false)
-    expect(allowed('/home/me/work/demo/a\0b', '/home/me/work/demo', [])).toBe(false)
+  it('allows only normalized absolute paths the agent touched', () => {
+    const touched = ['/home/me/work/demo/src/a.ts', '/tmp/report.html']
+    expect(allowed('/tmp/report.html', touched)).toBe(true)
+    expect(allowed('/home/me/work/demo/src/b.ts', touched)).toBe(false)
+    expect(allowed('/home/me/work/demo/src/../src/a.ts', [...touched, '/home/me/work/demo/src/../src/a.ts'])).toBe(false)
+    expect(allowed('src/a.ts', ['src/a.ts'])).toBe(false)
+    expect(allowed('/tmp/a\0b', ['/tmp/a\0b'])).toBe(false)
   })
 
   it('maps a host path to its synced laptop copy, relative roots resolved against the host home', () => {
@@ -28,10 +27,14 @@ describe('file access rules', () => {
     expect(localMirror('/srv/dots/zshrc', undefined, syncs)).toEqual({ file: '/Users/me/dots/zshrc', root: '/Users/me/dots' })
     expect(localMirror('/home/me/work/api-old/x', '/home/me', syncs)).toBeNull()
     expect(localMirror('/home/me/work/api/x', undefined, syncs)).toBeNull()
+    const nested = [{ name: 'w', localPath: '/Users/me/w', remotePath: 'work' }, ...syncs]
+    expect(localMirror('/home/me/work/api/src/x.ts', '/home/me', nested)).toEqual({ file: '/Users/me/api/src/x.ts', root: '/Users/me/api' })
   })
 
   it('previews text, inlines small images, and offers binaries as a download', () => {
-    expect(describeFile('/a.md', Buffer.from('# hi'), 4, 1)).toMatchObject({ kind: 'text', text: '# hi', truncated: false })
+    expect(describeFile('/a.md', Buffer.from([0x23, 0xe9]), 2, 1)).toMatchObject({ kind: 'text', truncated: false, data: 'data:application/octet-stream;base64,I+k=' })
+    expect(describeFile('/a.md', Buffer.from('# hi'), 9, 1)).toMatchObject({ kind: 'text', text: '# hi', truncated: true })
+    expect(describeFile('/a.md', Buffer.from('# hi'), 9, 1).data).toBeUndefined()
     expect(describeFile('/a.png', Buffer.from([1, 2]), 2, 1)).toMatchObject({ kind: 'image', data: 'data:image/png;base64,AQI=' })
     expect(describeFile('/a.png', Buffer.from([0, 2]), 9, 1)).toEqual(expect.objectContaining({ kind: 'binary', truncated: true }))
     expect(describeFile('/a.png', Buffer.from([0, 2]), 9, 1).data).toBeUndefined()
@@ -50,6 +53,7 @@ describe('file routes', () => {
     outside = mkdtempSync(path.join(tmpdir(), 'devbox-files-out.'))
     mkdirSync(path.join(root, 'notes'))
     writeFileSync(path.join(root, 'notes/plan.md'), '# the plan\n')
+    writeFileSync(path.join(root, 'notes/run.command'), 'echo hi\n')
     writeFileSync(path.join(outside, 'secret'), 'nope')
     mkdirSync(path.join(outside, 'dist'))
     mkdirSync(path.join(outside, 'probe'))
@@ -93,20 +97,24 @@ describe('file routes', () => {
 
   it('reads over ssh when there is no laptop copy, or when the copy links outside its sync root', async () => {
     expect((await get('cc-demo', '/home/me/work/demo/src/retry.ts')).body).toMatchObject({ kind: 'text', text: 'hello world', size: 11 })
-    const escaped = await get('main', '/home/me/dotfiles/notes/escape.md')
+    const escaped = await get('cc-demo', '/home/me/dotfiles/notes/escape.md')
     expect(escaped.body).toMatchObject({ text: 'hello world' })
     expect(escaped.body.local).toBeUndefined()
   })
 
-  it('refuses files the session neither touched nor holds, and unknown sessions', async () => {
+  it('refuses files the session did not write, even inside its folder, and other sessions', async () => {
     expect((await get('cc-demo', '/home/me/.ssh/id_ed25519')).status).toBe(403)
-    expect((await get('nope', '/home/me/work/demo/src/retry.ts')).status).toBe(403)
-    expect((await get('cc-demo', '/home/me/work/demo/../../.ssh/id')).status).toBe(403)
+    expect((await get('cc-demo', '/home/me/work/demo/.env')).status).toBe(403)
+    expect((await get('logs', '/home/me/work/demo/src/retry.ts')).status).toBe(403)
+    expect((await get('cc-demo', '/home/me/work/demo/src/../src/retry.ts')).status).toBe(403)
   })
 
-  it('opens only synced copies on the laptop', async () => {
-    expect((await open({ session: 'cc-demo', path: '/home/me/dotfiles/notes/plan.md' })).status).toBe(200)
-    await vi.waitFor(() => expect(readFileSync(process.env.OPEN_STUB_LOG!, 'utf8').trim()).toBe(path.join(realpathSync(root), 'notes/plan.md')))
+  it('opens synced documents, only reveals anything that could run, and needs a laptop copy', async () => {
+    expect((await open({ session: 'cc-demo', path: '/home/me/dotfiles/notes/plan.md' })).body.revealed).toBe(false)
+    expect((await open({ session: 'cc-demo', path: '/home/me/dotfiles/notes/run.command' })).body.revealed).toBe(true)
+    const local = realpathSync(root)
+    const expected = process.platform === 'darwin' ? [`${local}/notes/plan.md`, `-R ${local}/notes/run.command`] : [`${local}/notes/plan.md`, `${local}/notes`]
+    await vi.waitFor(() => expect(readFileSync(process.env.OPEN_STUB_LOG!, 'utf8').trim().split('\n').sort()).toEqual(expected.sort()))
     expect((await open({ session: 'cc-demo', path: '/home/me/work/demo/src/retry.ts' })).body.error).toBe('not_synced')
     expect((await open({ session: 'cc-demo', path: '/etc/passwd' })).status).toBe(403)
     expect((await open({ session: 1, path: '/etc/passwd' })).status).toBe(400)

@@ -15,7 +15,7 @@ import {
 import { loadConfig } from './config.js'
 import { BodyError, readJson } from './body.js'
 import { detach, openLocal, runAgentProbe, spawnAttachPty, statusRaw } from './exec.js'
-import { allowed, localMirror, parseRemoteRead, readMirror, remoteReadScript } from './files.js'
+import { allowed, localMirror, openable, parseRemoteRead, readMirror, remoteReadScript, resolveMirror } from './files.js'
 import { readGhostty } from './ghostty.js'
 import type { InsightsResponse } from '../src/shared/types.js'
 import { DAY_RE, listDays, readNote, writeNote } from './notes.js'
@@ -56,17 +56,15 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const getSessions = createSessionSource(config.host, () => statusRaw(opts.bin))
   const probePath = path.resolve(opts.distRoot, '../probe/agent-probe.py')
   const getInsights = createInsightsSource(async () =>
-    runAgentProbe(config.host, probeScript(await readFile(probePath, 'utf8'), config.artifacts)),
+    runAgentProbe(config.host, probeScript(await readFile(probePath, 'utf8'), { artifacts: config.artifacts })),
   )
   const distRoot = path.resolve(opts.distRoot)
   let lastInsights: InsightsResponse | null = null
   const fetchInsights = () => getInsights().then((body) => (lastInsights = body))
   const fileAccess = async (sessionName: string, target: string) => {
-    const [{ sessions }, insights] = await Promise.all([getSessions(), lastInsights ?? fetchInsights()])
-    const session = sessions.find((s) => s.name === sessionName)
+    const insights = lastInsights ?? (await fetchInsights())
     const touched = insights.agents.find((a) => a.session === sessionName)?.files?.map((f) => f.path) ?? []
-    if (!session || !allowed(target, session.path, touched)) return null
-    return { mirror: localMirror(target, insights.home, config.syncs) }
+    return allowed(target, touched) ? { mirror: localMirror(target, insights.home, config.syncs) } : null
   }
   const notesDir =
     opts.notesDir ??
@@ -142,7 +140,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
         const target = url.searchParams.get('path') ?? ''
         fileAccess(sessionName, target)
           .then(async (access) => {
-            if (!access) return sendJson(res, 403, { error: 'forbidden', message: 'not a file this session touched or holds' })
+            if (!access) return sendJson(res, 403, { error: 'forbidden', message: 'not a file this session wrote' })
             const local = access.mirror ? await readMirror(access.mirror, target) : null
             if (local) return sendJson(res, 200, local)
             const result = await runAgentProbe(config.host, remoteReadScript(target), 20000)
@@ -166,11 +164,12 @@ export async function createApp(opts: AppOptions): Promise<App> {
               return sendJson(res, 400, { error: 'bad_request', message: 'session and path must be strings' })
             }
             const access = await fileAccess(session, target)
-            if (!access) return sendJson(res, 403, { error: 'forbidden', message: 'not a file this session touched or holds' })
-            const local = access.mirror ? await readMirror(access.mirror, target) : null
-            if (!local?.local) return sendJson(res, 404, { error: 'not_synced', message: 'no synced copy on this laptop' })
-            openLocal(local.local)
-            return sendJson(res, 200, { opened: local.local })
+            if (!access) return sendJson(res, 403, { error: 'forbidden', message: 'not a file this session wrote' })
+            const local = access.mirror ? await resolveMirror(access.mirror) : null
+            if (!local) return sendJson(res, 404, { error: 'not_synced', message: 'no synced copy on this laptop' })
+            const revealed = !openable(local)
+            openLocal(local, revealed)
+            return sendJson(res, 200, { opened: local, revealed })
           })
           .catch((err: unknown) => {
             if (err instanceof BodyError) sendJson(res, err.status, { error: 'bad_request', message: err.message })

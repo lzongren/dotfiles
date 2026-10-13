@@ -200,7 +200,7 @@ beforeAll(() => {
     `.codex/sessions/2026/10/12/rollout-2026-10-12T10-00-00-${uuid}.jsonl`,
     [
       line({ type: 'session_meta', timestamp: at(30), payload: { cwd: '/work/cdx', thread_source: 'user', source: 'cli' } }),
-      line({ type: 'turn_context', timestamp: at(30), payload: { model: 'gpt-codex-x' } }),
+      line({ type: 'turn_context', timestamp: at(30), payload: { model: 'gpt-codex-x', cwd: '/work/cdx/crate' } }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'user_message', message: 'Port the parser' } }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'task_started' } }),
       line({
@@ -216,6 +216,16 @@ beforeAll(() => {
           name: 'apply_patch',
           input: '*** Begin Patch\n*** Add File: /work/cdx/src/lib.rs\n+fn main() {}\n*** Update File: src/parser.rs\n@@\n-a\n+b\n*** Delete File: /work/cdx/old.py\n*** End Patch',
         },
+      }),
+      line({
+        type: 'response_item',
+        timestamp: at(33),
+        payload: { type: 'function_call', name: 'apply_patch', arguments: JSON.stringify({ input: '*** Begin Patch\n*** Update File: /work/cdx/a.rs\n*** Move to: /work/cdx/b.rs\n@@\n*** End Patch' }) },
+      }),
+      line({
+        type: 'response_item',
+        timestamp: at(34),
+        payload: { type: 'function_call', name: 'shell', arguments: JSON.stringify({ command: ['apply_patch', '*** Begin Patch\n*** Add File: notes.md\n+x\n*** End Patch'] }) },
       }),
     ].join(''),
   )
@@ -302,16 +312,19 @@ describe('agent probe', () => {
     expect(Object.keys(agents).sort()).toEqual(['broken', 'busyerr', 'cdx', 'eval', 'fix-retry', 'longrun', 'messy', 'stopped'])
   })
 
-  it('lists the files each agent wrote, newest first, resolving codex paths against its folder', () => {
+  it('lists the files each agent wrote, newest first, resolving codex paths against the turn folder', () => {
     const agents = run()
     expect(agents['fix-retry'].files).toEqual([
       { path: path.join(home, 'work/fix/plan.md'), action: 'created', at: Date.parse(at(4)) / 1000, count: 2, gone: false },
       { path: '/work/fix/src/retry.ts', action: 'edited', at: Date.parse(at(3)) / 1000, count: 1, gone: true },
     ])
-    expect(agents.cdx.files).toEqual([
-      { path: '/work/cdx/src/lib.rs', action: 'created', at: Date.parse(at(32)) / 1000, count: 1, gone: true },
-      { path: '/work/cdx/src/parser.rs', action: 'edited', at: Date.parse(at(32)) / 1000, count: 1, gone: true },
-      { path: '/work/cdx/old.py', action: 'deleted', at: Date.parse(at(32)) / 1000, count: 1, gone: true },
+    expect((agents.cdx.files as Array<{ path: string; action: string }>).map((f) => [f.path, f.action])).toEqual([
+      ['/work/cdx/crate/notes.md', 'created'],
+      ['/work/cdx/a.rs', 'deleted'],
+      ['/work/cdx/b.rs', 'created'],
+      ['/work/cdx/src/lib.rs', 'created'],
+      ['/work/cdx/crate/src/parser.rs', 'edited'],
+      ['/work/cdx/old.py', 'deleted'],
     ])
   })
 

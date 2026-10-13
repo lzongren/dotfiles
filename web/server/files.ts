@@ -2,6 +2,7 @@ import { open, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { FileView } from '../src/shared/types.js'
 import type { SyncEntry } from './config.js'
+import { probeScript } from './insights.js'
 
 export const FILE_MAX = 1024 * 1024
 
@@ -14,39 +15,49 @@ const IMAGES: Record<string, string> = {
   '.svg': 'image/svg+xml',
 }
 
-export function allowed(target: string, cwd: string | undefined, touched: string[]): boolean {
-  if (!target.startsWith('/') || target.includes('\0') || path.posix.normalize(target) !== target) return false
-  if (touched.includes(target)) return true
-  if (!cwd || !cwd.startsWith('/')) return false
-  const root = path.posix.normalize(cwd).replace(/\/$/, '')
-  return target.startsWith(`${root}/`)
+const OPENABLE = new Set(['.md', '.markdown', '.txt', '.log', '.csv', '.tsv', '.json', '.yaml', '.yml', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp'])
+
+export function allowed(target: string, touched: string[]): boolean {
+  return target.startsWith('/') && !target.includes('\0') && path.posix.normalize(target) === target && touched.includes(target)
+}
+
+export function openable(file: string): boolean {
+  return OPENABLE.has(path.extname(file).toLowerCase())
 }
 
 export function localMirror(remote: string, home: string | undefined, syncs: SyncEntry[]): { file: string; root: string } | null {
-  for (const sync of syncs) {
-    const remoteRoot = sync.remotePath.startsWith('/') ? sync.remotePath : home ? path.posix.join(home, sync.remotePath) : null
-    if (!remoteRoot || !remote.startsWith(`${remoteRoot.replace(/\/$/, '')}/`)) continue
-    return { file: path.join(sync.localPath, remote.slice(remoteRoot.replace(/\/$/, '').length)), root: sync.localPath }
-  }
-  return null
+  const roots = syncs
+    .map((sync) => ({ sync, root: (sync.remotePath.startsWith('/') ? sync.remotePath : home ? path.posix.join(home, sync.remotePath) : '').replace(/\/$/, '') }))
+    .filter(({ root }) => root !== '' && remote.startsWith(`${root}/`))
+    .sort((a, b) => b.root.length - a.root.length)
+  const best = roots[0]
+  return best ? { file: path.join(best.sync.localPath, remote.slice(best.root.length)), root: best.sync.localPath } : null
 }
 
 export function describeFile(remote: string, bytes: Buffer, size: number, mtime: number, local?: string): FileView {
-  const base = { path: remote, size, mtime, truncated: size > bytes.length, ...(local ? { local } : {}) }
+  const truncated = size > bytes.length
   const mime = IMAGES[path.posix.extname(remote).toLowerCase()]
-  if (mime && !base.truncated) return { ...base, kind: 'image', data: `data:${mime};base64,${bytes.toString('base64')}` }
-  if (bytes.subarray(0, 8192).includes(0)) {
-    return { ...base, kind: 'binary', ...(base.truncated ? {} : { data: `data:application/octet-stream;base64,${bytes.toString('base64')}` }) }
+  const data = (type: string) => (truncated ? {} : { data: `data:${type};base64,${bytes.toString('base64')}` })
+  const base = { path: remote, size, mtime, truncated, ...(local ? { local } : {}) }
+  if (mime && !truncated) return { ...base, kind: 'image', ...data(mime) }
+  if (bytes.subarray(0, 8192).includes(0)) return { ...base, kind: 'binary', ...data('application/octet-stream') }
+  return { ...base, kind: 'text', text: bytes.toString('utf8'), ...data('application/octet-stream') }
+}
+
+export async function resolveMirror(mirror: { file: string; root: string }): Promise<string | null> {
+  try {
+    const [real, root] = await Promise.all([realpath(mirror.file), realpath(mirror.root)])
+    return real.startsWith(`${root}${path.sep}`) && (await stat(real)).isFile() ? real : null
+  } catch {
+    return null
   }
-  return { ...base, kind: 'text', text: bytes.toString('utf8') }
 }
 
 export async function readMirror(mirror: { file: string; root: string }, remote: string): Promise<FileView | null> {
+  const real = await resolveMirror(mirror)
+  if (!real) return null
   try {
-    const [real, root] = await Promise.all([realpath(mirror.file), realpath(mirror.root)])
-    if (!real.startsWith(`${root}${path.sep}`)) return null
     const info = await stat(real)
-    if (!info.isFile()) return null
     const handle = await open(real, 'r')
     try {
       const buffer = Buffer.alloc(Math.min(info.size, FILE_MAX))
@@ -60,9 +71,7 @@ export async function readMirror(mirror: { file: string; root: string }, remote:
   }
 }
 
-export function remoteReadScript(file: string): string {
-  return `ARGS = __import__("json").loads(${JSON.stringify(JSON.stringify({ path: file, limit: FILE_MAX }))})
-import base64, json, os
+const READER = `import base64, json, os
 try:
     info = os.stat(ARGS["path"])
     if not os.path.isfile(ARGS["path"]):
@@ -73,6 +82,9 @@ try:
 except OSError as err:
     print(json.dumps({"error": err.strerror or str(err)}))
 `
+
+export function remoteReadScript(file: string): string {
+  return probeScript(READER, { path: file, limit: FILE_MAX })
 }
 
 export function parseRemoteRead(remote: string, stdout: string): FileView | { error: string } {

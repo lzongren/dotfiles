@@ -69,7 +69,7 @@ describe('parseInsights', () => {
 
 describe('probeScript', () => {
   it('prepends the arguments as a JSON literal Python can read, whatever the pattern contains', () => {
-    const script = probeScript('print(ARGS)', [{ label: 'CR', pattern: `a"b'''\\d+\n` }])
+    const script = probeScript('print(ARGS)', { artifacts: [{ label: 'CR', pattern: `a"b'''\\d+\n` }] })
     const [first, rest] = [script.slice(0, script.indexOf('\n')), script.slice(script.indexOf('\n') + 1)]
     expect(first.startsWith('ARGS = __import__("json").loads(')).toBe(true)
     const literal = first.slice('ARGS = __import__("json").loads('.length, -1)

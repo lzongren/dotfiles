@@ -93,16 +93,13 @@ export function FilePreview({ file, onClose }: { file: FileRef; onClose: () => v
       .catch(() => setNote('Could not copy — select the path above'))
   }
   const open = () => {
-    void openFile(file.session, file.path).then((r) => setNote(r.kind === 'ok' ? 'Opened on this laptop' : failure(r)))
+    void openFile(file.session, file.path).then((r) =>
+      setNote(r.kind !== 'ok' ? failure(r) : r.data.revealed ? 'Not a document type, so it is shown in its folder instead' : 'Opened on this laptop'),
+    )
   }
 
   const view = result?.kind === 'ok' ? result.data : null
   const name = baseName(file.path)
-  const download =
-    view?.data ??
-    (view?.kind === 'text' && !view.truncated && view.text !== undefined
-      ? `data:text/plain;charset=utf-8,${encodeURIComponent(view.text)}`
-      : undefined)
   return (
     <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
       <header className="file-head">
@@ -121,8 +118,8 @@ export function FilePreview({ file, onClose }: { file: FileRef; onClose: () => v
               Open on laptop
             </button>
           ) : null}
-          {download ? (
-            <a className="button" href={download} download={name}>
+          {view?.data ? (
+            <a className="button" href={view.data} download={name}>
               Download
             </a>
           ) : null}
