@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
-import { TERMINAL_OPTIONS } from '../theme'
+import { onTerminalLook, TERMINAL_OPTIONS, terminalLook } from '../theme'
 import { getToken } from '../token'
 
 type Status = 'connecting' | 'connected' | 'closed' | 'rejected'
@@ -24,7 +24,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
   const [status, setStatus] = useState<Status>('connecting')
 
   useEffect(() => {
-    const term = new XTerm(TERMINAL_OPTIONS)
+    const term = new XTerm({ ...TERMINAL_OPTIONS, ...terminalLook() })
     const fit = new FitAddon()
     term.loadAddon(fit)
     if (containerRef.current) term.open(containerRef.current)
@@ -87,6 +87,14 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       }, 150)
     })
     if (containerRef.current) observer.observe(containerRef.current)
+    const stopLook = onTerminalLook(() => {
+      Object.assign(term.options, terminalLook())
+      try {
+        fit.fit()
+      } catch {
+        void 0
+      }
+    })
 
     const scheduleRetry = () => {
       if (retry >= MAX_RETRIES) {
@@ -196,6 +204,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (fitTimer !== null) window.clearTimeout(fitTimer)
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()
+      stopLook()
       ws?.close()
       dataSub.dispose()
       resizeSub.dispose()

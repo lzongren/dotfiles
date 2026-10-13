@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { TERMINAL_OPTIONS } from '../../src/theme'
+import { PRESETS, TERMINAL_OPTIONS, uiTokens } from '../../src/theme'
+import type { Palette } from '../../src/shared/types'
 
 const css = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/styles.css'), 'utf8')
 
@@ -78,5 +79,36 @@ describe('theme contrast (WCAG AA)', () => {
 
   it('the pane behind the terminal matches its background, so no seam shows', () => {
     expect(token('term-bg')).toEqual([theme.background])
+  })
+})
+
+const LATTE: Palette = {
+  background: '#eff1f5',
+  foreground: '#4c4f69',
+  ansi: '#5c5f77 #d20f39 #40a02b #df8e1d #1e66f5 #ea76cb #179299 #acb0be #6c6f85 #de293e #49af3d #eea02d #456eff #fe85d8 #2d9fa8 #bcc0cc'.split(' '),
+}
+const MUDDY: Palette = { background: '#555555', foreground: '#777777', ansi: Array(16).fill('#666666') }
+
+describe.each([
+  ...PRESETS.filter((l) => l.palette).map((l) => [l.label, l.palette!] as const),
+  ['Catppuccin Latte', LATTE] as const,
+  ['a low-contrast palette', MUDDY] as const,
+])('theme derived from %s (WCAG AA)', (_, palette) => {
+  const t = uiTokens(palette)
+  it('keeps every text token at least 4.5:1 on every surface', () => {
+    for (const fg of ['--text', '--dim', '--accent', '--bell', '--danger']) {
+      for (const bg of ['--bg', '--surface', '--raised', '--selected']) {
+        expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+    expect(contrast(t['--bell'], t['--bell-bg'])).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('keeps chip text and control borders readable', () => {
+    for (const [fg, bg] of [['--on-accent', '--accent'], ['--on-bell', '--bell'], ['--on-danger', '--danger']]) {
+      expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
+    }
+    expect(contrast(t['--control'], t['--bg'])).toBeGreaterThanOrEqual(3)
+    expect(contrast(t['--control'], t['--surface'])).toBeGreaterThanOrEqual(3)
   })
 })

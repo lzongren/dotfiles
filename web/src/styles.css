@@ -68,6 +68,10 @@ kbd {
   background: var(--surface);
 }
 
+.theme-picker {
+  margin-left: auto;
+}
+
 .host {
   color: var(--dim);
   font-weight: 400;
@@ -285,7 +289,8 @@ kbd {
   outline-offset: -2px;
 }
 
-.palette select {
+.palette select,
+.theme-picker select {
   background: var(--bg);
   border: 1px solid var(--control);
   border-radius: 8px;

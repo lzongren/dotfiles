@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TerminalPane } from '../../src/components/Terminal'
 import { TerminalTabs } from '../../src/components/TerminalTabs'
+import { applyLook, DEVBOX, PRESETS } from '../../src/theme'
 
 const hoisted = vi.hoisted(() => {
   class FakeXTerm {
@@ -14,10 +15,12 @@ const hoisted = vi.hoisted(() => {
     open = vi.fn()
     dispose = vi.fn()
     focus = vi.fn()
+    options: Record<string, unknown>
     dataCb: ((data: string) => void) | null = null
     resizeCb: ((size: { cols: number; rows: number }) => void) | null = null
 
-    constructor() {
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = { ...options }
       FakeXTerm.instances.push(this)
     }
     onData(cb: (data: string) => void) {
@@ -135,6 +138,15 @@ describe('TerminalPane', () => {
     expect(url.searchParams.get('cols')).toBe('80')
     expect(url.searchParams.get('rows')).toBe('24')
     expect(sockets[0].binaryType).toBe('arraybuffer')
+  })
+
+  it('repaints an open terminal when the theme changes', () => {
+    render(<TerminalPane name="api" active />)
+    expect(xterms[0].options.theme).toMatchObject({ background: '#0e1014' })
+    act(() => applyLook(PRESETS.find((l) => l.id === 'tokyo-night')!, false))
+    expect(xterms[0].options.theme).toMatchObject({ background: '#1a1b26', blue: '#7aa2f7' })
+    act(() => applyLook(DEVBOX, false))
+    expect(xterms[0].options.theme).toMatchObject({ background: '#0e1014' })
   })
 
   it('sends keystrokes as binary frames, never as text', () => {

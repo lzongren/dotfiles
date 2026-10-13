@@ -154,6 +154,13 @@ new transcript bytes. GitHub pull requests are found automatically;
 add other review links with `DEVBOX_ARTIFACTS` (see `config.example`),
 including ids printed without a URL.
 
+The theme picker in the top bar starts on your Ghostty theme when it finds
+one: the server reads your Ghostty config for its colors (a `light:…,dark:…`
+pair follows the system), font, and cursor. A few presets sit beside it. Each
+theme is a terminal palette, and the page's colors are derived from it and
+held to WCAG AA. Ghostty draws its default font from a built-in copy that a
+browser can't use, so install that font to see it in the browser too.
+
 The sidebar lists every session, most recent first, with a headline: the
 title the agent gives its terminal (Claude Code and Codex keep it current).
 Click one to open it in a terminal tab beside the list; each tab is an

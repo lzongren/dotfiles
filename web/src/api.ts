@@ -4,6 +4,7 @@ import type {
   CreateSessionResponse,
   InsightsResponse,
   SessionsResponse,
+  ThemeResponse,
   WorkspacesResponse,
 } from './shared/types'
 import { getToken } from './token'
@@ -50,4 +51,8 @@ export function getWorkspaces(): Promise<ApiResult<WorkspacesResponse>> {
 
 export function createSession(body: CreateSessionRequest): Promise<ApiResult<CreateSessionResponse>> {
   return fetchJson<CreateSessionResponse>('/api/sessions', { method: 'POST', body })
+}
+
+export function getTheme(): Promise<ApiResult<ThemeResponse>> {
+  return fetchJson<ThemeResponse>('/api/theme')
 }
