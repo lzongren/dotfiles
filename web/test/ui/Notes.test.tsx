@@ -12,6 +12,7 @@ const gets: string[] = []
 
 const version = (text: string) => (text ? `h:${text}` : '')
 let getGate: Promise<void> | null = null
+let putGate: Promise<void> | null = null
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -32,6 +33,7 @@ beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
   getGate = null
+  putGate = null
   store = {}
   failPuts = 0
   failStatus = 500
@@ -43,6 +45,7 @@ beforeEach(() => {
     if (url === '/api/notes') return json({ days: Object.keys(store).sort().reverse() })
     const day = url.slice('/api/notes/'.length)
     if (init.method === 'PUT') {
+      if (putGate) await putGate
       if (failPuts > 0) {
         failPuts -= 1
         return json({ error: 'internal', message: failStatus === 413 ? 'request body too large' : 'disk full' }, failStatus)
@@ -463,6 +466,68 @@ describe('Notes', () => {
     expect(pad()).not.toHaveAttribute('readonly')
     expect(screen.getByRole('button', { name: /^Notes · Today/ })).toBeInTheDocument()
     expect(pad()).toHaveValue('today')
+  })
+
+  it('goes read-only the moment another tab takes the pad, even while its last save is still out', async () => {
+    store['2026-10-13'] = 'start'
+    const locks = fakeLocks()
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: 'mine' } })
+    let open = () => undefined as void
+    putGate = new Promise<void>((done) => (open = done))
+    locks.other({ steal: true })
+    await settle()
+    expect(pad()).toHaveAttribute('readonly')
+    open()
+    await settle()
+    expect(store['2026-10-13']).toBe('mine')
+  })
+
+  it('hands over after its own save in flight, so text typed while it was out still lands', async () => {
+    store['2026-10-13'] = 'start'
+    const locks = fakeLocks()
+    render(<Notes />)
+    await settle()
+    let open = () => undefined as void
+    putGate = new Promise<void>((done) => (open = done))
+    fireEvent.change(pad(), { target: { value: 'a' } })
+    await settle(700)
+    fireEvent.change(pad(), { target: { value: 'ab' } })
+    locks.other({ steal: true })
+    await settle()
+    expect(pad()).toHaveAttribute('readonly')
+    putGate = null
+    open()
+    await settle()
+    expect(store['2026-10-13']).toBe('ab')
+    expect(puts.map((p) => p.text)).toEqual(['a', 'ab'])
+    expect(shown()).not.toMatch(/changed elsewhere/)
+  })
+
+  it('ignores edits during the handover, says so, saves once, then follows the other tab', async () => {
+    store['2026-10-13'] = 'start'
+    const locks = fakeLocks()
+    render(<Notes />)
+    await settle()
+    act(() => pad().focus())
+    fireEvent.change(pad(), { target: { value: 'mine' } })
+    let open = () => undefined as void
+    putGate = new Promise<void>((done) => (open = done))
+    const them = locks.other({ steal: true })
+    await settle()
+    expect(shown()).toBe('handing over…')
+    fireEvent.change(pad(), { target: { value: 'sneaky' } })
+    act(() => pad().blur())
+    act(() => pad().focus())
+    putGate = null
+    open()
+    await settle()
+    expect(puts.map((p) => p.text)).toEqual(['mine'])
+    expect(them.lost()).toBe(false)
+    expect(pad()).toHaveAttribute('readonly')
+    expect(pad()).toHaveValue('mine')
+    expect(shown()).toBe('editing in another tab')
   })
 
   it('saves a draft the browser could not store before handing the pad over', async () => {

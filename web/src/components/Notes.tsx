@@ -94,10 +94,12 @@ export function Notes() {
   const [draft, setDraftState] = useState<Draft | null>(null)
   const [phase, setPhaseState] = useState<Phase>(IDLE)
   const [blocked, setBlocked] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   const [reload, setReload] = useState(0)
   const [open, setOpen] = useState(() => quietly(() => localStorage.getItem(OPEN_KEY) !== '0', true))
   const editorRef = useRef(editor)
   const take = useRef(() => undefined as void)
+  const leavingRef = useRef(false)
   const draftRef = useRef<Draft | null>(null)
   const phaseRef = useRef<Phase>(IDLE)
   const versionRef = useRef('')
@@ -232,7 +234,11 @@ export function Notes() {
         .catch((err: unknown) => {
           if (ours || !live) return
           if (!(err instanceof DOMException && err.name === 'AbortError')) return role(true)
+          leavingRef.current = true
+          setLeaving(true)
           void save().finally(() => {
+            leavingRef.current = false
+            setLeaving(false)
             if (!live) return
             role(false)
             ask({})
@@ -343,7 +349,7 @@ export function Notes() {
 
   const edit = (next: string) => {
     const now = phaseRef.current
-    if (!editor || loaded !== day || now.kind === 'conflict') return
+    if (!editor || leavingRef.current || loaded !== day || now.kind === 'conflict') return
     following.current = null
     show(next)
     setCarry(null)
@@ -383,8 +389,8 @@ export function Notes() {
     ? ["couldn't load this note", true]
     : loaded !== day
       ? ['', false]
-      : !editor
-        ? ['editing in another tab', false]
+      : !editor || leaving
+        ? [leaving ? 'handing over…' : 'editing in another tab', false]
         : phase.kind === 'conflict'
           ? ['changed elsewhere', true]
           : phase.kind === 'rejected'
@@ -424,7 +430,7 @@ export function Notes() {
             aria-label={`notes for ${label.toLowerCase()}`}
             placeholder={'What are you on today?\n- [ ] a thing to finish\n- [x] a thing done'}
             spellCheck
-            readOnly={!editor || loaded !== day || phase.kind === 'conflict'}
+            readOnly={!editor || leaving || loaded !== day || phase.kind === 'conflict'}
             value={text}
             onChange={(e) => edit(e.target.value)}
             onFocus={() => take.current()}
@@ -434,7 +440,7 @@ export function Notes() {
             }}
           />
           <footer className="notes-foot">
-            {carry ? (
+            {carry && !leaving ? (
               <button
                 type="button"
                 className="notes-carry"
@@ -451,12 +457,12 @@ export function Notes() {
                 Retry
               </button>
             ) : null}
-            {phase.kind === 'rejected' || phase.kind === 'conflict' ? (
+            {!leaving && (phase.kind === 'rejected' || phase.kind === 'conflict') ? (
               <button type="button" className="notes-carry" onClick={discard}>
                 {phase.kind === 'conflict' ? 'Use saved' : 'Discard unsaved'}
               </button>
             ) : null}
-            {phase.kind === 'conflict' ? (
+            {!leaving && phase.kind === 'conflict' ? (
               <button type="button" className="notes-carry" onClick={keep}>
                 Keep mine
               </button>
