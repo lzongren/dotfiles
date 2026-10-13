@@ -15,7 +15,7 @@ const MAX_RETRIES = 6
 const HEALTHY_MS = 5000
 const QUEUE_MAX = 64 * 1024
 const COPIED_MS = 1500
-const GESTURE_MS = 2000
+const BLOCKED = 'copy blocked: ⌥-drag, then ⌘C'
 
 export function clipboardText(data: string): string | null {
   if (!data.includes(';')) return null
@@ -89,18 +89,6 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     const dataSub = term.onData(sendInput)
     const resizeSub = term.onResize(sendResize)
     let copiedTimer: number | null = null
-    let pressed = false
-    let gestureAt = -Infinity
-    const press = () => {
-      pressed = true
-    }
-    const release = () => {
-      if (pressed) gestureAt = performance.now()
-      pressed = false
-    }
-    const screen = containerRef.current
-    screen?.addEventListener('pointerdown', press, true)
-    document.addEventListener('pointerup', release, true)
     const flash = (note: string) => {
       if (disposed) return
       setCopyNote(note)
@@ -109,12 +97,12 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     }
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
-      if (text === null || performance.now() - gestureAt > GESTURE_MS) return true
-      if (!navigator.clipboard) flash('copy blocked: ⌥-drag, then ⌘C')
+      if (text === null) return true
+      if (!navigator.clipboard) flash(BLOCKED)
       else
         void navigator.clipboard.writeText(text).then(
           () => flash('copied'),
-          () => flash('copy blocked: ⌥-drag, then ⌘C'),
+          () => flash(BLOCKED),
         )
       return true
     })
@@ -248,8 +236,6 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (fitTimer !== null) window.clearTimeout(fitTimer)
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
       setCopyNote('')
-      screen?.removeEventListener('pointerdown', press, true)
-      document.removeEventListener('pointerup', release, true)
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()
       stopLook()
