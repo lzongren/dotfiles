@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getSessions } from './api'
-import type { SessionsResponse } from './shared/types'
+import { getInsights, getSessions } from './api'
+import type { AgentInsight, SessionsResponse } from './shared/types'
+import { loadSeen, markSeen } from './insights'
+import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
 import { WorkspacePalette } from './components/WorkspacePalette'
@@ -19,9 +21,18 @@ export function App() {
   const [tabs, setTabs] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const [openCount, setOpenCount] = useState(0)
+  const [insights, setInsights] = useState<Map<string, AgentInsight>>(() => new Map())
+  const [insightsNotice, setInsightsNotice] = useState<string | null>(null)
+  const [, setSeenVersion] = useState(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
+  const seen = useCallback((name: string) => {
+    markSeen(name, Date.now())
+    setSeenVersion((n) => n + 1)
+  }, [])
   const openTerminal = useCallback((name: string) => {
+    markSeen(name, Date.now())
+    setSeenVersion((n) => n + 1)
     setTabs((prev) => (prev.includes(name) ? prev : [...prev, name]))
     setActiveTab(name)
     setOpenCount((n) => n + 1)
@@ -58,24 +69,40 @@ export function App() {
     })
   }, [])
 
+  const refreshInsights = useCallback(async () => {
+    const result = await getInsights()
+    if (result.kind === 'ok' && Array.isArray(result.data.agents)) {
+      setInsights(new Map(result.data.agents.map((a) => [a.session, a])))
+      setInsightsNotice(null)
+    } else if (result.kind !== 'ok') {
+      setInsightsNotice(result.kind === 'unauthorized' ? null : `agent details unavailable: ${result.message}`)
+    }
+  }, [])
+
   useEffect(() => {
     void refresh()
+    void refreshInsights()
     const poll = setInterval(() => {
       void refresh()
     }, 5000)
+    const insightsPoll = setInterval(() => {
+      void refreshInsights()
+    }, 15000)
     const tick = setInterval(() => {
       setNow(Date.now())
     }, 1000)
     const onFocus = () => {
       void refresh()
+      void refreshInsights()
     }
     window.addEventListener('focus', onFocus)
     return () => {
       clearInterval(poll)
+      clearInterval(insightsPoll)
       clearInterval(tick)
       window.removeEventListener('focus', onFocus)
     }
-  }, [refresh])
+  }, [refresh, refreshInsights])
 
   if (view.phase === 'unauthorized') {
     return (
@@ -135,22 +162,33 @@ export function App() {
         ) : null}
       </header>
       <aside className="sidebar">
-        <SessionList sessions={data.sessions} now={now} active={activeTab} onAttach={openTerminal} />
+        <SessionList
+          sessions={data.sessions}
+          insights={insights}
+          now={now}
+          active={activeTab}
+          onAttach={openTerminal}
+        />
       </aside>
       <main className="workspace">
-        {tabs.length === 0 ? (
-          <div className="workspace-empty">
-            Pick a session on the left, or press <kbd>/</kbd> to find or start one.
-          </div>
-        ) : (
-          <TerminalTabs
-            tabs={tabs}
-            active={activeTab}
-            focusSignal={openCount}
-            onSelect={setActiveTab}
-            onClose={closeTerminal}
+        <TerminalTabs
+          tabs={tabs}
+          active={activeTab}
+          focusSignal={openCount}
+          onSelect={setActiveTab}
+          onClose={closeTerminal}
+        />
+        <div className="overview-wrap" hidden={activeTab !== null}>
+          <Overview
+            sessions={data.sessions}
+            insights={insights}
+            now={now}
+            seenAt={loadSeen(now).seenAt}
+            notice={insightsNotice}
+            onOpen={openTerminal}
+            onSeen={seen}
           />
-        )}
+        </div>
       </main>
     </div>
   )

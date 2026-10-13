@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import path from 'node:path'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import type { AgentChoice } from '../src/shared/types.js'
@@ -82,4 +82,38 @@ export function spawnAttachPty(host: string, name: string, cols: number, rows: n
     if (value !== undefined) env[key] = value
   }
   return ptySpawn(file, args, { name: 'xterm-256color', cols, rows, env })
+}
+
+export function runAgentProbe(host: string, script: string, timeoutMs = 30000): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, 'python3', '-I', '-'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let killedFor: string | null = null
+    const stop = (reason: string) => {
+      killedFor = reason
+      child.kill('SIGKILL')
+    }
+    const timer = setTimeout(() => stop('agent probe timed out'), timeoutMs)
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString()
+      if (stdout.length > 4 * 1024 * 1024) stop('agent probe output too large')
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-8192)
+    })
+    child.on('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (killedFor !== null) return resolve({ stdout: '', stderr: killedFor, exitCode: 124 })
+      resolve({ stdout, stderr, exitCode: code ?? 1 })
+    })
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(script)
+  })
 }

@@ -1,11 +1,13 @@
 import { useReducer, useRef } from 'react'
-import type { Session } from '../shared/types'
+import type { AgentInsight, Session } from '../shared/types'
+import { displayTitle } from '../insights'
 import { ago } from '../time'
 
 const SHELLS = ['zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh']
 
 export function headline(session: Session): string {
-  return (session.title || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
+  const title = (session.title || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
+  return /^(claude code|codex)$/i.test(title) ? '' : title
 }
 
 export function sessionSummary(session: Session): { text: string; live: boolean } {
@@ -21,13 +23,17 @@ function byRecency(sessions: Session[]): string[] {
     .map((s) => s.name)
 }
 
+const ATTENTION: Partial<Record<AgentInsight['state'], string>> = { waiting: 'waiting', working: 'working', error: 'error' }
+
 export function SessionList({
   sessions,
+  insights = new Map(),
   now,
   active,
   onAttach,
 }: {
   sessions: Session[]
+  insights?: Map<string, AgentInsight>
   now: number
   active: string | null
   onAttach: (name: string) => void
@@ -78,7 +84,10 @@ export function SessionList({
         {order.map((name) => {
           const s = byName.get(name)
           if (!s) return null
-          const info = sessionSummary(s)
+          const insight = insights.get(s.name)
+          const title = insight ? displayTitle(headline(s), insight) : ''
+          const info = title ? { text: title, live: true } : sessionSummary(s)
+          const attention = insight ? ATTENTION[insight.state] : undefined
           return (
             <li key={s.name}>
               <button
@@ -97,6 +106,7 @@ export function SessionList({
                     {s.clients > 1 ? <span className="clients">×{s.clients}</span> : null}
                   </span>
                   <span className="session-name">{s.name}</span>
+                  {attention ? <span className={`chip chip-${attention}`}>{attention}</span> : null}
                   {s.bell ? <span className="bell-badge">bell</span> : null}
                   <span className="session-idle">{ago(now, s.activityEpoch)}</span>
                 </span>

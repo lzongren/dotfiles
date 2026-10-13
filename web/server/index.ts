@@ -1,5 +1,6 @@
 import { createServer, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -12,7 +13,8 @@ import {
 } from './auth.js'
 import { loadConfig } from './config.js'
 import { BodyError, readJson } from './body.js'
-import { detach, spawnAttachPty, statusRaw } from './exec.js'
+import { detach, runAgentProbe, spawnAttachPty, statusRaw } from './exec.js'
+import { createInsightsSource, probeScript } from './insights.js'
 import { isAgentChoice, SESSION_NAME_RE } from '../src/shared/validate.js'
 import { listWorkspaces } from './workspaces.js'
 import { createSessionSource, RemoteUnreachableError } from './sessions.js'
@@ -46,6 +48,10 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const config = await loadConfig(opts.bin)
   const token = mintToken()
   const getSessions = createSessionSource(config.host, () => statusRaw(opts.bin))
+  const probePath = path.resolve(opts.distRoot, '../probe/agent-probe.py')
+  const getInsights = createInsightsSource(async () =>
+    runAgentProbe(config.host, probeScript(await readFile(probePath, 'utf8'), config.artifacts)),
+  )
   const distRoot = path.resolve(opts.distRoot)
 
   let boundPort = opts.port
@@ -108,6 +114,18 @@ export async function createApp(opts: AppOptions): Promise<App> {
               sendJson(res, err.status, { error: 'bad_request', message: err.message })
             } else {
               sendJson(res, 500, { error: 'internal', message: 'could not start the session' })
+            }
+          })
+        return
+      }
+      if (url.pathname === '/api/insights' && req.method === 'GET') {
+        getInsights()
+          .then((body) => sendJson(res, 200, body))
+          .catch((err: unknown) => {
+            if (err instanceof RemoteUnreachableError) {
+              sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
+            } else {
+              sendJson(res, 500, { error: 'insights_failed', message: err instanceof Error ? err.message : 'agent probe failed' })
             }
           })
         return

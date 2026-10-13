@@ -37,7 +37,7 @@ describe('theme contrast (WCAG AA)', () => {
     expect(contrast('#767676', '#ffffff')).toBeCloseTo(4.54, 2)
   })
 
-  it.each(['text', 'dim', 'accent', 'bell'])('--%s text is at least 4.5:1 on every surface', (fg) => {
+  it.each(['text', 'dim', 'accent', 'bell', 'danger'])('--%s text is at least 4.5:1 on every surface', (fg) => {
     for (const surface of ['bg', 'surface', 'raised', 'selected', 'term-bg']) {
       expect(worst(fg, surface), `--${fg} on --${surface}`).toBeGreaterThanOrEqual(4.5)
     }
@@ -47,6 +47,14 @@ describe('theme contrast (WCAG AA)', () => {
     for (const surface of ['bg', 'surface', 'term-bg']) {
       expect(worst('control', surface), `--control on --${surface}`).toBeGreaterThanOrEqual(3)
     }
+  })
+
+  it.each([
+    ['on-accent', 'accent'],
+    ['on-bell', 'bell'],
+    ['on-danger', 'danger'],
+  ])('--%s text is at least 4.5:1 on its --%s chip', (fg, bg) => {
+    expect(worst(fg, bg)).toBeGreaterThanOrEqual(4.5)
   })
 
   it('the warning banner keeps its text readable', () => {
