@@ -14,7 +14,10 @@ export async function listDays(dir: string): Promise<string[]> {
 }
 
 export function readNote(dir: string, day: string): Promise<string> {
-  return readFile(path.join(dir, `${day}.md`), 'utf8').catch(() => '')
+  return readFile(path.join(dir, `${day}.md`), 'utf8').catch((err: NodeJS.ErrnoException) => {
+    if (err.code === 'ENOENT') return ''
+    throw err
+  })
 }
 
 export async function writeNote(dir: string, day: string, text: string): Promise<void> {

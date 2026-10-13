@@ -55,6 +55,11 @@ describe('notes API', () => {
     expect(await (await call('/2026-01-01')).json()).toEqual({ day: '2026-01-01', text: '' })
   })
 
+  it('reports a note it cannot read instead of passing it off as empty', async () => {
+    mkdirSync(path.join(notesDir, '2026-10-20.md'), { recursive: true })
+    expect((await call('/2026-10-20')).status).toBe(500)
+  })
+
   it('refuses days that are not dates, bodies without text, and writes from another origin', async () => {
     expect((await call('/today')).status).toBe(400)
     expect((await call('/2026-10-13', { method: 'PUT', body: { text: 5 } })).status).toBe(400)

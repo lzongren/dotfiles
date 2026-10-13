@@ -248,7 +248,7 @@ function Detail({ row, now, onOpen, onSeen }: { row: Row; now: number; onOpen: (
   )
 }
 
-function ignoredTarget(target: EventTarget | null): boolean {
+export function ignoredTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     target.closest('input, textarea, select, [contenteditable], .terminals, a, summary, .detail-actions') !== null

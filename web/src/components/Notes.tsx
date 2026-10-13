@@ -1,11 +1,56 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getNote, getNoteDays, putNote } from '../api'
+import { getNote, getNoteDays, putNote, type ApiResult } from '../api'
+import { ignoredTarget } from './Overview'
 
 const SAVE_MS = 600
+const RETRY_MS = 5000
 const OPEN_KEY = 'devbox.notes.open'
+const DRAFT = 'devbox.notes.draft.'
 const OPEN_ITEM = /^\s*[-*] \[ \] .+$/gm
 
-type Status = 'loading' | 'saved' | 'saving' | 'unsaved' | 'error'
+type Status = 'loading' | 'load-error' | 'saved' | 'unsaved' | 'saving' | 'offline' | 'rejected'
+
+const memory = new Map<string, string>()
+
+const drafts = {
+  get(day: string): string | undefined {
+    if (memory.has(day)) return memory.get(day)
+    try {
+      return localStorage.getItem(DRAFT + day) ?? undefined
+    } catch {
+      return undefined
+    }
+  },
+  set(day: string, text: string): void {
+    try {
+      localStorage.setItem(DRAFT + day, text)
+      memory.delete(day)
+    } catch {
+      memory.set(day, text)
+    }
+  },
+  clear(day: string, ifText?: string): void {
+    if (ifText !== undefined && drafts.get(day) !== ifText) return
+    memory.delete(day)
+    try {
+      localStorage.removeItem(DRAFT + day)
+    } catch {
+      void 0
+    }
+  },
+  days(): string[] {
+    const found = new Set(memory.keys())
+    try {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i)
+        if (key?.startsWith(DRAFT)) found.add(key.slice(DRAFT.length))
+      }
+    } catch {
+      void 0
+    }
+    return [...found]
+  },
+}
 
 export function localDay(date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -30,6 +75,10 @@ function readOpen(): boolean {
   }
 }
 
+function retriable(result: ApiResult<unknown>): boolean {
+  return result.kind === 'network' || result.kind === 'unreachable' || (result.kind === 'error' && (result.status ?? 500) >= 500)
+}
+
 export function Notes() {
   const [today, setToday] = useState(localDay)
   const [day, setDay] = useState(today)
@@ -37,59 +86,94 @@ export function Notes() {
   const [days, setDays] = useState<string[]>([])
   const [carry, setCarry] = useState<{ from: string; items: string[] } | null>(null)
   const [status, setStatus] = useState<Status>('loading')
+  const [problem, setProblem] = useState('')
+  const [reload, setReload] = useState(0)
   const [open, setOpen] = useState(readOpen)
-  const pending = useRef<{ day: string; text: string } | null>(null)
-  const timer = useRef<number | null>(null)
+  const dayRef = useRef(day)
+  const textRef = useRef(text)
+  const chain = useRef<Promise<void>>(Promise.resolve())
+  const debounce = useRef<number | null>(null)
+  const retry = useRef<number | null>(null)
+  const disposed = useRef(false)
   const area = useRef<HTMLTextAreaElement | null>(null)
+  const toggleRef = useRef<HTMLButtonElement | null>(null)
+  dayRef.current = day
 
-  const refreshDays = useCallback(async () => {
-    const result = await getNoteDays()
-    if (result.kind === 'ok' && Array.isArray(result.data.days)) setDays(result.data.days)
-  }, [])
-
-  const flush = useCallback(async () => {
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    timer.current = null
-    const job = pending.current
-    if (!job) return
-    pending.current = null
-    setStatus('saving')
-    const result = await putNote(job.day, job.text)
-    if (result.kind === 'ok') {
-      setStatus(pending.current ? 'unsaved' : 'saved')
-      void refreshDays()
-    } else {
-      pending.current = pending.current ?? job
-      setStatus('error')
-      timer.current = window.setTimeout(() => void flush(), 5000)
+  const save = useCallback((): Promise<void> => {
+    for (const timer of [debounce, retry]) {
+      if (timer.current !== null) window.clearTimeout(timer.current)
+      timer.current = null
     }
-  }, [refreshDays])
+    chain.current = chain.current.then(async () => {
+      let failure: ApiResult<unknown> | null = null
+      for (const d of drafts.days()) {
+        const body = drafts.get(d)
+        if (body === undefined) continue
+        if (d === dayRef.current) setStatus('saving')
+        const result = await putNote(d, body)
+        if (result.kind !== 'ok') {
+          failure = result
+          break
+        }
+        drafts.clear(d, body)
+        setDays((prev) => (body.trim() ? (prev.includes(d) ? prev : [...prev, d].sort().reverse()) : prev.filter((x) => x !== d)))
+      }
+      if (disposed.current) return
+      const current = dayRef.current
+      if (drafts.get(current) === undefined) {
+        setStatus('saved')
+      } else if (failure && retriable(failure)) {
+        setStatus('offline')
+        retry.current = window.setTimeout(() => void save(), RETRY_MS)
+      } else if (failure) {
+        setStatus('rejected')
+        setProblem(failure.kind === 'error' ? failure.message : 'the dashboard needs a reload')
+      } else {
+        setStatus('unsaved')
+      }
+    })
+    return chain.current
+  }, [])
 
   useEffect(() => {
     let live = true
     setStatus('loading')
     setCarry(null)
     void (async () => {
-      await flush()
+      await save()
+      if (!live) return
+      const local = drafts.get(day)
       const result = await getNote(day)
       if (!live) return
-      const loaded = result.kind === 'ok' && typeof result.data.text === 'string' ? result.data.text : ''
-      setText(loaded)
-      setStatus(result.kind === 'ok' ? 'saved' : 'error')
-      const days = await getNoteDays()
-      if (!live || days.kind !== 'ok' || !Array.isArray(days.data.days)) return
-      setDays(days.data.days)
-      const previous = days.data.days.find((d) => d < day)
-      if (loaded.trim() === '' && previous) {
-        const before = await getNote(previous)
-        const items = before.kind === 'ok' && typeof before.data.text === 'string' ? openItems(before.data.text) : []
-        if (live && items.length > 0) setCarry({ from: previous, items })
+      const ok = result.kind === 'ok' && typeof result.data.text === 'string'
+      if (!ok && local === undefined) {
+        setStatus('load-error')
+        return
       }
+      const server = ok ? result.data.text : ''
+      const shown = local ?? server
+      setText(shown)
+      textRef.current = shown
+      if (local !== undefined && local !== server) {
+        setStatus('unsaved')
+        void save()
+      } else {
+        drafts.clear(day)
+        setStatus('saved')
+      }
+      const list = await getNoteDays()
+      if (!live || list.kind !== 'ok' || !Array.isArray(list.data.days)) return
+      setDays(list.data.days)
+      const previous = list.data.days.find((d) => d < day)
+      if (shown.trim() !== '' || !previous) return
+      const before = await getNote(previous)
+      const items = before.kind === 'ok' && typeof before.data.text === 'string' ? openItems(before.data.text) : []
+      if (live && items.length > 0 && textRef.current.trim() === '') setCarry({ from: previous, items })
     })()
     return () => {
       live = false
     }
-  }, [day, flush])
+  }, [day, reload, save])
 
   useEffect(() => {
     const tick = window.setInterval(() => {
@@ -102,13 +186,12 @@ export function Notes() {
   }, [today])
 
   useEffect(() => {
+    disposed.current = false
     const warn = (event: BeforeUnloadEvent) => {
-      if (pending.current) event.preventDefault()
+      if (drafts.days().length > 0) event.preventDefault()
     }
     const focusPad = (event: KeyboardEvent) => {
-      if (event.key !== 'n' || event.metaKey || event.ctrlKey || event.altKey) return
-      const target = event.target
-      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable], .terminals')) return
+      if (event.key !== 'n' || event.metaKey || event.ctrlKey || event.altKey || ignoredTarget(event.target)) return
       event.preventDefault()
       setOpen(true)
       window.setTimeout(() => area.current?.focus(), 0)
@@ -118,17 +201,19 @@ export function Notes() {
     return () => {
       window.removeEventListener('beforeunload', warn)
       document.removeEventListener('keydown', focusPad)
-      void flush()
+      void save()
+      disposed.current = true
     }
-  }, [flush])
+  }, [save])
 
   const edit = (next: string) => {
     setText(next)
+    textRef.current = next
     setCarry(null)
-    pending.current = { day, text: next }
+    drafts.set(day, next)
     setStatus('unsaved')
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => void flush(), SAVE_MS)
+    if (debounce.current !== null) window.clearTimeout(debounce.current)
+    debounce.current = window.setTimeout(() => void save(), SAVE_MS)
   }
 
   const toggle = () => {
@@ -142,17 +227,28 @@ export function Notes() {
     })
   }
 
-  const timeline = [...new Set([today, ...days])].sort().reverse()
+  const timeline = [...new Set([today, day, ...days])].sort().reverse()
   const index = timeline.indexOf(day)
   const older = timeline[index + 1]
   const newer = index > 0 ? timeline[index - 1] : undefined
   const remaining = openItems(text).length
+  const label = dayLabel(day, today)
+  const shownStatus = {
+    loading: '',
+    'load-error': "couldn't load this note",
+    saved: 'saved',
+    unsaved: 'editing…',
+    saving: 'saving…',
+    offline: 'not saved yet, retrying',
+    rejected: `not saved: ${problem}`,
+  }[status]
+  const alarming = status === 'load-error' || status === 'offline' || status === 'rejected'
 
   return (
     <section className="notes" aria-label="notes">
       <header className="notes-head">
-        <button type="button" className="notes-toggle" aria-expanded={open} onClick={toggle}>
-          Notes · {dayLabel(day, today)}
+        <button ref={toggleRef} type="button" className="notes-toggle" aria-expanded={open} onClick={toggle}>
+          Notes · {label}
           {remaining > 0 ? <span className="notes-count"> · {remaining} open</span> : null}
         </button>
         {open ? (
@@ -171,25 +267,38 @@ export function Notes() {
           <textarea
             ref={area}
             className="notes-text"
-            aria-label={`notes for ${dayLabel(day, today).toLowerCase()}`}
+            aria-label={`notes for ${label.toLowerCase()}`}
             placeholder={'What are you on today?\n- [ ] a thing to finish\n- [x] a thing done'}
             spellCheck
-            readOnly={status === 'loading'}
+            readOnly={status === 'loading' || status === 'load-error'}
             value={text}
             onChange={(e) => edit(e.target.value)}
-            onBlur={() => void flush()}
+            onBlur={() => void save()}
             onKeyDown={(e) => {
-              if (e.key === 'Escape') e.currentTarget.blur()
+              if (e.key === 'Escape') toggleRef.current?.focus()
             }}
           />
           <footer className="notes-foot">
             {carry ? (
-              <button type="button" className="notes-carry" onClick={() => edit(`${carry.items.join('\n')}\n`)}>
+              <button
+                type="button"
+                className="notes-carry"
+                onClick={() => {
+                  const items = `${carry.items.join('\n')}\n`
+                  edit(textRef.current.trim() ? `${textRef.current.replace(/\n*$/, '\n')}${items}` : items)
+                }}
+              >
                 Carry over {carry.items.length} open from {dayLabel(carry.from, today)}
               </button>
             ) : null}
-            <span className={`notes-status notes-status-${status}`} role="status">
-              {status === 'error' ? 'not saved, will retry' : status === 'saved' ? 'saved' : status === 'loading' ? '' : 'saving…'}
+            {status === 'load-error' ? (
+              <button type="button" className="notes-carry" onClick={() => setReload((n) => n + 1)}>
+                Retry
+              </button>
+            ) : null}
+            <span className={`notes-status${alarming ? ' notes-status-error' : ''}`}>{shownStatus}</span>
+            <span className="visually-hidden" role="status">
+              {alarming ? shownStatus : ''}
             </span>
           </footer>
         </>

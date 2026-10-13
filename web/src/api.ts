@@ -16,7 +16,7 @@ export type ApiResult<T> =
   | { kind: 'unauthorized' }
   | { kind: 'unreachable'; message: string }
   | { kind: 'network'; message: string }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; status?: number }
 
 export async function fetchJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<ApiResult<T>> {
   let res: Response
@@ -34,7 +34,7 @@ export async function fetchJson<T>(path: string, init: { method?: string; body?:
   if (res.status === 401) return { kind: 'unauthorized' }
   const body = (await res.json().catch(() => null)) as (T & ApiError) | null
   if (res.status === 502) return { kind: 'unreachable', message: body?.message ?? 'remote unreachable' }
-  if (!res.ok) return { kind: 'error', message: body?.message ?? `request failed (${res.status})` }
+  if (!res.ok) return { kind: 'error', message: body?.message ?? `request failed (${res.status})`, status: res.status }
   if (body === null) return { kind: 'error', message: 'invalid response' }
   return { kind: 'ok', data: body }
 }
