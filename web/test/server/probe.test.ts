@@ -250,13 +250,13 @@ beforeAll(() => {
   write(
     '.codex/sessions/2026/10/12/rollout-2026-10-12T12-00-00-0199bbbb-0000-0000-0000-000000000001.jsonl',
     [
-      line({ type: 'session_meta', timestamp: at(50), payload: { cwd: '/work/fork', thread_source: 'user', source: 'cli', forked_from_id: uuid } }),
-      line({ type: 'response_item', timestamp: at(50), payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: '*** Begin Patch\n*** Update File: /work/cdx/parent.rs\n*** End Patch' } }),
-      line({ type: 'event_msg', timestamp: at(50), payload: { type: 'patch_apply_end', call_id: 'call_1', success: true, changes: { '/work/cdx/parent.rs': { type: 'update', unified_diff: '' } } } }),
-      line({ type: 'response_item', timestamp: at(50), payload: { type: 'custom_tool_call_output', call_id: 'call_1', output: 'Exit code: 0' } }),
-      line({ type: 'event_msg', timestamp: at(51), payload: { type: 'user_message', message: 'Keep going in the fork' } }),
-      line({ type: 'response_item', timestamp: at(52), payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: '*** Begin Patch\n*** Add File: /work/fork/own.md\n*** End Patch' } }),
-      line({ type: 'event_msg', timestamp: at(52), payload: { type: 'patch_apply_end', call_id: 'call_1', success: true, changes: { '/work/fork/own.md': { type: 'add', content: '' } } } }),
+      line({ type: 'session_meta', timestamp: '2026-10-12T10:50:00.100Z', payload: { cwd: '/work/fork', thread_source: 'user', source: 'cli', forked_from_id: uuid } }),
+      line({ type: 'response_item', timestamp: '2026-10-12T10:50:00.150Z', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: '*** Begin Patch\n*** Update File: /work/cdx/parent.rs\n*** End Patch' } }),
+      line({ type: 'event_msg', timestamp: '2026-10-12T10:50:00.200Z', payload: { type: 'patch_apply_end', call_id: 'call_1', success: true, changes: { '/work/cdx/parent.rs': { type: 'update', unified_diff: '' } } } }),
+      line({ type: 'response_item', timestamp: '2026-10-12T10:50:00.300Z', payload: { type: 'custom_tool_call_output', call_id: 'call_1', output: 'Exit code: 0' } }),
+      line({ type: 'event_msg', timestamp: '2026-10-12T10:50:01.000Z', payload: { type: 'user_message', message: 'Keep going in the fork' } }),
+      line({ type: 'response_item', timestamp: '2026-10-12T10:50:02.900Z', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: '*** Begin Patch\n*** Add File: /work/fork/own.md\n*** End Patch' } }),
+      line({ type: 'event_msg', timestamp: '2026-10-12T10:50:02.950Z', payload: { type: 'patch_apply_end', call_id: 'call_1', success: true, changes: { '/work/fork/own.md': { type: 'add', content: '' } } } }),
       line({ type: 'event_msg', timestamp: at(53), payload: { type: 'patch_apply_end', call_id: 'shell9', success: true, changes: { '/work/fork/via-shell.md': { type: 'add', content: '' } } } }),
     ].join(''),
   )

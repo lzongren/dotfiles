@@ -30,7 +30,7 @@ KEEP_FILES = 40
 SHOW_FILES = 20
 PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
 PATCH_ACTIONS = {"add": "created", "update": "edited", "delete": "deleted"}
-FORK_REPLAY = 2
+FORK_REPLAY = 1.0
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -44,6 +44,13 @@ def clip(text, limit=TEXT_MAX):
 
 def num(value):
     return value if isinstance(value, (int, float)) and math.isfinite(value) else 0
+
+
+def precise(stamp):
+    try:
+        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp() if isinstance(stamp, str) else None
+    except ValueError:
+        return None
 
 
 def epoch(stamp):
@@ -408,9 +415,10 @@ def track_files(entry, rec, at, cwd):
     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
     kind, call = payload.get("type"), payload.get("call_id")
     call = call if isinstance(call, str) else None
-    if rec.get("type") == "session_meta" and payload.get("forked_from_id") and "replayed" not in entry:
-        entry["replayed"] = at + FORK_REPLAY
-    if "replayed" in entry and at <= entry["replayed"]:
+    stamp = precise(rec.get("timestamp"))
+    if rec.get("type") == "session_meta" and payload.get("forked_from_id") and stamp and "replayed" not in entry:
+        entry["replayed"] = stamp + FORK_REPLAY
+    if "replayed" in entry and stamp and stamp <= entry["replayed"]:
         return
     resolve = lambda name: name if os.path.isabs(name) or not cwd else os.path.join(cwd, name)
     if kind == "patch_apply_end":
