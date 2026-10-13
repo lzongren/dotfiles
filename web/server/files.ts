@@ -27,7 +27,7 @@ export function openable(file: string): boolean {
 
 export function localMirror(remote: string, home: string | undefined, syncs: SyncEntry[]): { file: string; root: string } | null {
   const roots = syncs
-    .map((sync) => ({ sync, root: sync.remotePath.startsWith('/') ? sync.remotePath : home ? path.posix.join(home, sync.remotePath) : null }))
+    .map((sync) => ({ sync, root: sync.remotePath.startsWith('/') ? sync.remotePath : home ? path.posix.join(home, sync.remotePath.replace(/^~(\/|$)/, '')) : null }))
     .map(({ sync, root }) => ({ sync, root: root?.replace(/\/+$/, '') ?? null }))
     .filter((r): r is { sync: SyncEntry; root: string } => r.root !== null && remote.startsWith(`${r.root}/`))
     .sort((a, b) => b.root.length - a.root.length)

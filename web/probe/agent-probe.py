@@ -29,6 +29,7 @@ KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
 PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
+SHELL_PATCH_RE = re.compile(r"^\s*(?:cd\s+(\S+)\s*&&\s*)?apply_patch\b")
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
 
@@ -401,21 +402,27 @@ def track_files(files, rec, at, cwd):
         touch(files, result["filePath"], "created" if result.get("type") == "create" else "edited", at)
     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
     patch = payload.get("input") if payload.get("type") == "custom_tool_call" and payload.get("name") == "apply_patch" else None
-    if payload.get("type") == "function_call" and payload.get("name") in ("apply_patch", "shell", "exec_command"):
+    if payload.get("type") == "function_call" and payload.get("name") in ("apply_patch", "shell", "shell_command", "exec_command"):
+        raw = payload.get("arguments")
         try:
-            args = json.loads(payload.get("arguments") or "{}")
+            args = raw if isinstance(raw, dict) else json.loads(raw or "{}")
         except (TypeError, ValueError):
             args = None
         if isinstance(args, dict):
             command = args.get("command") or args.get("cmd")
             parts = [c for c in (command if isinstance(command, list) else [command]) if isinstance(c, str)]
-            if payload["name"] == "apply_patch":
-                patch = args.get("input")
-            elif "apply_patch" in " ".join(parts):
-                patch = next((c for c in parts if "*** Begin Patch" in c), None)
             workdir = args.get("workdir")
             if isinstance(workdir, str) and workdir:
                 cwd = os.path.join(cwd, workdir) if cwd else workdir
+            shell = SHELL_PATCH_RE.match(parts[-1]) if parts else None
+            if payload["name"] == "apply_patch":
+                patch = args.get("input")
+            elif len(parts) == 2 and parts[0] == "apply_patch":
+                patch = parts[1]
+            elif shell and "*** Begin Patch" in parts[-1]:
+                patch = parts[-1]
+                if shell.group(1):
+                    cwd = os.path.join(cwd, shell.group(1)) if cwd else shell.group(1)
     if not isinstance(patch, str):
         return
     last = None
