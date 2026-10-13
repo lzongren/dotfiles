@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getInsights, getSessions } from './api'
 import type { AgentInsight, SessionsResponse } from './shared/types'
 import { changeMark, loadSeen, markSeen } from './insights'
@@ -8,6 +8,8 @@ import { TerminalTabs } from './components/TerminalTabs'
 import { WorkspacePalette } from './components/WorkspacePalette'
 
 type Cause = 'remote' | 'local' | 'probe'
+
+const INSIGHTS_STALE_MS = 60_000
 
 type View =
   | { phase: 'loading' }
@@ -23,7 +25,8 @@ export function App() {
   const [openCount, setOpenCount] = useState(0)
   const [insights, setInsights] = useState<Map<string, AgentInsight>>(() => new Map())
   const [insightsNotice, setInsightsNotice] = useState<string | null>(null)
-  const [, setSeenVersion] = useState(0)
+  const [seenVersion, setSeenVersion] = useState(0)
+  const insightsAt = useRef(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
   const latest = useRef<{ sessions: SessionsResponse['sessions']; insights: Map<string, AgentInsight> }>({
@@ -42,6 +45,7 @@ export function App() {
     )
     setSeenVersion((n) => n + 1)
   }, [])
+  const seenAt = useMemo(() => loadSeen(Date.now()).seenAt, [seenVersion])
   const leaving = useRef<string | null>(null)
   useEffect(() => {
     if (leaving.current !== null && leaving.current !== activeTab) seen([leaving.current])
@@ -88,9 +92,11 @@ export function App() {
   const refreshInsights = useCallback(async () => {
     const result = await getInsights()
     if (result.kind === 'ok' && Array.isArray(result.data.agents)) {
+      insightsAt.current = Date.now()
       setInsights(new Map(result.data.agents.map((a) => [a.session, a])))
       setInsightsNotice(null)
     } else if (result.kind !== 'ok') {
+      if (Date.now() - insightsAt.current > INSIGHTS_STALE_MS) setInsights(new Map())
       setInsightsNotice(result.kind === 'unauthorized' ? null : `agent details unavailable: ${result.message}`)
     }
   }, [])
@@ -200,7 +206,7 @@ export function App() {
             sessions={data.sessions}
             insights={insights}
             now={now}
-            seenAt={loadSeen(now).seenAt}
+            seenAt={seenAt}
             visible={activeTab === null}
             notice={insightsNotice}
             onOpen={openTerminal}

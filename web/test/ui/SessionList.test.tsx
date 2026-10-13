@@ -24,14 +24,14 @@ function session(overrides: Partial<Session>): Session {
 const ROWS: Session[] = [
   session({ name: 'old', activityEpoch: NOW - 86400 * 3 }),
   session({
-    name: 'cc-atx',
+    name: 'cc-demo',
     activityEpoch: NOW - 120,
     attached: true,
     clients: 2,
     bell: true,
     cmd: 'claude',
     title: '✳ Fix the flaky retry test',
-    path: '/home/me/work/atx',
+    path: '/home/me/work/demo',
   }),
   session({ name: 'api - ~/work/api', activityEpoch: NOW - 60, attachable: false, cmd: 'vim' }),
 ]
@@ -49,14 +49,14 @@ describe('SessionList', () => {
     renderList()
     expect(rows().map((r) => r.querySelector('.session-name')?.textContent)).toEqual([
       'api - ~/work/api',
-      'cc-atx',
+      'cc-demo',
       'old',
     ])
   })
 
   it('shows the headline from the pane title, without its status glyph', () => {
     renderList()
-    const row = screen.getByRole('button', { name: /cc-atx/ })
+    const row = screen.getByRole('button', { name: /cc-demo/ })
     expect(row).toHaveTextContent('Fix the flaky retry test')
     expect(row).not.toHaveTextContent('✳')
   })
@@ -74,19 +74,19 @@ describe('SessionList', () => {
   it('shows client count, idle time, and a bell badge with one polite announcement', () => {
     const { container } = { container: document.body }
     renderList()
-    const row = screen.getByRole('button', { name: /cc-atx/ })
+    const row = screen.getByRole('button', { name: /cc-demo/ })
     expect(row).toHaveTextContent('×2')
     expect(row).toHaveTextContent('2m')
     expect(row.querySelector('.bell-badge')).toHaveTextContent('bell')
     const regions = container.querySelectorAll('[aria-live="polite"]')
     expect(regions).toHaveLength(1)
-    expect(regions[0]).toHaveTextContent('cc-atx needs attention')
+    expect(regions[0]).toHaveTextContent('cc-demo needs attention')
   })
 
   it('attaches on click, but not for a name the web cannot use', () => {
     const onAttach = renderList()
-    fireEvent.click(screen.getByRole('button', { name: /cc-atx/ }))
-    expect(onAttach).toHaveBeenCalledWith('cc-atx')
+    fireEvent.click(screen.getByRole('button', { name: /cc-demo/ }))
+    expect(onAttach).toHaveBeenCalledWith('cc-demo')
     const blocked = screen.getByRole('button', { name: /api - ~/ })
     expect(blocked).toHaveAttribute('aria-disabled', 'true')
     expect(blocked).toHaveAttribute('title', expect.stringContaining('cannot be used'))
@@ -96,12 +96,12 @@ describe('SessionList', () => {
 
   it('keeps the full path in the tooltip of attachable rows', () => {
     renderList()
-    expect(screen.getByRole('button', { name: /cc-atx/ })).toHaveAttribute('title', '/home/me/work/atx')
+    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('title', '/home/me/work/demo')
   })
 
   it('marks the session whose tab is active', () => {
-    renderList(ROWS, { active: 'cc-atx' })
-    expect(screen.getByRole('button', { name: /cc-atx/ })).toHaveAttribute('aria-current', 'true')
+    renderList(ROWS, { active: 'cc-demo' })
+    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('aria-current', 'true')
     expect(screen.getByRole('button', { name: /old/ })).not.toHaveAttribute('aria-current')
   })
 

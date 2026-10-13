@@ -34,7 +34,7 @@ function session(overrides: Partial<Session>): Session {
 }
 
 const ROWS: Session[] = [
-  session({ name: 'cc-atx', activityEpoch: NOW_EPOCH - 10, title: '✳ Fix the flaky retry test', cmd: 'claude' }),
+  session({ name: 'cc-demo', activityEpoch: NOW_EPOCH - 10, title: '✳ Fix the flaky retry test', cmd: 'claude' }),
   session({ name: 'api', activityEpoch: NOW_EPOCH - 20 }),
   session({ name: 'main', activityEpoch: NOW_EPOCH - 40 }),
 ]
@@ -98,10 +98,10 @@ describe('App', () => {
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
-    fireEvent.click(sidebar().getByRole('button', { name: /cc-atx/ }))
-    expect(screen.getByTestId('term-cc-atx')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'cc-atx' })).toHaveAttribute('aria-selected', 'true')
-    expect(sidebar().getByRole('button', { name: /cc-atx/ })).toHaveAttribute('aria-current', 'true')
+    fireEvent.click(sidebar().getByRole('button', { name: /cc-demo/ }))
+    expect(screen.getByTestId('term-cc-demo')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'cc-demo' })).toHaveAttribute('aria-selected', 'true')
+    expect(sidebar().getByRole('button', { name: /cc-demo/ })).toHaveAttribute('aria-current', 'true')
   })
 
   it('opening from the palette opens a terminal tab', async () => {
@@ -116,12 +116,12 @@ describe('App', () => {
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     render(<App />)
     await flush()
-    fireEvent.click(sidebar().getByRole('button', { name: /cc-atx/ }))
+    fireEvent.click(sidebar().getByRole('button', { name: /cc-demo/ }))
     fireEvent.click(sidebar().getByRole('button', { name: /api/ }))
     fireEvent.click(sidebar().getByRole('button', { name: /main/ }))
     fireEvent.click(screen.getByRole('button', { name: 'close main' }))
     expect(screen.getByRole('tab', { name: 'api' })).toHaveAttribute('aria-selected', 'true')
-    fireEvent.click(screen.getByRole('button', { name: 'close cc-atx' }))
+    fireEvent.click(screen.getByRole('button', { name: 'close cc-demo' }))
     expect(screen.getByRole('tab', { name: 'api' })).toHaveAttribute('aria-selected', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'close api' }))
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
@@ -130,7 +130,7 @@ describe('App', () => {
 
   it('shows what each agent is doing and opens a session from its details', async () => {
     const waiting: AgentInsight = {
-      session: 'cc-atx',
+      session: 'cc-demo',
       agent: 'claude',
       state: 'waiting',
       waitingFor: 'permission prompt',
@@ -146,26 +146,26 @@ describe('App', () => {
     insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [waiting] }))
     render(<App />)
     await flush()
-    expect(sidebar().getByRole('button', { name: /cc-atx/ })).toHaveTextContent('waiting')
+    expect(sidebar().getByRole('button', { name: /cc-demo/ })).toHaveTextContent('waiting')
     const needs = within(screen.getByRole('region', { name: /Blocked on you/ }))
     fireEvent.click(needs.getByRole('button', { name: /Fix flaky retry test/ }))
-    const details = within(screen.getByRole('article', { name: 'cc-atx details' }))
+    const details = within(screen.getByRole('article', { name: 'cc-demo details' }))
     expect(details.getByText('Fix is up as PR 31; waiting on CI.', { exact: false })).toBeInTheDocument()
     expect(details.getByRole('link', { name: /^PR #31/ })).toHaveAttribute('href', 'https://github.com/o/r/pull/31')
     fireEvent.click(details.getByRole('button', { name: 'Open terminal' }))
-    expect(screen.getByTestId('term-cc-atx')).toBeInTheDocument()
+    expect(screen.getByTestId('term-cc-demo')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'overview', hidden: true })).not.toBeVisible()
   })
 
   it('counts a turn that finished while you watched it in the terminal as seen', async () => {
-    const turn = (turnAt: number): AgentInsight => ({ session: 'cc-atx', agent: 'claude', state: 'ready', turnAt, title: 'Fix it', artifacts: [], commits: 0 })
+    const turn = (turnAt: number): AgentInsight => ({ session: 'cc-demo', agent: 'claude', state: 'ready', turnAt, title: 'Fix it', artifacts: [], commits: 0 })
     fetchMock.mockImplementation(async () => response(okBody(ROWS)))
     insightsMock.mockImplementationOnce(async () => response({ fetchedAt: Date.now(), agents: [turn(NOW_EPOCH - 60)] }))
     insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [turn(NOW_EPOCH - 5)] }))
     render(<App />)
     await flush()
     expect(within(screen.getByRole('region', { name: /Ready to review/ })).getByRole('button', { name: 'Fix it' })).toBeInTheDocument()
-    fireEvent.click(sidebar().getByRole('button', { name: /cc-atx/ }))
+    fireEvent.click(sidebar().getByRole('button', { name: /cc-demo/ }))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15100)
     })
@@ -180,6 +180,24 @@ describe('App', () => {
     await flush()
     expect(screen.getByRole('region', { name: 'overview' })).toHaveTextContent('agent details unavailable: python3 is not installed')
     expect(sidebar().getAllByRole('button')).toHaveLength(3)
+  })
+
+  it('stops showing agent states it has not confirmed for a minute', async () => {
+    const waiting: AgentInsight = { session: 'cc-demo', agent: 'claude', state: 'waiting', title: 'Fix it', artifacts: [], commits: 0 }
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    insightsMock.mockImplementationOnce(async () => response({ fetchedAt: Date.now(), agents: [waiting] }))
+    insightsMock.mockImplementation(async () => response({ error: 'insights_failed', message: 'agent probe failed' }, 500))
+    render(<App />)
+    await flush()
+    const blocked = () => within(screen.getByRole('region', { name: /Blocked on you/ })).queryByRole('button', { name: 'Fix it' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15100)
+    })
+    expect(blocked()).toBeInTheDocument()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000)
+    })
+    expect(blocked()).toBeNull()
   })
 
   it('polls agent details every 15 seconds', async () => {

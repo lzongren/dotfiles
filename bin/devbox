@@ -557,8 +557,6 @@ if [[ "$1" == "web" ]]; then
       rest="${line#*|}" link="${line##*|}"
       if [[ "$rest" == *"|"* && "$link" == http*"{0}"* ]]; then
         printf 'artifact\t%s\t%s\t%s\n' "${line%%|*}" "${rest%|*}" "$link"
-      elif [[ "$rest" == *"|"* && "$link" == http* ]]; then
-        echo "devbox: DEVBOX_ARTIFACTS link has no {0} for the match: $line" >&2
       else
         printf 'artifact\t%s\t%s\n' "${line%%|*}" "$rest"
       fi

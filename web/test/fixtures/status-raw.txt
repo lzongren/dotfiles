@@ -1,4 +1,4 @@
 main|0|1791700000|0|zsh||/home/me
-cc-atx|2|1791741000|1|claude|✳ Fix the flaky retry test|/home/me/work/atx
+cc-demo|2|1791741000|1|claude|✳ Fix the flaky retry test|/home/me/work/demo
 api - ~/work/api|1|1791740000|0|vim|api - ~/work/api|/home/me/work/api
 logs|0|1791730000|0|tail|Review the work ¦ logs|/home/me/logs|archive

@@ -28,7 +28,7 @@ describe('parseStatusRaw', () => {
       attachable: true,
     })
     expect(rows[1]).toMatchObject({
-      name: 'cc-atx',
+      name: 'cc-demo',
       attached: true,
       clients: 2,
       bell: true,
