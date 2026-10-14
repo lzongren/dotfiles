@@ -17,11 +17,12 @@ const QUEUE_MAX = 64 * 1024
 const COPIED_MS = 1500
 const BLOCKED_MS = 5000
 const MISS_DELAY_MS = 1500
-const SGR_MOUSE = /\x1b\[<(\d+);\d+;\d+M/
+const SGR_MOUSE = /\x1b\[<(\d+);(\d+;\d+)M/
 
-function leftDragReport(data: string): boolean {
-  const code = Number(SGR_MOUSE.exec(data)?.[1] ?? -1)
-  return code >= 0 && (code & 32) !== 0 && (code & 3) === 0
+function leftButtonCell(data: string): { cell: string; moved: boolean } | null {
+  const match = SGR_MOUSE.exec(data)
+  if (!match || (Number(match[1]) & 3) !== 0) return null
+  return { cell: match[2], moved: (Number(match[1]) & 32) !== 0 }
 }
 const decoder = new TextDecoder()
 
@@ -107,7 +108,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     const container = containerRef.current
     const mac = String(navigator.platform).startsWith('Mac')
     const fallback = mac ? '⌥-drag, then ⌘C' : 'shift-drag, then ctrl-insert'
-    let pressed: { moves: number } | null = null
+    let pressed: { from?: string; to?: string } | null = null
     let missTimer: number | null = null
     let missShown = false
     const cancelMiss = () => {
@@ -118,13 +119,13 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       cancelMiss()
       const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null && container?.contains(event.target) === true
       const forced = mac ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
-      pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? { moves: 0 } : null
+      pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? {} : null
     }
     const release = (event: MouseEvent) => {
       if (event.button !== 0) return
       const drag = pressed
       pressed = null
-      if (missShown || !ready || (drag?.moves ?? 0) < 2) return
+      if (missShown || !ready || !drag?.from || !drag.to || drag.to === drag.from) return
       cancelMiss()
       missTimer = window.setTimeout(() => {
         if (!activeRef.current) return
@@ -140,7 +141,11 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     window.addEventListener('mouseup', release, true)
     window.addEventListener('blur', forget)
     const dataSub = term.onData((data) => {
-      if (pressed && leftDragReport(data)) pressed.moves += 1
+      const report = pressed && leftButtonCell(data)
+      if (pressed && report) {
+        if (report.moved) pressed.to = report.cell
+        else pressed.from ??= report.cell
+      }
       sendInput(data)
     })
     const blocked = () => flash(`copy blocked: ${fallback}`)

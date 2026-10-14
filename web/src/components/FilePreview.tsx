@@ -257,7 +257,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const ref = useRef<HTMLDialogElement | null>(null)
   const title = useRef<HTMLHeadingElement | null>(null)
   const moved = useRef(false)
-  const visit = useRef(0)
+  const noteSeq = useRef(0)
   const [trail, setTrail] = useState([file.path])
   const [result, setResult] = useState<ApiResult<FileView> | null>(null)
   const [note, setNote] = useState('')
@@ -282,7 +282,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
 
   useEffect(() => {
     let live = true
-    visit.current += 1
+    noteSeq.current += 1
     setResult(null)
     setNote('')
     void getFile(file.session, path).then((r) => {
@@ -301,14 +301,14 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
-  const noteForThisVisit = () => {
-    const at = visit.current
+  const latestNote = () => {
+    const at = ++noteSeq.current
     return (message: string) => {
-      if (visit.current === at) setNote(message)
+      if (noteSeq.current === at) setNote(message)
     }
   }
   const copy = (text: string, done: string, instead: string) => {
-    const say = noteForThisVisit()
+    const say = latestNote()
     const failed = `Could not copy — ${instead}`
     if (!navigator.clipboard) say(failed)
     else
@@ -318,7 +318,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
       )
   }
   const open = () => {
-    const say = noteForThisVisit()
+    const say = latestNote()
     void openFile(file.session, path).then((r) =>
       say(r.kind !== 'ok' ? failure(r) : r.data.revealed ? 'Not a document type, so it is shown in its folder instead' : 'Opened on this laptop'),
     )
@@ -329,8 +329,9 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const name = baseName(path)
   const format = useMemo(() => (view ? formatOf(view) : null), [view])
   const showSource = !format || source
-  const copyText = () =>
-    copy(text ?? '', view?.truncated ? 'Copied the first 1 MB' : 'Text copied', showSource ? 'select the text below' : 'switch to Source and select it')
+  const copyText = () => {
+    if (text) copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', showSource ? 'select the text below' : 'switch to Source and select it')
+  }
   return (
     <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
       <header className="file-head">

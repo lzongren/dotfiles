@@ -153,6 +153,23 @@ describe('agent files', () => {
     expect(dialog.getByRole('status')).toBeEmptyDOMElement()
   })
 
+  it('shows the note for the latest copy when an earlier one settles late', async () => {
+    let refuse: () => void = () => undefined
+    const writeText = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<void>((_, reject) => (refuse = () => reject(new Error('slow')))))
+      .mockImplementation(async () => undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    views['/w/c.txt'] = { path: '/w/c.txt', size: 1, mtime: sec(5), kind: 'text', text: 'c', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/w/c.txt' }} known={[]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy path' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Path copied'))
+    await act(async () => refuse())
+    expect(dialog.getByRole('status')).toHaveTextContent('Path copied')
+  })
+
   it('offers no Copy text for an empty file', async () => {
     views['/home/me/work/api/empty.txt'] = { path: '/home/me/work/api/empty.txt', size: 0, mtime: sec(5), kind: 'text', text: '', truncated: false }
     render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/empty.txt' }} known={[]} onClose={vi.fn()} />)
