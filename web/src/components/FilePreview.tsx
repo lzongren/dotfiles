@@ -352,7 +352,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
               Download
             </a>
           ) : null}
-          {text !== undefined ? (
+          {text ? (
             <button type="button" onClick={() => copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', 'use Source and select it')}>
               Copy text
             </button>

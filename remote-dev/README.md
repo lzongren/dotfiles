@@ -191,8 +191,10 @@ in the Ghostty config here, anything in the visible session can set the
 clipboard this way; unlike Ghostty's config, nothing can read it. Claude
 Code copies its own selections the same way, and `/copy` copies its last
 reply. In an app that takes the mouse without copying, the tab says
-"nothing copied"; then, or if the browser refuses (Safari may), hold Option
-while dragging and press ⌘C, which copies the screen as drawn. Output
+"nothing copied" (once per tab); then, or if the browser refuses (Safari
+may), hold Option while dragging and press ⌘C, which copies the screen as
+drawn. Off a Mac that is Shift-drag, then Ctrl+Insert, since Ctrl+C reaches
+the shell. Output
 longer than the screen is easier as a file: the preview's "Copy text"
 copies all of it. Press `/` to search: Enter attaches a
 running session, starts the chosen agent in an existing workspace folder, or creates a new one with the

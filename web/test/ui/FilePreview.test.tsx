@@ -124,6 +124,15 @@ describe('agent files', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('offers no Copy text for an empty file', async () => {
+    views['/home/me/work/api/empty.txt'] = { path: '/home/me/work/api/empty.txt', size: 0, mtime: sec(5), kind: 'text', text: '', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/empty.txt' }} known={[]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog', { name: 'empty.txt' }))
+    expect(await dialog.findByText(/0 B/)).toBeInTheDocument()
+    expect(dialog.queryByRole('button', { name: 'Copy text' })).toBeNull()
+    expect(dialog.getByRole('button', { name: 'Copy path' })).toBeInTheDocument()
+  })
+
   it('shows images inline, and no laptop button for a file read from the host', async () => {
     renderOverview()
     fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'shot.png' }))

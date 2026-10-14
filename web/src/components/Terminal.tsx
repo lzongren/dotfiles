@@ -17,9 +17,10 @@ const QUEUE_MAX = 64 * 1024
 const MAC = navigator.platform.startsWith('Mac')
 const COPIED_MS = 1500
 const BLOCKED_MS = 5000
-const BLOCKED = MAC ? 'copy blocked: ⌥-drag, then ⌘C' : 'copy blocked: shift-drag, then ctrl-C'
+const FALLBACK = MAC ? '⌥-drag, then ⌘C' : 'shift-drag, then ctrl-insert'
+const BLOCKED = `copy blocked: ${FALLBACK}`
 const MISS_DELAY_MS = 1500
-const MISSED = MAC ? 'nothing copied: ⌥-drag, then ⌘C' : 'nothing copied: shift-drag, then ctrl-C'
+const MISSED = `nothing copied: ${FALLBACK}`
 const DRAG_PX = 8
 const decoder = new TextDecoder()
 
@@ -103,16 +104,13 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
       copiedTimer = window.setTimeout(() => setCopyNote(''), note === 'copied' ? COPIED_MS : BLOCKED_MS)
     }
-    // The hint below is for a drag the app swallowed. Keeping it to the first one
-    // per pane means a drag that was never a selection (resizing a split) says it
-    // once rather than after every drag.
     let pressed: { x: number; y: number; copied: boolean } | null = null
     let missTimer: number | null = null
     let missShown = false
-    const forcesSelection = (event: MouseEvent) => event.altKey || event.shiftKey
     const press = (event: MouseEvent) => {
+      const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null
       pressed =
-        event.button === 0 && !forcesSelection(event) && term.modes.mouseTrackingMode !== 'none'
+        onRows && event.button === 0 && !(MAC ? event.altKey : event.shiftKey) && term.modes.mouseTrackingMode !== 'none'
           ? { x: event.clientX, y: event.clientY, copied: false }
           : null
     }
@@ -129,6 +127,8 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     }
     const forget = () => {
       pressed = null
+      if (missTimer !== null) window.clearTimeout(missTimer)
+      missTimer = null
     }
     const container = containerRef.current
     container?.addEventListener('mousedown', press, true)
