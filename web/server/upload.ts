@@ -2,13 +2,17 @@ import { probeScript } from './insights.js'
 
 export const UPLOAD_COMMAND = ['python3', '-I', '-c', `'import sys,json;exec(json.loads(sys.stdin.buffer.readline()))'`]
 
-const WRITER = `import json, os, sys
+const WRITER = `import json, os, signal, sys
+
+
+def stalled(*_):
+    raise OSError(110, "upload stalled")
 
 
 def numbered(stem, ext, i):
     suffix = " (%d)" % i
     while len((stem + suffix + ext).encode()) > 255:
-        if stem:
+        if len(stem) > 1:
             stem = stem[:-1]
         else:
             ext = ext[:-1]
@@ -26,20 +30,31 @@ def place():
             continue
     else:
         return {"error": "too many files with that name"}
+    claimed = os.fstat(fd)
     left = ARGS["size"]
+    signal.signal(signal.SIGALRM, stalled)
     try:
         with os.fdopen(fd, "wb") as out:
             while left > 0:
+                signal.alarm(ARGS["stall"])
                 chunk = sys.stdin.buffer.read(min(left, 65536))
                 if not chunk:
                     break
                 out.write(chunk)
                 left -= len(chunk)
+        signal.alarm(0)
         if left:
             raise OSError(5, "upload cut short")
-    except OSError as err:
-        os.unlink(target)
-        return {"error": err.strerror or str(err)}
+    except BaseException as err:
+        signal.alarm(0)
+        try:
+            if os.path.samestat(claimed, os.lstat(target)):
+                os.unlink(target)
+        except OSError:
+            pass
+        if isinstance(err, OSError):
+            return {"error": err.strerror or str(err)}
+        raise
     return {"path": target}
 
 
@@ -49,8 +64,8 @@ except OSError as err:
     print(json.dumps({"error": err.strerror or str(err)}))
 `
 
-export function uploadInput(dir: string, name: string, data: Buffer): Buffer[] {
-  const script = probeScript(WRITER, { dir, name, size: data.length })
+export function uploadInput(dir: string, name: string, data: Buffer, stall = 60): Buffer[] {
+  const script = probeScript(WRITER, { dir, name, size: data.length, stall })
   return [Buffer.from(`${JSON.stringify(script)}\n`), data]
 }
 

@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createServer, request } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,7 +41,7 @@ describe('remote upload writer', () => {
     expect(run(uploadInput(dir, long, Buffer.from('2')))).toEqual({ path: path.join(dir, `${'é'.repeat(123)} (1).txt`) })
     const ext = `a.${'x'.repeat(252)}`
     run(uploadInput(dir, ext, Buffer.from('1')))
-    expect(run(uploadInput(dir, ext, Buffer.from('2')))).toEqual({ path: path.join(dir, ` (1).${'x'.repeat(250)}`) })
+    expect(run(uploadInput(dir, ext, Buffer.from('2')))).toEqual({ path: path.join(dir, `a (1).${'x'.repeat(249)}`) })
     expect(parseUpload('Welcome to the host\n{"path": "/w/a.txt"}\n')).toEqual({ path: '/w/a.txt' })
     expect(parseUpload('Loading env...{"path": "/w/b.txt"}')).toEqual({ path: '/w/b.txt' })
     expect(parseUpload('null')).toEqual({ error: 'unexpected writer output' })
@@ -52,6 +52,18 @@ describe('remote upload writer', () => {
     expect(run(input.subarray(0, input.length - 10))).toEqual({ error: 'upload cut short' })
     expect(readdirSync(dir)).not.toContain('cut.bin')
     expect(run(uploadInput(path.join(dir, 'gone'), 'a.txt', Buffer.from('x')))).toEqual({ error: 'No such file or directory' })
+  })
+
+  it('gives up on an upload that stops arriving and removes what it wrote', async () => {
+    const child = spawn('sh', ['-c', UPLOAD_COMMAND.join(' ')])
+    let stdout = ''
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+    const [head, data] = uploadInput(dir, 'stalled.bin', Buffer.alloc(200_000, 1), 1)
+    child.stdin.write(head)
+    child.stdin.write(data.subarray(0, 70_000))
+    await expect.poll(() => stdout, { timeout: 5000 }).toContain('upload stalled')
+    child.stdin.end()
+    expect(readdirSync(dir)).not.toContain('stalled.bin')
   })
 
   it('accepts ordinary file names and refuses paths and control characters', () => {
@@ -96,7 +108,7 @@ describe('upload route', () => {
     const stdin = readFileSync(path.join(scratch, 'stdin'))
     const newline = stdin.indexOf(10)
     const script = JSON.parse(stdin.subarray(0, newline).toString()) as string
-    expect(JSON.parse(JSON.parse(script.split('\n')[0].match(/loads\((.*)\)$/)![1]) as string)).toEqual({ dir: '/home/me/work/demo', name: 'shot.png', size: 5 })
+    expect(JSON.parse(JSON.parse(script.split('\n')[0].match(/loads\((.*)\)$/)![1]) as string)).toEqual({ dir: '/home/me/work/demo', name: 'shot.png', size: 5, stall: 60 })
     expect(stdin.subarray(newline + 1)).toEqual(data)
   })
 
