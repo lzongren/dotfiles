@@ -268,7 +268,9 @@ export function TerminalPane({
   return (
     <div className="terminal" data-active={active}>
       <div className="terminal-bar">
-        <span className="terminal-name">{name}</span>
+        <span className="terminal-name" title={name}>
+          {name}
+        </span>
         <span className={`terminal-status terminal-status-${status}`}>
           {status === 'rejected' ? 'attach rejected' : status}
         </span>
