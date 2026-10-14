@@ -54,6 +54,8 @@ describe('remote upload writer', () => {
     expect(cut.status).toBe(1)
     expect(cut.stderr.toString()).toContain('JSONDecodeError')
     const bare = spawnSync('sh', ['-c', UPLOAD_COMMAND.join(' ')], { input: head.subarray(0, head.length - 1), timeout: 5000 })
+    expect(bare.signal).toBeNull()
+    expect(bare.status).toBe(0)
     expect(parseUpload(bare.stdout.toString())).toEqual({ error: 'upload cut short' })
     expect(readdirSync(dir)).not.toContain('never.bin')
   })
