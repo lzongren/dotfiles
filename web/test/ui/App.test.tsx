@@ -157,7 +157,7 @@ describe('App', () => {
     render(<App />)
     await flush()
     expect(sidebar().getByRole('button', { name: /cc-demo/ })).toHaveTextContent('waiting')
-    const needs = within(screen.getByRole('region', { name: /Blocked on you/ }))
+    const needs = within(screen.getByRole('region', { name: /Needs you/ }))
     fireEvent.click(needs.getByRole('button', { name: /Fix flaky retry test/ }))
     const details = within(screen.getByRole('article', { name: 'cc-demo details' }))
     expect(details.getByText('Fix is up as PR 31; waiting on CI.', { exact: false })).toBeInTheDocument()
@@ -174,13 +174,13 @@ describe('App', () => {
     insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [turn(NOW_EPOCH - 5)] }))
     render(<App />)
     await flush()
-    expect(within(screen.getByRole('region', { name: /Ready to review/ })).getByRole('button', { name: 'Fix it' })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: /Needs you/ })).getByRole('button', { name: 'Fix it' })).toBeInTheDocument()
     fireEvent.click(sidebar().getByRole('button', { name: /cc-demo/ }))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15100)
     })
     fireEvent.click(screen.getByRole('tab', { name: 'Overview' }))
-    expect(within(screen.getByRole('region', { name: /Ready to review/ })).queryByRole('button', { name: 'Fix it' })).toBeNull()
+    expect(within(screen.getByRole('region', { name: /Needs you/ })).queryByRole('button', { name: 'Fix it' })).toBeNull()
   })
 
   it('keeps the overview usable when agent details fail, and says so', async () => {
@@ -199,7 +199,7 @@ describe('App', () => {
     insightsMock.mockImplementation(async () => response({ error: 'insights_failed', message: 'agent probe failed' }, 500))
     render(<App />)
     await flush()
-    const blocked = () => within(screen.getByRole('region', { name: /Blocked on you/ })).queryByRole('button', { name: 'Fix it' })
+    const blocked = () => within(screen.getByRole('region', { name: /Needs you/ })).queryByRole('button', { name: 'Fix it' })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15100)
     })

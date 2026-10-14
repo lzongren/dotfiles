@@ -856,16 +856,38 @@ details[open] > .parked-toggle::before {
 
 .cards {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr));
+  gap: 8px;
+  align-items: stretch;
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
+.cards > li {
+  display: grid;
+  min-width: 0;
+}
+
+.shelf {
+  grid-template-columns: none;
+  grid-auto-columns: minmax(min(270px, 100%), calc(50% - 4px));
+  grid-auto-flow: column;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+}
+
+.shelf > li {
+  scroll-snap-align: start;
+}
+
 .card {
   display: grid;
+  align-content: start;
   gap: 4px;
   width: 100%;
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -893,18 +915,20 @@ details[open] > .parked-toggle::before {
 
 .card-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
 }
 
 .card-title {
+  display: -webkit-box;
   flex: 1;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   min-width: 0;
   font-weight: 600;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .card-age {

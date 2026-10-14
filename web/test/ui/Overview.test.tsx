@@ -84,22 +84,69 @@ const titles = (name: RegExp) =>
     .filter((b) => b.classList.contains('card'))
     .map((b) => b.getAttribute('data-session'))
 
+const nativeScroll = Element.prototype.scrollIntoView
+
 afterEach(() => {
   vi.useRealTimers()
+  Element.prototype.scrollIntoView = nativeScroll
 })
 
-describe('Overview lanes', () => {
-  it('orders blocked oldest first, review newest first, and work by when it started', () => {
+describe('Overview sections', () => {
+  it('puts the blocked ahead of the ready, oldest wait first and newest turn first', () => {
     renderOverview()
-    expect(titles(/Blocked on you/)).toEqual(['zed', 'alpha'])
-    expect(titles(/Ready to review/)).toEqual(['newer', 'older'])
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'newer', 'older'])
     expect(titles(/Working/)).toEqual(['run-b', 'run-a'])
   })
 
-  it('groups the rest by project, most recent activity first, and parks the week-old ones collapsed', () => {
+  it('spreads lookalike ready sessions apart so one topic cannot fill the top', () => {
+    renderOverview({
+      sessions: [
+        session('search-speed', { activityEpoch: sec(50) }),
+        session('search-memory', { activityEpoch: sec(60) }),
+        session('docs', { activityEpoch: sec(70) }),
+      ],
+      insights: new Map(
+        [
+          agent('search-speed', { title: 'Search index rebuild speed', turnAt: sec(50) }),
+          agent('search-memory', { title: 'Search index rebuild memory', turnAt: sec(60) }),
+          agent('docs', { title: 'Docs website theme', turnAt: sec(70) }),
+        ].map((a) => [a.session, a]),
+      ),
+    })
+    expect(titles(/Needs you/)).toEqual(['search-speed', 'docs', 'search-memory'])
+  })
+
+  it('spreads out a busy topic even when its titles share nothing', () => {
+    const names = ['billing-retry', 'billing-refunds', 'billing-export', 'billing-tax', 'search', 'notes', 'deploy', 'docs', 'metrics']
+    const words = ['queue', 'ledger', 'report', 'rates', 'index', 'journal', 'rollout', 'website', 'graphs']
+    renderOverview({
+      sessions: names.map((n) => session(n)),
+      insights: new Map(names.map((n, i) => [n, agent(n, { title: words[i], turnAt: sec(10 * (i + 1)) })])),
+    })
+    const top = titles(/Needs you/).slice(0, 4)
+    expect(top.slice(0, 2)).toEqual(['billing-retry', 'search'])
+    expect(top.filter((n) => n?.startsWith('billing'))).toHaveLength(2)
+  })
+
+  it('keeps the blocked oldest first and above every finished turn, however alike they are', () => {
+    renderOverview({
+      sessions: ['b1', 'b2', 'r1'].map((n) => session(n)),
+      insights: new Map(
+        [
+          agent('b1', { state: 'waiting', title: 'Search index rebuild', since: sec(300) }),
+          agent('b2', { state: 'waiting', title: 'Search index rebuild', since: sec(200) }),
+          agent('r1', { title: 'Docs website theme', turnAt: sec(100) }),
+        ].map((a) => [a.session, a]),
+      ),
+    })
+    expect(titles(/Needs you/)).toEqual(['b1', 'b2', 'r1'])
+  })
+
+  it('shelves the rest by the words their names share, singletons under Other, and parks the week-old ones collapsed', () => {
     renderOverview()
-    expect(titles(/Recent/)).toEqual(['shell-late', 'shell-early', 'mid'])
-    expect(screen.getByRole('heading', { name: 'notes' })).toBeInTheDocument()
+    expect(titles(/Topics/)).toEqual(['shell-late', 'shell-early', 'mid'])
+    expect(screen.getByRole('heading', { name: 'shell 2' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Other 1' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Parked/ }).closest('details')).not.toHaveAttribute('open')
   })
 
@@ -160,21 +207,95 @@ describe('Overview selection and seen', () => {
 
   it('holds the layout still while the pointer is over the lanes, then catches up', () => {
     const view = renderOverview()
-    const lanes = screen.getByRole('region', { name: /Blocked on you/ }).parentElement!
+    const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
     fireEvent.mouseEnter(lanes)
     view.rerender({ insights: insights([agent('older', { state: 'waiting', since: sec(5000), title: 'Older turn' })]) })
-    expect(titles(/Ready to review/)).toEqual(['newer', 'older'])
-    expect(titles(/Blocked on you/)).toEqual(['zed', 'alpha'])
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'newer', 'older'])
     fireEvent.mouseLeave(lanes)
-    expect(titles(/Blocked on you/)).toEqual(['older', 'zed', 'alpha'])
+    expect(titles(/Needs you/)).toEqual(['older', 'zed', 'alpha', 'newer'])
+  })
+
+  it('keeps a session that starts waiting on you above the finished turns while held', () => {
+    const view = renderOverview()
+    const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
+    fireEvent.mouseEnter(lanes)
+    view.rerender({
+      sessions: [...SESSIONS, session('late')],
+      insights: insights([agent('late', { state: 'waiting', since: sec(50), title: 'Late' })]),
+    })
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'late', 'newer', 'older'])
+  })
+
+  it('leaves a parked tile in place while held with Parked open', () => {
+    const view = renderOverview()
+    const parked = screen.getByRole('heading', { name: /Parked/ }).closest('details')!
+    parked.open = true
+    fireEvent(parked, new Event('toggle'))
+    const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
+    fireEvent.mouseEnter(lanes)
+    view.rerender({ insights: insights([agent('old', { state: 'waiting', since: sec(30), title: 'Old one' })]) })
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'newer', 'older'])
+    expect(screen.getByRole('button', { name: 'Old one' }).closest('details')).toBe(parked)
+  })
+
+  it('walks a shelf that appears while held in the order it is drawn', () => {
+    const view = renderOverview()
+    const parked = screen.getByRole('heading', { name: /Parked/ }).closest('details')!
+    parked.open = true
+    fireEvent(parked, new Event('toggle'))
+    expect(screen.getByRole('button', { name: /old/ })).toBeVisible()
+    const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
+    fireEvent.mouseEnter(lanes)
+    view.rerender({ sessions: [...SESSIONS, session('deploy-one', { activityEpoch: sec(8) }), session('deploy-two', { activityEpoch: sec(9) })] })
+    expect(within(screen.getByRole('region', { name: /Topics/ })).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'shell 2',
+      'deploy 2',
+      'Other 1',
+    ])
+    const drawn = [...document.querySelectorAll<HTMLElement>('.lanes .card')].map((c) => c.dataset.session)
+    const walked = drawn.map(() => {
+      fireEvent.keyDown(document.body, { key: 'j' })
+      return (document.activeElement as HTMLElement).dataset.session
+    })
+    expect(walked).toEqual(drawn)
+  })
+
+  it('does not pull focus back after a key at the last tile', () => {
+    const view = renderOverview()
+    for (let i = 0; i < 20; i += 1) fireEvent.keyDown(document.activeElement ?? document.body, { key: 'j' })
+    const input = document.createElement('input')
+    document.body.append(input)
+    input.focus()
+    view.rerender({ now: NOW + 1000 })
+    expect(input).toHaveFocus()
+    input.remove()
+  })
+
+  it('holds the topic shelves still too, even when a session that shaped them ends', () => {
+    const view = renderOverview()
+    const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
+    fireEvent.mouseEnter(lanes)
+    view.rerender({ sessions: SESSIONS.filter((s) => s.name !== 'shell-early') })
+    expect(screen.getByRole('list', { name: 'shell 1' })).toBeInTheDocument()
+    expect(titles(/Topics/)).toEqual(['shell-late', 'mid'])
+    fireEvent.mouseLeave(lanes)
+    expect(screen.queryByRole('list', { name: /^shell/ })).toBeNull()
+    expect(within(screen.getByRole('list', { name: 'Other 2' })).getAllByRole('button').map((b) => b.dataset.session)).toEqual([
+      'shell-late',
+      'mid',
+    ])
   })
 })
 
 describe('Overview keyboard', () => {
-  it('moves with j and k from anywhere on the page and keeps one tab stop', () => {
+  it('moves with j and k from anywhere on the page, brings the tile into view, and keeps one tab stop', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
     renderOverview()
     fireEvent.keyDown(document.body, { key: 'j' })
     const first = screen.getByRole('button', { name: 'Blocked longest' })
+    expect(scroll.mock.contexts[0]).toBe(first)
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
     expect(first).toHaveAttribute('aria-pressed', 'true')
     expect(first).toHaveFocus()
     expect(document.querySelectorAll('.card[tabindex="0"]')).toHaveLength(1)
@@ -182,6 +303,31 @@ describe('Overview keyboard', () => {
     expect(screen.getByRole('button', { name: 'Blocked lately' })).toHaveFocus()
     fireEvent.keyDown(screen.getByRole('button', { name: 'Blocked lately' }), { key: 'k' })
     expect(first).toHaveFocus()
+    fireEvent.keyDown(first, { key: 'ArrowRight' })
+    expect(screen.getByRole('button', { name: 'Blocked lately' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Blocked lately' }), { key: 'ArrowLeft' })
+    expect(first).toHaveFocus()
+    fireEvent.keyDown(first, { key: 'ArrowDown' })
+    expect(first).toHaveAttribute('aria-pressed', 'true')
+    const input = document.createElement('input')
+    document.body.append(input)
+    fireEvent.keyDown(input, { key: 'ArrowRight' })
+    expect(first).toHaveAttribute('aria-pressed', 'true')
+    input.remove()
+    fireEvent.keyDown(document.body, { key: 'ArrowRight', shiftKey: true })
+    expect(first).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.keyDown(document.body, { key: 'ArrowRight' })
+    expect(screen.getByRole('button', { name: 'Blocked lately' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('steps with an arrow from the tile that has focus, even before anything is selected', () => {
+    renderOverview()
+    const first = screen.getByRole('button', { name: 'Blocked longest' })
+    first.focus()
+    fireEvent.keyDown(first, { key: 'ArrowLeft' })
+    expect(first).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.keyDown(first, { key: 'ArrowRight' })
+    expect(screen.getByRole('button', { name: 'Blocked lately' })).toHaveFocus()
   })
 
   it('skips the parked lane while it is collapsed', () => {
@@ -199,6 +345,19 @@ describe('Overview keyboard', () => {
     expect(onOpen).not.toHaveBeenCalled()
     fireEvent.keyDown(screen.getByRole('button', { name: 'Newer turn' }), { key: 'Enter' })
     expect(onOpen).toHaveBeenCalledWith('newer')
+  })
+
+  it('opens and marks seen the tile that has focus, not an older selection', () => {
+    const { onOpen, onSeen, rerender } = renderOverview()
+    fireEvent.click(screen.getByRole('button', { name: 'Newer turn' }))
+    const older = screen.getByRole('button', { name: 'Older turn' })
+    older.focus()
+    fireEvent.keyDown(older, { key: 'e' })
+    expect(onSeen).toHaveBeenCalledWith(['older'])
+    rerender({ now: NOW + 1000 })
+    expect(older).toHaveFocus()
+    fireEvent.keyDown(older, { key: 'Enter' })
+    expect(onOpen).toHaveBeenCalledWith('older')
   })
 
   it('leaves keys alone in inputs, on the detail buttons, with modifiers, and while hidden', () => {

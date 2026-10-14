@@ -13,6 +13,7 @@ import {
   shownArtifacts,
   type Lane,
 } from '../insights'
+import { mmr, rarity, sharedRarest, similarity, topicsOf, words } from '../topics'
 import { ago } from '../time'
 import { headline } from './SessionList'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
@@ -25,19 +26,22 @@ interface Row {
 }
 
 const AUTO_SEEN_MS = 2000
-const LANES: Array<{ lane: Lane; title: string; empty: string }> = [
-  { lane: 'blocked', title: 'Blocked on you', empty: 'No agent is waiting on you.' },
-  { lane: 'ready', title: 'Ready to review', empty: 'Nothing new since you last looked.' },
-  { lane: 'working', title: 'Working', empty: 'No agent is mid-turn.' },
-  { lane: 'recent', title: 'Recent', empty: 'Nothing else active this week.' },
-]
-const ORDER: Record<Lane, (a: Row, b: Row) => number> = {
-  blocked: (a, b) => changeMark(a.session, a.insight) - changeMark(b.session, b.insight),
-  ready: (a, b) => changeMark(b.session, b.insight) - changeMark(a.session, a.insight),
-  working: (a, b) => changeMark(a.session, a.insight) - changeMark(b.session, b.insight),
-  recent: (a, b) => b.session.activityEpoch - a.session.activityEpoch,
-  parked: (a, b) => b.session.activityEpoch - a.session.activityEpoch,
+type Kind = 'needs' | 'working' | 'recent' | 'parked'
+interface Shelf {
+  kind: Kind
+  key: string
+  label: string
+  names: string[]
 }
+const SECTIONS: Array<{ kind: Exclude<Kind, 'parked'>; title: string; empty: string }> = [
+  { kind: 'needs', title: 'Needs you', empty: 'No agent is waiting on you.' },
+  { kind: 'working', title: 'Working', empty: 'No agent is mid-turn.' },
+  { kind: 'recent', title: 'Topics', empty: 'Nothing else active this week.' },
+]
+const KINDS: Kind[] = [...SECTIONS.map((s) => s.kind), 'parked']
+const byChange = (dir: 1 | -1) => (a: Row, b: Row) => dir * (changeMark(a.session, a.insight) - changeMark(b.session, b.insight))
+const byActivity = (a: Row, b: Row) => b.session.activityEpoch - a.session.activityEpoch
+const shelfId = (s: Shelf) => `${s.kind}:${s.key}`
 
 function stateLabel(row: Row): { text: string; tone: string } {
   const i = row.insight
@@ -53,25 +57,56 @@ function ageOf(row: Row): number {
   return row.lane === 'recent' || row.lane === 'parked' ? row.session.activityEpoch : changeMark(row.session, row.insight)
 }
 
-function layout(rows: Row[]): Record<Lane, string[]> {
-  const out: Record<Lane, string[]> = { blocked: [], ready: [], working: [], recent: [], parked: [] }
-  for (const lane of Object.keys(out) as Lane[]) {
-    out[lane] = rows
-      .filter((r) => r.lane === lane)
-      .sort((a, b) => ORDER[lane](a, b) || a.session.name.localeCompare(b.session.name))
-      .map((r) => r.session.name)
-  }
-  return out
+function layout(rows: Row[]): Shelf[] {
+  const pick = (lane: Lane, sort: (a: Row, b: Row) => number) =>
+    rows.filter((r) => r.lane === lane).sort((a, b) => sort(a, b) || a.session.name.localeCompare(b.session.name))
+  const names = (list: Row[]) => list.map((r) => r.session.name)
+  const tokens = new Map(
+    rows.map((r) => {
+      const name = words(r.session.name)
+      const tagged = new Set([...name, ...words(projectOf(r.session.path))])
+      return [r, { name, tagged, titled: new Set([...tagged, ...words(displayTitle(headline(r.session), r.insight))]) }]
+    }),
+  )
+  const none = { name: new Set<string>(), tagged: new Set<string>(), titled: new Set<string>() }
+  const tok = (r: Row) => tokens.get(r) ?? none
+  const corpus = rows.map((r) => tok(r).name)
+  const kin = sharedRarest(rows.map((r) => tok(r).tagged))
+  const weight = rarity(rows.map((r) => tok(r).titled))
+  const ready = pick('ready', byChange(-1))
+  const picks = mmr(
+    ready,
+    (_, i) => 1 - i / ready.length,
+    (a, b) => Math.max(kin(tok(a).tagged, tok(b).tagged), similarity(tok(a).titled, tok(b).titled, weight)),
+  )
+  const shelves = (kind: Kind, lane: Lane) =>
+    topicsOf(pick(lane, byActivity), (r) => tok(r).name, corpus).map((t) => ({
+      kind,
+      key: t.key,
+      label: t.label,
+      names: names(t.items),
+    }))
+  return [
+    { kind: 'needs', key: 'blocked', label: '', names: names(pick('blocked', byChange(1))) },
+    { kind: 'needs', key: 'ready', label: '', names: names(picks) },
+    { kind: 'working', key: '', label: '', names: names(pick('working', byChange(1))) },
+    ...shelves('recent', 'recent'),
+    ...shelves('parked', 'parked'),
+  ]
 }
 
-function hold(held: Record<Lane, string[]>, live: Record<Lane, string[]>): Record<Lane, string[]> {
-  const exists = new Set(Object.values(live).flat())
-  const placed = new Set(Object.values(held).flat())
-  const out = { ...held }
-  for (const lane of Object.keys(live) as Lane[]) {
-    out[lane] = [...held[lane].filter((n) => exists.has(n)), ...live[lane].filter((n) => !placed.has(n))]
-  }
-  return out
+function hold(held: Shelf[], live: Shelf[]): Shelf[] {
+  const exists = new Set(live.flatMap((s) => s.names))
+  const placed = new Set(held.flatMap((s) => s.names))
+  const arrived = (s: Shelf | undefined) => (s ? s.names.filter((n) => !placed.has(n)) : [])
+  const kept = held.map((s) => ({
+    ...s,
+    names: [...s.names.filter((n) => exists.has(n)), ...arrived(live.find((l) => shelfId(l) === shelfId(s)))],
+  }))
+  const added = live.filter((l) => !held.some((s) => shelfId(s) === shelfId(l))).map((l) => ({ ...l, names: arrived(l) }))
+  return [...kept, ...added]
+    .filter((s) => s.names.length > 0 || s.kind === 'needs' || s.kind === 'working')
+    .sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || Number(a.key === '') - Number(b.key === ''))
 }
 
 function Card({
@@ -307,14 +342,15 @@ export function Overview({
   onOpen: (name: string) => void
   onSeen: (names: string[]) => void
 }) {
+  const id = useId()
   const [selected, setSelected] = useState<string | null>(null)
   const [parkedOpen, setParkedOpen] = useState(false)
   const [preview, setPreview] = useState<FileRef | null>(null)
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const lanesRef = useRef<HTMLDivElement | null>(null)
   const pointerInside = useRef(false)
-  const held = useRef<Record<Lane, string[]> | null>(null)
-  const refocus = useRef(false)
+  const held = useRef<Shelf[] | null>(null)
+  const refocus = useRef<string | null>(null)
   const keys = useRef<(event: KeyboardEvent) => void>(() => undefined)
 
   const rows = new Map<string, Row>(
@@ -331,29 +367,29 @@ export function Overview({
   const holding = pointerInside.current || (lanesRef.current?.contains(document.activeElement) ?? false)
   const placed = holding && held.current ? hold(held.current, live) : live
   if (!holding) held.current = live
-  const lane = (l: Lane) => placed[l].map((n) => rows.get(n)).filter((r): r is Row => r !== undefined)
-  const groups = new Map<string, Row[]>()
-  for (const row of lane('recent')) {
-    const key = projectOf(row.session.path)
-    groups.set(key, [...(groups.get(key) ?? []), row])
-  }
-  const order = [
-    ...lane('blocked'),
-    ...lane('ready'),
-    ...lane('working'),
-    ...[...groups.values()].flat(),
-    ...(parkedOpen ? lane('parked') : []),
-  ].map((r) => r.session.name)
+  const shown = placed
+    .filter((s) => s.kind !== 'parked' || parkedOpen)
+    .map((s) => ({ ...s, rows: s.names.map((n) => rows.get(n)).filter((r): r is Row => r !== undefined) }))
+  const of = (kind: Kind) => shown.filter((s) => s.kind === kind)
+  const count = (kind: Kind) => placed.filter((s) => s.kind === kind).reduce((n, s) => n + s.names.length, 0)
+  const order = shown.flatMap((s) => s.rows.map((r) => r.session.name))
   const current = selected === null ? null : (rows.get(selected) ?? null)
   const tabStop = current && order.includes(current.session.name) ? current.session.name : order[0]
-  const readyNames = lane('ready')
-    .filter((r) => r.fresh)
+  const readyNames = of('needs')
+    .flatMap((s) => s.rows)
+    .filter((r) => r.lane === 'ready' && r.fresh)
     .map((r) => r.session.name)
 
+  const focusCard = (name: string) => {
+    const card = lanesRef.current?.querySelector<HTMLElement>(`.card[data-session="${CSS.escape(name)}"]`)
+    card?.focus({ preventScroll: true })
+    card?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }
   useEffect(() => {
-    if (!refocus.current || selected === null) return
-    refocus.current = false
-    lanesRef.current?.querySelector<HTMLElement>(`.card[data-session="${CSS.escape(selected)}"]`)?.focus()
+    if (refocus.current === null) return
+    const name = refocus.current
+    refocus.current = null
+    focusCard(name)
   })
 
   const currentName = current?.session.name
@@ -366,19 +402,27 @@ export function Overview({
 
   keys.current = (event: KeyboardEvent) => {
     if (!visible || event.metaKey || event.ctrlKey || event.altKey || ignoredTarget(event.target)) return
-    const index = selected === null ? -1 : order.indexOf(selected)
-    if (event.key === 'j' || event.key === 'k') {
-      const next = order[Math.min(order.length - 1, Math.max(0, index + (event.key === 'j' ? 1 : -1)))]
-      if (!next) return
-      refocus.current = true
-      setSelected(next)
-    } else if (event.key === 'Enter' && !event.repeat && current?.session.attachable) {
-      const onCard = event.target instanceof Element && event.target.closest('.card') !== null
+    const focused = event.target instanceof Element ? event.target.closest<HTMLElement>('.card') : null
+    const onCard = focused !== null
+    const from = focused?.dataset.session ?? selected
+    const index = from === null || from === undefined ? -1 : order.indexOf(from)
+    const target = onCard && from ? rows.get(from) : current
+    const arrows = !event.shiftKey && (onCard || event.target === document.body)
+    const step = event.key === 'j' || (arrows && event.key === 'ArrowRight') ? 1 : event.key === 'k' || (arrows && event.key === 'ArrowLeft') ? -1 : 0
+    if (step !== 0) {
+      const next = order[Math.min(order.length - 1, Math.max(0, index + step))]
+      if (!next || (onCard && next === from)) return
+      if (next === selected) focusCard(next)
+      else {
+        refocus.current = next
+        setSelected(next)
+      }
+    } else if (event.key === 'Enter' && !event.repeat && target?.session.attachable) {
       if (!onCard && event.target !== document.body) return
-      onOpen(current.session.name)
-    } else if (event.key === 'e' && current) {
-      refocus.current = true
-      onSeen([current.session.name])
+      onOpen(target.session.name)
+    } else if (event.key === 'e' && target) {
+      refocus.current = target.session.name
+      onSeen([target.session.name])
     } else {
       return
     }
@@ -400,6 +444,20 @@ export function Overview({
       onSelect={() => setSelected(row.session.name)}
     />
   )
+  const shelf = (kind: Kind) =>
+    of(kind).map((s) => {
+      const heading = `${id}-${kind}-${s.key || 'other'}`
+      return (
+        <div key={shelfId(s)} className="group">
+          <h3 id={heading} className="group-title">
+            {s.label} <span className="lane-count">{s.rows.length}</span>
+          </h3>
+          <ul className="cards shelf" aria-labelledby={heading}>
+            {s.rows.map(card)}
+          </ul>
+        </div>
+      )
+    })
   const artifacts = ledger([...rows.values()].map((r) => ({ name: r.session.name, artifacts: r.insight?.artifacts ?? [] })))
   const recentFiles = [...rows.values()]
     .flatMap((r) => (r.insight?.files ?? []).map((f) => ({ ...f, session: r.session.name, cwd: r.session.path, label: r.session.name })))
@@ -426,40 +484,31 @@ export function Overview({
         <p className="overview-notice" role="status" hidden={!notice}>
           {notice}
         </p>
-        {LANES.map(({ lane: l, title, empty }) => (
-          <section key={l} className="lane" aria-labelledby={`lane-${l}`}>
+        {SECTIONS.map(({ kind, title, empty }) => (
+          <section key={kind} className="lane" aria-labelledby={`lane-${kind}`}>
             <div className="lane-head">
-              <h2 id={`lane-${l}`} className="lane-title">
-                {title} <span className="lane-count">{placed[l].length}</span>
+              <h2 id={`lane-${kind}`} className="lane-title">
+                {title} <span className="lane-count">{count(kind)}</span>
               </h2>
-              {l === 'ready' && readyNames.length > 1 ? (
+              {kind === 'needs' && readyNames.length > 1 ? (
                 <button type="button" className="lane-action" onClick={() => onSeen(readyNames)}>
                   Mark all seen
                 </button>
               ) : null}
             </div>
-            {placed[l].length === 0 ? <p className="lane-empty">{empty}</p> : null}
-            {l === 'recent' ? (
-              [...groups.entries()].map(([project, items]) => (
-                <div key={project} className="group">
-                  <h3 className="group-title">{project}</h3>
-                  <ul className="cards">{items.map(card)}</ul>
-                </div>
-              ))
-            ) : (
-              <ul className="cards">{lane(l).map(card)}</ul>
-            )}
+            {count(kind) === 0 ? <p className="lane-empty">{empty}</p> : null}
+            {kind === 'recent' ? shelf('recent') : <ul className="cards">{of(kind).flatMap((s) => s.rows).map(card)}</ul>}
           </section>
         ))}
-        {placed.parked.length > 0 ? (
+        {count('parked') > 0 ? (
           <section className="lane" aria-labelledby="lane-parked">
             <details open={parkedOpen} onToggle={(e) => setParkedOpen(e.currentTarget.open)}>
               <summary className="parked-toggle">
                 <h2 id="lane-parked" className="lane-title">
-                  Parked · idle over a week <span className="lane-count">{placed.parked.length}</span>
+                  Parked · idle over a week <span className="lane-count">{count('parked')}</span>
                 </h2>
               </summary>
-              <ul className="cards">{lane('parked').map(card)}</ul>
+              {shelf('parked')}
             </details>
           </section>
         ) : null}
@@ -489,7 +538,7 @@ export function Overview({
               </>
             ) : null}
             <p className="hint">
-              Select a session to see where it stands. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>Enter</kbd> opens,{' '}
+              Select a session to see where it stands. <kbd>j</kbd>/<kbd>k</kbd> or <kbd>←</kbd>/<kbd>→</kbd> move, <kbd>Enter</kbd> opens,{' '}
               <kbd>e</kbd> marks seen.
             </p>
           </div>

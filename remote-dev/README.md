@@ -124,26 +124,35 @@ browser ──HTTP + WebSocket──► node server on 127.0.0.1:7733 (per-run t
                                  └─ terminal tab  ◄── ssh -t HOST tmux attach
 ```
 
-The home view is an overview that sorts sessions by whose move it is:
+The home view is an overview of tiles, laid out like a recommendations page:
 
 ```
-Blocked on you   an agent waiting on a permission prompt or question, or an
-                 error you haven't seen
-Ready to review  a finished turn you haven't seen, or a ringing shell
-Working          agents mid-turn
-Recent           everything else active this week, grouped by project folder
-Parked           idle over a week (collapsed)
+Needs you   agents waiting on a prompt or question and errors you haven't
+            seen, then finished turns you haven't seen or a ringing shell
+Working     agents mid-turn
+Topics      everything else active this week, one scrolling shelf per topic
+Parked      idle over a week (collapsed, shelved the same way)
 ```
 
-Each card shows the agent's title, where it stands (Claude Code's away
+Needs you puts the blocked first, oldest wait first, then the finished turns,
+newest first but with lookalikes spread apart (maximal marginal relevance): a
+turn that shares an uncommon word in its name or folder, or much of its title,
+with a finished turn already above it gives way to a different piece of work,
+so one busy project can't fill the top; the rarer the shared word, the further
+it gives way. A topic is a word that several session names share, such as
+`Billing` in `0912_Billing_Retry` and `0915_Billing_Invoices`; words in over
+half of all names (and at least three) don't count. Shelves come freshest
+first, and sessions that share nothing sit under Other.
+
+Each tile shows the agent's title, where it stands (Claude Code's away
 summary or its last reply), task progress, and the pull requests or reviews
 someone mentioned. Select one for the goal, the latest ask, and every
-artifact; `j`/`k` move, Enter opens the terminal, `e` marks it seen. "Seen"
+artifact; `j`/`k` or ←/→ move, Enter opens the terminal, `e` marks it seen. "Seen"
 lives in the browser and records how far the host had got, so a turn that
 ends later comes back. A selected card counts as seen after two seconds,
 opening its terminal or leaving its tab marks it too, and "Mark all seen"
-clears Ready to review. The lanes hold still while the pointer or focus is
-in them. With nothing selected, the side panel lists the latest artifacts
+clears the finished turns in Needs you. The tiles hold still while the pointer
+or focus is on them. With nothing selected, the side panel lists the latest artifacts
 across sessions.
 
 Agent details come from a script streamed to the host's `python3` (3.7+, no
