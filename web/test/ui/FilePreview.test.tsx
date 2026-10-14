@@ -232,6 +232,7 @@ describe('file viewer', () => {
     expect(parseDelimited('a\tb\n"oops\tc\nd\te\n', '\t')).toEqual([['a', 'b'], ['"oops', 'c'], ['d', 'e']])
     expect(parseDelimited('name,desc\n"Smith, J",ok\n"broken,x\n', ',')).toEqual([['name', 'desc'], ['Smith, J', 'ok'], ['"broken', 'x']])
     expect(parseDelimited('a,b\n"x, y","multi\nline"\n"cut, off', ',')).toEqual([['a', 'b'], ['x, y', 'multi\nline'], ['"cut', ' off']])
+    expect(parseDelimited('a,b\n"l1\nl2,x', ',')).toEqual([['a', 'b'], ['"l1'], ['l2', 'x']])
     expect(parseDelimited('a\tb\n"x\ty"\tz\n', '\t')).toEqual([['a', 'b'], ['x\ty', 'z']])
     text('/w/t.tsv', 'name\tcount\nfoo\t3\n')
     const dialog = preview('/w/t.tsv')

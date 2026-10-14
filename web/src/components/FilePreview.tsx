@@ -85,15 +85,13 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
   let cell = ''
   let quoted = false
   let touched = false
-  let open = { at: -1, rows: 0, row: [] as string[] }
+  let open = -1
   for (let i = 0; i <= body.length && rows.length < max; i++) {
     if (i === body.length) {
       if (!quoted) break
-      rows.length = open.rows
-      row = open.row
       cell = '"'
       quoted = touched = false
-      i = open.at
+      i = open
       continue
     }
     const c = body[i]
@@ -103,9 +101,9 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
         i++
       } else if (c === '"') quoted = false
       else cell += c
-    } else if (c === '"' && cell === '' && i !== open.at) {
+    } else if (c === '"' && cell === '') {
       quoted = touched = true
-      open = { at: i, rows: rows.length, row: [...row] }
+      open = i
     } else if (c === sep) {
       row.push(cell)
       cell = ''
