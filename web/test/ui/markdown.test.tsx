@@ -66,7 +66,9 @@ describe('markdown rendering', () => {
     expect(html).toContain('<li class="md-task"><label><input type="checkbox" disabled checked> done</label></li>')
     expect(render('- \\[ \\] escaped\n- [x]\ttabbed')).toMatch(/<li>\[ \] escaped<\/li>\n<li class="md-task"><label><input type="checkbox" disabled checked> tabbed/)
     expect(render('- [ ] loose\n\n  more\n- not [ ] a task')).toMatch(/<li class="md-task">\s*<p><label><input type="checkbox" disabled> loose<\/label><\/p>[\s\S]*<li>\s*<p>not \[ \] a task<\/p>/)
-    expect(html).toContain('<div class="md-table" role="region" aria-label="table" tabindex="0"><table>')
+    expect(html).toContain('<div class="md-table" role="region" aria-label="table 1" tabindex="0"><table>')
+    expect(render('| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |')).toContain('aria-label="table 2"')
+    expect(render('[![logo](logo.png)](#)')).toBe('<p><span><a class="md-image" data-path="/home/me/work/api/docs/logo.png" role="link" tabindex="0">image: logo</a></span></p>\n')
     expect(render('[![build](https://img.shields.io/x.svg)](https://ci.example.com) [![logo](logo.png)](spec.md)')).toBe(
       '<p><a href="https://ci.example.com" target="_blank" rel="noopener noreferrer"><span class="md-image">image: build</span></a> <a data-path="/home/me/work/api/docs/spec.md" role="link" tabindex="0"><span class="md-image">image: logo</span></a></p>\n',
     )

@@ -5,6 +5,7 @@ interface Env {
   file: string
   dir: string
   ids: Set<string>
+  tables: number
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, highlight: (code, lang) => highlight(code, lang.trim().split(/\s+/)[0] || null) ?? '' })
@@ -103,7 +104,7 @@ md.renderer.rules.link_open = (tokens, i, options, env: Env, self) => {
   return self.renderToken(tokens, i, options)
 }
 
-md.renderer.rules.table_open = () => '<div class="md-table" role="region" aria-label="table" tabindex="0"><table>\n'
+md.renderer.rules.table_open = (_tokens, _i, _options, env: Env) => `<div class="md-table" role="region" aria-label="table ${++env.tables}" tabindex="0"><table>\n`
 md.renderer.rules.table_close = () => '</table>\n</div>\n'
 
 const image = md.renderer.rules.image!
@@ -112,8 +113,9 @@ md.renderer.rules.image = (tokens: Token[], i, options, env: Env, self) => {
   const src = token.attrGet('src') ?? ''
   if (/^data:image\//i.test(src)) return image(tokens, i, options, env, self)
   const alt = md.utils.escapeHtml(self.renderInlineAsText(token.children ?? [], options, env) || src)
-  const linked = tokens.slice(0, i).reduce((depth, t) => depth + (t.type === 'link_open' ? 1 : t.type === 'link_close' ? -1 : 0), 0) > 0
-  if (linked) return `<span class="md-image">image: ${alt}</span>`
+  let before = i - 1
+  while (before >= 0 && tokens[before].type !== 'link_open' && tokens[before].type !== 'link_close') before--
+  if (before >= 0 && tokens[before].type === 'link_open' && tokens[before].tag === 'a') return `<span class="md-image">image: ${alt}</span>`
   const path = local(src, env)
   if (path) return `<a class="md-image" data-path="${md.utils.escapeHtml(path)}" role="link" tabindex="0">image: ${alt}</a>`
   if (!EXTERNAL.test(src)) return `<span class="md-image">image: ${alt}</span>`
@@ -122,6 +124,6 @@ md.renderer.rules.image = (tokens: Token[], i, options, env: Env, self) => {
 
 export function renderMarkdown(text: string, file: string): string {
   const at = resolvePath('/', file)
-  const env: Env = { file: at, dir: at.slice(0, at.lastIndexOf('/')) || '/', ids: new Set() }
+  const env: Env = { file: at, dir: at.slice(0, at.lastIndexOf('/')) || '/', ids: new Set(), tables: 0 }
   return md.render(text, env).replace(/<pre>/g, '<pre tabindex="0">')
 }

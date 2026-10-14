@@ -80,29 +80,37 @@ function extension(file: string): string {
 
 export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): string[][] {
   const body = text.replace(/^\uFEFF/, '')
-  return splitRows(body, sep, max, true) ?? splitRows(body, sep, max, false)!
-}
-
-function splitRows(text: string, sep: string, max: number, quotes: boolean): string[][] | null {
   const rows: string[][] = []
   let row: string[] = []
   let cell = ''
   let quoted = false
   let touched = false
-  for (let i = 0; i < text.length && rows.length < max; i++) {
-    const c = text[i]
+  let open = { at: -1, rows: 0, row: [] as string[] }
+  for (let i = 0; i <= body.length && rows.length < max; i++) {
+    if (i === body.length) {
+      if (!quoted) break
+      rows.length = open.rows
+      row = open.row
+      cell = '"'
+      quoted = touched = false
+      i = open.at
+      continue
+    }
+    const c = body[i]
     if (quoted) {
-      if (c === '"' && text[i + 1] === '"') {
+      if (c === '"' && body[i + 1] === '"') {
         cell += '"'
         i++
       } else if (c === '"') quoted = false
       else cell += c
-    } else if (quotes && c === '"' && cell === '') quoted = touched = true
-    else if (c === sep) {
+    } else if (c === '"' && cell === '' && i !== open.at) {
+      quoted = touched = true
+      open = { at: i, rows: rows.length, row: [...row] }
+    } else if (c === sep) {
       row.push(cell)
       cell = ''
     } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++
+      if (c === '\r' && body[i + 1] === '\n') i++
       if (row.length === 0 && cell === '' && !touched) continue
       row.push(cell)
       rows.push(row)
@@ -111,7 +119,6 @@ function splitRows(text: string, sep: string, max: number, quotes: boolean): str
       touched = false
     } else cell += c
   }
-  if (quoted) return null
   if ((cell !== '' || row.length > 0 || touched) && rows.length < max) rows.push([...row, cell])
   return rows
 }
