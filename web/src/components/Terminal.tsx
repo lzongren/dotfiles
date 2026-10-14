@@ -17,9 +17,14 @@ const QUEUE_MAX = 64 * 1024
 const COPIED_MS = 1500
 const BLOCKED_MS = 5000
 const MISS_DELAY_MS = 1500
-const DRAG_PX = 8
-const isMac = () => String(navigator.platform).startsWith('Mac')
-const fallback = () => (isMac() ? '⌥-drag, then ⌘C' : 'shift-drag, then ctrl-insert')
+const MOUSE_REPORT = /\x1b\[<(\d+);\d+;\d+M|\x1b\[M([\s\S])/
+
+function leftDragReport(data: string): boolean {
+  const match = MOUSE_REPORT.exec(data)
+  if (!match) return false
+  const code = match[1] !== undefined ? Number(match[1]) : match[2].charCodeAt(0) - 32
+  return (code & 32) !== 0 && (code & 3) === 0
+}
 const decoder = new TextDecoder()
 
 export function clipboardText(data: string): string | null {
@@ -93,7 +98,6 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       }
     }
 
-    const dataSub = term.onData(sendInput)
     const resizeSub = term.onResize(sendResize)
     let copiedTimer: number | null = null
     const flash = (note: string) => {
@@ -103,7 +107,9 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       copiedTimer = window.setTimeout(() => setCopyNote(''), note === 'copied' ? COPIED_MS : BLOCKED_MS)
     }
     const container = containerRef.current
-    let pressed: { x: number; y: number } | null = null
+    const mac = String(navigator.platform).startsWith('Mac')
+    const fallback = mac ? '⌥-drag, then ⌘C' : 'shift-drag, then ctrl-insert'
+    let pressed: { dragged: boolean } | null = null
     let missTimer: number | null = null
     let missShown = false
     const cancelMiss = () => {
@@ -113,18 +119,19 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     const press = (event: MouseEvent) => {
       cancelMiss()
       const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null && container?.contains(event.target) === true
-      const forced = isMac() ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
-      pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? { x: event.clientX, y: event.clientY } : null
+      const forced = mac ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
+      pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? { dragged: false } : null
     }
     const release = (event: MouseEvent) => {
+      if (event.button !== 0) return
       const drag = pressed
       pressed = null
-      if (missShown || !ready || drag === null || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < DRAG_PX) return
+      if (missShown || !ready || !drag?.dragged) return
       cancelMiss()
       missTimer = window.setTimeout(() => {
         if (!activeRef.current) return
         missShown = true
-        flash(`nothing copied: ${fallback()}`)
+        flash(`nothing copied: ${fallback}`)
       }, MISS_DELAY_MS)
     }
     const forget = () => {
@@ -134,7 +141,11 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     window.addEventListener('mousedown', press, true)
     window.addEventListener('mouseup', release, true)
     window.addEventListener('blur', forget)
-    const blocked = () => flash(`copy blocked: ${fallback()}`)
+    const dataSub = term.onData((data) => {
+      if (pressed && leftDragReport(data)) pressed.dragged = true
+      sendInput(data)
+    })
+    const blocked = () => flash(`copy blocked: ${fallback}`)
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
       if (text === null || !activeRef.current || !document.hasFocus()) return true
@@ -232,6 +243,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       socket.onclose = (event: CloseEvent) => {
         if (ws === socket) ws = null
         ready = false
+        cancelMiss()
         queued = []
         queuedBytes = 0
         if (healthyTimer !== null) window.clearTimeout(healthyTimer)
@@ -272,7 +284,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (healthyTimer !== null) window.clearTimeout(healthyTimer)
       if (fitTimer !== null) window.clearTimeout(fitTimer)
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
-      if (missTimer !== null) window.clearTimeout(missTimer)
+      cancelMiss()
       setCopyNote('')
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()

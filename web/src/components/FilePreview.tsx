@@ -257,6 +257,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const ref = useRef<HTMLDialogElement | null>(null)
   const title = useRef<HTMLHeadingElement | null>(null)
   const moved = useRef(false)
+  const visit = useRef(0)
   const [trail, setTrail] = useState([file.path])
   const [result, setResult] = useState<ApiResult<FileView> | null>(null)
   const [note, setNote] = useState('')
@@ -281,6 +282,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
 
   useEffect(() => {
     let live = true
+    visit.current += 1
     setResult(null)
     setNote('')
     void getFile(file.session, path).then((r) => {
@@ -299,17 +301,18 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
-  const shown = useRef(path)
-  useEffect(() => {
-    shown.current = path
-  }, [path])
   const copy = (text: string, done: string, instead: string) => {
-    const from = path
-    const say = (message: string) => () => {
-      if (shown.current === from) setNote(message)
+    const at = visit.current
+    const failed = `Could not copy — ${instead}`
+    const say = (message: string) => {
+      if (visit.current === at) setNote(message)
     }
-    if (!navigator.clipboard) return say(`Could not copy — ${instead}`)()
-    void navigator.clipboard.writeText(text).then(say(done), say(`Could not copy — ${instead}`))
+    if (!navigator.clipboard) say(failed)
+    else
+      void navigator.clipboard.writeText(text).then(
+        () => say(done),
+        () => say(failed),
+      )
   }
   const open = () => {
     void openFile(file.session, path).then((r) =>
