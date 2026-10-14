@@ -65,20 +65,8 @@ export function TerminalTabs({
     const away = (event: PointerEvent) => {
       if (!(event.target instanceof Element && event.target.closest('.term-files, dialog'))) setFilesOpen(null)
     }
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return
-      event.preventDefault()
-      event.stopPropagation()
-      const box = event.target instanceof Element ? event.target.closest('.term-files') : null
-      setFilesOpen(null)
-      box?.querySelector<HTMLElement>('.files-toggle')?.focus()
-    }
     document.addEventListener('pointerdown', away)
-    document.addEventListener('keydown', escape, true)
-    return () => {
-      document.removeEventListener('pointerdown', away)
-      document.removeEventListener('keydown', escape, true)
-    }
+    return () => document.removeEventListener('pointerdown', away)
   }, [filesOpen])
 
   const note = (tab: string, text: string, sticky = false) => {
@@ -195,6 +183,11 @@ export function TerminalTabs({
                 insight ? (
                   <div
                     className="term-files"
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Escape' || !open) return
+                      setFilesOpen(null)
+                      event.currentTarget.querySelector<HTMLElement>('.files-toggle')?.focus()
+                    }}
                     onBlur={(event) => {
                       const next = event.relatedTarget
                       if (next instanceof Element && !event.currentTarget.contains(next) && !next.closest('dialog')) setFilesOpen(null)
@@ -205,7 +198,10 @@ export function TerminalTabs({
                       className="files-toggle"
                       aria-expanded={open}
                       aria-controls={open ? panel : undefined}
-                      onClick={() => setFilesOpen(open ? null : tab)}
+                      onClick={(event) => {
+                        event.currentTarget.focus()
+                        setFilesOpen(open ? null : tab)
+                      }}
                     >
                       Artifacts{' '}
                       <span className="files-count">{openableCount(insight)}</span>
