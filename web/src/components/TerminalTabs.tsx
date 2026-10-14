@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
-import { rankArtifacts } from '../insights'
+import { ARTIFACTS_SHOWN, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
@@ -61,12 +61,13 @@ export function TerminalTabs({
 
   useEffect(() => {
     if (filesOpen === null) return
+    if (filesOpen !== active || !insights.has(filesOpen)) return setFilesOpen(null)
     const away = (event: PointerEvent) => {
-      if (!(event.target instanceof Element && event.target.closest('.files-panel, .files-toggle, dialog'))) setFilesOpen(null)
+      if (!(event.target instanceof Element && event.target.closest('.files, dialog'))) setFilesOpen(null)
     }
     document.addEventListener('pointerdown', away)
     return () => document.removeEventListener('pointerdown', away)
-  }, [filesOpen])
+  }, [filesOpen, active, insights])
 
   const note = (tab: string, text: string, sticky = false) => {
     if (!alive.current) return
@@ -167,10 +168,11 @@ export function TerminalTabs({
       </div>
       {tabs.map((tab, index) => {
         const insight = insights.get(tab)
-        const cwd = sessions.find((s) => s.name === tab)?.path ?? ''
-        const artifacts = rankArtifacts(insight?.artifacts ?? [], insight?.summary).slice(0, 15)
-        const files = (insight?.files ?? []).map((f) => ({ ...f, session: tab, cwd }))
+        const open = filesOpen === tab && insight !== undefined
         const panel = `${id}-files-${index}`
+        const cwd = sessions.find((s) => s.name === tab)?.path ?? ''
+        const artifacts = open ? shownArtifacts(insight) : []
+        const files = open ? (insight.files ?? []).map((f) => ({ ...f, session: tab, cwd })) : []
         return (
           <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }} data-drop={over === tab} {...zone(tab)}>
             <TerminalPane
@@ -179,35 +181,40 @@ export function TerminalTabs({
               focusSignal={tab === active ? focusSignal : 0}
               tools={
                 insight ? (
-                  <button
-                    type="button"
-                    className="files-toggle"
-                    aria-expanded={filesOpen === tab}
-                    aria-controls={panel}
-                    onClick={() => setFilesOpen((open) => (open === tab ? null : tab))}
+                  <span
+                    className="files"
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Escape' || !open) return
+                      setFilesOpen(null)
+                      event.currentTarget.querySelector<HTMLElement>('.files-toggle')?.focus()
+                    }}
                   >
-                    Artifacts <span className="files-count">{artifacts.length + files.filter((f) => !f.gone).length}</span>
-                  </button>
+                    <button
+                      type="button"
+                      className="files-toggle"
+                      aria-expanded={open}
+                      aria-controls={panel}
+                      onClick={() => setFilesOpen(open ? null : tab)}
+                    >
+                      Artifacts{' '}
+                      <span className="files-count">{Math.min(insight.artifacts.length, ARTIFACTS_SHOWN) + (insight.files?.length ?? 0)}</span>
+                    </button>
+                    {open ? (
+                      <section id={panel} className="files-panel" aria-label={`${tab} artifacts`}>
+                        <h2>Artifacts</h2>
+                        {artifacts.length ? (
+                          <ArtifactList artifacts={artifacts} now={now} />
+                        ) : (
+                          <p className="lane-empty">No pull requests or reviews seen yet.</p>
+                        )}
+                        <h2>Files</h2>
+                        {files.length ? <FileList files={files} now={now} onPick={setPreview} /> : <p className="lane-empty">No files written yet.</p>}
+                      </section>
+                    ) : null}
+                  </span>
                 ) : null
               }
             />
-            {filesOpen === tab && insight ? (
-              <section
-                id={panel}
-                className="files-panel"
-                aria-label={`${tab} artifacts`}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return
-                  setFilesOpen(null)
-                  event.currentTarget.parentElement?.querySelector<HTMLElement>('.files-toggle')?.focus()
-                }}
-              >
-                <h2>Artifacts</h2>
-                {artifacts.length ? <ArtifactList artifacts={artifacts} now={now} /> : <p className="lane-empty">No pull requests or reviews seen yet.</p>}
-                <h2>Files</h2>
-                {files.length ? <FileList files={files} now={now} onPick={setPreview} /> : <p className="lane-empty">No files written yet.</p>}
-              </section>
-            ) : null}
             {over === tab ? <div className="drop-hint">Drop to copy into {tab}'s folder</div> : null}
             <p className="drop-note" role="status">
               {notes[tab] ?? ''}

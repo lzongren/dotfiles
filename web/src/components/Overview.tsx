@@ -10,6 +10,7 @@ import {
   modelName,
   projectOf,
   rankArtifacts,
+  shownArtifacts,
   type Lane,
 } from '../insights'
 import { ago } from '../time'
@@ -251,7 +252,7 @@ function Detail({
           <>
             <dt>Artifacts</dt>
             <dd>
-              <ArtifactList artifacts={rankArtifacts(insight.artifacts, insight.summary).slice(0, 15)} now={now} />
+              <ArtifactList artifacts={shownArtifacts(insight)} now={now} />
             </dd>
           </>
         ) : null}

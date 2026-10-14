@@ -58,23 +58,23 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-const setup = (active = 'api') =>
-  render(
-    <TerminalTabs
-      tabs={['api', 'web', 'shell']}
-      active={active}
-      sessions={[session('api'), session('web'), session('shell')]}
-      insights={INSIGHTS}
-      now={NOW}
-      onSelect={vi.fn()}
-      onClose={vi.fn()}
-    />,
-  )
+const tabs = (active: string, insights = INSIGHTS) => (
+  <TerminalTabs
+    tabs={['api', 'web', 'shell']}
+    active={active}
+    sessions={[session('api'), session('web'), session('shell')]}
+    insights={insights}
+    now={NOW}
+    onSelect={vi.fn()}
+    onClose={vi.fn()}
+  />
+)
+const setup = (active = 'api') => render(tabs(active))
 
 describe('artifacts in a session tab', () => {
-  it('counts links and live files, lists them, and previews a file', async () => {
+  it('counts the links and files it lists, and previews a file', async () => {
     setup()
-    const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: 'Artifacts 3' })
+    const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: 'Artifacts 4' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
@@ -100,18 +100,32 @@ describe('artifacts in a session tab', () => {
     expect(within(screen.getByTestId('pane-shell')).queryByRole('button')).toBeNull()
   })
 
-  it('closes on Escape back to the toggle, and on a press outside it', () => {
-    setup()
+  it('closes on Escape back to the toggle, on a press outside it, and when the tab or its agent goes away', () => {
+    const { rerender } = setup()
     const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: /Artifacts/ })
+    const region = () => screen.queryByRole('region', { name: 'api artifacts' })
     fireEvent.click(toggle)
-    const region = screen.getByRole('region', { name: 'api artifacts' })
-    fireEvent.pointerDown(within(region).getByRole('button', { name: 'plan.md' }))
-    expect(screen.getByRole('region', { name: 'api artifacts' })).toBeInTheDocument()
-    fireEvent.keyDown(within(region).getByRole('button', { name: 'plan.md' }), { key: 'Escape' })
-    expect(screen.queryByRole('region', { name: 'api artifacts' })).toBeNull()
+    const file = within(region()!).getByRole('button', { name: 'plan.md' })
+    expect(toggle.compareDocumentPosition(file) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.pointerDown(file)
+    expect(region()).toBeInTheDocument()
+    fireEvent.keyDown(file, { key: 'Escape' })
+    expect(region()).toBeNull()
     expect(toggle).toHaveFocus()
     fireEvent.click(toggle)
-    fireEvent.pointerDown(screen.getByTestId('pane-api'))
-    expect(screen.queryByRole('region', { name: 'api artifacts' })).toBeNull()
+    fireEvent.keyDown(toggle, { key: 'Escape' })
+    expect(region()).toBeNull()
+    fireEvent.click(toggle)
+    fireEvent.pointerDown(document.body)
+    expect(region()).toBeNull()
+
+    fireEvent.click(toggle)
+    rerender(tabs('web'))
+    rerender(tabs('api'))
+    expect(region()).toBeNull()
+    fireEvent.click(toggle)
+    rerender(tabs('api', new Map()))
+    rerender(tabs('api'))
+    expect(region()).toBeNull()
   })
 })
