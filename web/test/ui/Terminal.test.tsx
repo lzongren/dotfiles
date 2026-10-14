@@ -405,7 +405,7 @@ describe('TerminalPane', () => {
 
       a.term.modes.mouseTrackingMode = 'drag'
       a.drag({}, a.area)
-            a.drag({}, undefined, 14)
+      a.drag({}, undefined, 14)
       a.drag({ shiftKey: true })
       a.drag({ button: 1 })
       await later(1500)
@@ -438,6 +438,22 @@ describe('TerminalPane', () => {
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()
 
+      const { rerender } = render(<TerminalPane name="hidden" active />)
+      const hidden = xterms[xterms.length - 1]
+      hidden.modes.mouseTrackingMode = 'drag'
+      const hiddenRows = document.querySelectorAll('.terminal-screen')[1].appendChild(document.createElement('div'))
+      hiddenRows.className = 'xterm-screen'
+      fireEvent.mouseDown(hiddenRows, { button: 0, clientX: 10, clientY: 10 })
+      fireEvent.mouseUp(window, { clientX: 200, clientY: 10 })
+      rerender(<TerminalPane name="hidden" active={false} />)
+      await later(6500)
+      expect(document.querySelectorAll('.terminal-copied')[1]).toBeEmptyDOMElement()
+      rerender(<TerminalPane name="hidden" active />)
+      fireEvent.mouseDown(hiddenRows, { button: 0, clientX: 10, clientY: 10 })
+      fireEvent.mouseUp(window, { clientX: 200, clientY: 10 })
+      await later(1500)
+      expect(document.querySelectorAll('.terminal-copied')[1]).toHaveTextContent('nothing copied')
+
       a.drag({ altKey: true })
       await later(1500)
       expect(a.status()).toHaveTextContent('nothing copied: shift-drag, then ctrl-insert')
@@ -445,6 +461,16 @@ describe('TerminalPane', () => {
       a.drag()
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()
+
+      vi.stubGlobal('navigator', { platform: 'MacIntel', clipboard: { writeText: vi.fn(async () => undefined) } })
+      const m = pane('mac')
+      m.term.modes.mouseTrackingMode = 'drag'
+      m.drag({ altKey: true })
+      await later(1500)
+      expect(m.status()).toBeEmptyDOMElement()
+      m.drag({ shiftKey: true })
+      await later(1500)
+      expect(m.status()).toHaveTextContent('nothing copied: ⌥-drag, then ⌘C')
     } finally {
       focus.mockRestore()
       vi.useRealTimers()
@@ -479,7 +505,7 @@ describe('TerminalPane', () => {
       await act(async () => {
         osc(';aGk=')
       })
-      expect(screen.getByRole('status')).toHaveTextContent(/^copy blocked: /)
+      expect(screen.getByRole('status')).toHaveTextContent('copy blocked: shift-drag, then ctrl-insert')
 
       const { rerender } = render(<TerminalPane name="web" active />)
       rerender(<TerminalPane name="web" active={false} />)

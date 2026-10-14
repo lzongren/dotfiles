@@ -14,14 +14,12 @@ const SSH_FAILED = 255
 const MAX_RETRIES = 6
 const HEALTHY_MS = 5000
 const QUEUE_MAX = 64 * 1024
-const MAC = navigator.platform.startsWith('Mac')
 const COPIED_MS = 1500
 const BLOCKED_MS = 5000
-const FALLBACK = MAC ? '⌥-drag, then ⌘C' : 'shift-drag, then ctrl-insert'
-const BLOCKED = `copy blocked: ${FALLBACK}`
 const MISS_DELAY_MS = 1500
-const MISSED = `nothing copied: ${FALLBACK}`
 const DRAG_PX = 8
+const isMac = () => String(navigator.platform).startsWith('Mac')
+const fallback = () => (isMac() ? '⌥-drag, then ⌘C' : 'shift-drag, then ctrl-insert')
 const decoder = new TextDecoder()
 
 export function clipboardText(data: string): string | null {
@@ -104,50 +102,44 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
       copiedTimer = window.setTimeout(() => setCopyNote(''), note === 'copied' ? COPIED_MS : BLOCKED_MS)
     }
-    let pressed: { x: number; y: number; copied: boolean } | null = null
+    let pressed: { x: number; y: number } | null = null
     let missTimer: number | null = null
     let missShown = false
+    const cancelMiss = () => {
+      if (missTimer !== null) window.clearTimeout(missTimer)
+      missTimer = null
+    }
     const press = (event: MouseEvent) => {
       const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null
-      pressed =
-        onRows && event.button === 0 && !(MAC ? event.altKey : event.shiftKey) && term.modes.mouseTrackingMode !== 'none'
-          ? { x: event.clientX, y: event.clientY, copied: false }
-          : null
+      const forced = isMac() ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
+      pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? { x: event.clientX, y: event.clientY } : null
     }
     const release = (event: MouseEvent) => {
       const drag = pressed
       pressed = null
-      if (missShown || drag === null || drag.copied) return
-      if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < DRAG_PX) return
-      if (missTimer !== null) window.clearTimeout(missTimer)
+      if (missShown || drag === null || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < DRAG_PX) return
+      cancelMiss()
       missTimer = window.setTimeout(() => {
+        if (!activeRef.current) return
         missShown = true
-        flash(MISSED)
+        flash(`nothing copied: ${fallback()}`)
       }, MISS_DELAY_MS)
     }
     const forget = () => {
       pressed = null
-      if (missTimer !== null) window.clearTimeout(missTimer)
-      missTimer = null
+      cancelMiss()
     }
     const container = containerRef.current
     container?.addEventListener('mousedown', press, true)
     window.addEventListener('mouseup', release, true)
     window.addEventListener('blur', forget)
+    const blocked = () => flash(`copy blocked: ${fallback()}`)
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
       if (text === null || !activeRef.current || !document.hasFocus()) return true
-      if (pressed) pressed.copied = true
-      if (missTimer !== null) {
-        window.clearTimeout(missTimer)
-        missTimer = null
-      }
-      if (!navigator.clipboard) flash(BLOCKED)
-      else
-        void navigator.clipboard.writeText(text).then(
-          () => flash('copied'),
-          () => flash(BLOCKED),
-        )
+      forget()
+      if (!navigator.clipboard) blocked()
+      else void navigator.clipboard.writeText(text).then(() => flash('copied'), blocked)
       return true
     })
 

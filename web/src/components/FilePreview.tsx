@@ -299,10 +299,15 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
+  const shown = useRef(path)
+  shown.current = path
   const copy = (text: string, done: string, instead: string) => {
-    const refuse = () => setNote(`Could not copy — ${instead}`)
-    if (!navigator.clipboard) return refuse()
-    void navigator.clipboard.writeText(text).then(() => setNote(done), refuse)
+    const from = path
+    const say = (message: string) => () => {
+      if (shown.current === from) setNote(message)
+    }
+    if (!navigator.clipboard) return say(`Could not copy — ${instead}`)()
+    void navigator.clipboard.writeText(text).then(say(done), say(`Could not copy — ${instead}`))
   }
   const open = () => {
     void openFile(file.session, path).then((r) =>
@@ -353,7 +358,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
             </a>
           ) : null}
           {text ? (
-            <button type="button" onClick={() => copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', 'use Source and select it')}>
+            <button type="button" onClick={() => copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', format ? 'switch to Source and select it' : 'select the text below')}>
               Copy text
             </button>
           ) : null}
