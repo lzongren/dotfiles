@@ -640,12 +640,12 @@ kbd {
 }
 
 .terminal-copied {
+  margin-right: auto;
   color: var(--accent);
 }
 
 .terminal-bar > button,
 .files-toggle {
-  margin-left: auto;
   background: var(--surface);
   border: 1px solid var(--control);
   border-radius: 4px;
@@ -661,12 +661,7 @@ kbd {
 }
 
 .term-files {
-  margin-left: auto;
   outline: none;
-}
-
-.terminal-bar > button ~ .term-files {
-  margin-left: 0;
 }
 
 .files-toggle[aria-expanded='true'] {
