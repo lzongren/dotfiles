@@ -92,13 +92,13 @@ describe('dropping files on a terminal tab', () => {
   it('reports an odd reply, files in different folders, and files left behind by an error', async () => {
     vi.mocked(fetch)
       .mockImplementationOnce(async () => Response.json({ path: '' }, { status: 201 }))
-      .mockImplementationOnce(async () => Response.json({ path: '/a/one.md' }, { status: 201 }))
+      .mockImplementationOnce(async () => Response.json({ path: '/a/one (1).md' }, { status: 201 }))
       .mockImplementationOnce(async () => Response.json({ path: '/b/two.md' }, { status: 201 }))
     const { pane } = setup()
     await act(async () => {
       fireEvent.drop(pane('web'), { dataTransfer: transfer(item(new File(['x'], 'odd.md')), item(new File(['1'], 'one.md')), item(new File(['2'], 'two.md'))) })
     })
-    expect(pane('web')).toHaveTextContent(/^Copied 2 files · odd\.md: unexpected reply$/)
+    expect(pane('web')).toHaveTextContent(/^Copied 2 files · one\.md saved as one \(1\)\.md · odd\.md: unexpected reply$/)
 
     vi.mocked(fetch).mockImplementationOnce(async () => ({ get status(): number { throw new Error('boom') } }) as unknown as Response)
     await act(async () => {

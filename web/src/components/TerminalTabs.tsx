@@ -5,7 +5,7 @@ import { TerminalPane } from './Terminal'
 
 const NOTE_MS = 8000
 
-type UploadJob = { current: string; files: File[]; placed: string[]; problems: string[] }
+type UploadJob = { current: string; files: File[]; placed: Array<{ name: string; path: string }>; problems: string[] }
 
 const carriesFiles = (event: { dataTransfer: DataTransfer | null }) => event.dataTransfer?.types.includes('Files') ?? false
 
@@ -73,17 +73,19 @@ export function TerminalTabs({
           }
           progress(tab, job)
           const result = await uploadFile(tab, file)
-          if (result.kind === 'ok') job.placed.push(result.data.path)
+          if (result.kind === 'ok') job.placed.push({ name: file.name, path: result.data.path })
           else job.problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.message}`)
         }
       } catch {
         job.problems.push(`${job.current}: upload failed${job.files.length ? `, ${job.files.length} more not copied` : ''}`)
       } finally {
         jobs.current.delete(tab)
-        const { placed } = job
-        const dirs = new Set(placed.map((p) => p.slice(0, p.lastIndexOf('/')) || '/'))
-        const done = placed.length === 1 ? `Copied to ${placed[0]}` : placed.length ? `Copied ${placed.length} files${dirs.size === 1 ? ` to ${[...dirs][0]}` : ''}` : ''
-        note(tab, [done, ...job.problems].filter(Boolean).join(' · '))
+        const placed = job.placed.map((p) => ({ ...p, dir: p.path.slice(0, p.path.lastIndexOf('/')) || '/', base: p.path.slice(p.path.lastIndexOf('/') + 1) }))
+        const dirs = new Set(placed.map((p) => p.dir))
+        const renamed = placed.filter((p) => p.base !== p.name).map((p) => `${p.name} saved as ${p.base}`)
+        const done =
+          placed.length === 1 ? `Copied to ${placed[0].path}` : placed.length ? `Copied ${placed.length} files${dirs.size === 1 ? ` to ${placed[0].dir}` : ''}` : ''
+        note(tab, [done, ...(placed.length > 1 ? renamed : []), ...job.problems].filter(Boolean).join(' · '))
       }
     })()
   }

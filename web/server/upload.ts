@@ -2,22 +2,20 @@ import { probeScript } from './insights.js'
 
 export const UPLOAD_COMMAND = ['python3', '-I', '-c', `'import sys,json;exec(json.loads(sys.stdin.buffer.readline()))'`]
 
-const WRITER = `import json, os, sys
+const WRITER = `import json, os, sys, tempfile
+
+
+def numbered(stem, ext, i):
+    suffix = " (%d)" % i
+    while stem and len((stem + suffix + ext).encode()) > 255:
+        stem = stem[:-1]
+    return stem + suffix + ext
 
 
 def place():
-    stem, ext = os.path.splitext(ARGS["name"])
-    for i in range(100):
-        target = os.path.join(ARGS["dir"], ARGS["name"] if i == 0 else "%s (%d)%s" % (stem, i, ext))
-        try:
-            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            break
-        except FileExistsError:
-            continue
-    else:
-        return {"error": "too many files with that name"}
-    left = ARGS["size"]
+    fd, temp = tempfile.mkstemp(prefix=".upload-", suffix=".part", dir=ARGS["dir"])
     try:
+        left = ARGS["size"]
         with os.fdopen(fd, "wb") as out:
             while left > 0:
                 chunk = sys.stdin.buffer.read(min(left, 65536))
@@ -26,11 +24,18 @@ def place():
                 out.write(chunk)
                 left -= len(chunk)
         if left:
-            raise OSError(5, "upload cut short")
-    except OSError as err:
-        os.unlink(target)
-        return {"error": err.strerror or str(err)}
-    return {"path": target}
+            return {"error": "upload cut short"}
+        stem, ext = os.path.splitext(ARGS["name"])
+        for i in range(100):
+            target = os.path.join(ARGS["dir"], numbered(stem, ext, i) if i else ARGS["name"])
+            try:
+                os.link(temp, target)
+                return {"path": target}
+            except FileExistsError:
+                continue
+        return {"error": "too many files with that name"}
+    finally:
+        os.unlink(temp)
 
 
 try:
@@ -45,7 +50,7 @@ export function uploadInput(dir: string, name: string, data: Buffer): Buffer[] {
 }
 
 export function parseUpload(stdout: string): { path: string } | { error: string } {
-  const doc = JSON.parse(stdout) as { path?: unknown; error?: unknown }
+  const doc = JSON.parse(stdout.trim().split('\n').pop() ?? '') as { path?: unknown; error?: unknown }
   if (typeof doc.path === 'string') return { path: doc.path }
   return { error: typeof doc.error === 'string' ? doc.error : 'unexpected writer output' }
 }

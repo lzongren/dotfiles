@@ -36,12 +36,17 @@ describe('remote upload writer', () => {
     expect(readFileSync(path.join(dir, 'shot (1).png'), 'utf8')).toBe('two')
     expect(existsSync(path.join(dir, 'nowhere'))).toBe(false)
     expect(run(uploadInput(dir, 'notes', Buffer.alloc(0)))).toEqual({ path: path.join(dir, 'notes') })
+    const long = `${'é'.repeat(125)}x.txt`
+    expect(run(uploadInput(dir, long, Buffer.from('1')))).toEqual({ path: path.join(dir, long) })
+    expect(run(uploadInput(dir, long, Buffer.from('2')))).toEqual({ path: path.join(dir, `${'é'.repeat(123)} (1).txt`) })
+    expect(readdirSync(dir).filter((f) => f.endsWith('.part'))).toEqual([])
+    expect(parseUpload('Welcome to the host\n{"path": "/w/a.txt"}\n')).toEqual({ path: '/w/a.txt' })
   })
 
   it('removes a file that arrived short, and reports a missing folder', () => {
     const input = Buffer.concat(uploadInput(dir, 'cut.bin', Buffer.alloc(100_000, 7)))
     expect(run(input.subarray(0, input.length - 10))).toEqual({ error: 'upload cut short' })
-    expect(readdirSync(dir)).not.toContain('cut.bin')
+    expect(readdirSync(dir).filter((f) => f === 'cut.bin' || f.endsWith('.part'))).toEqual([])
     expect(run(uploadInput(path.join(dir, 'gone'), 'a.txt', Buffer.from('x')))).toEqual({ error: 'No such file or directory' })
   })
 
