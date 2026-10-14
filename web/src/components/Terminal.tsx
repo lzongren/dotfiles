@@ -21,8 +21,8 @@ const SGR_MOUSE = /\x1b\[<(\d+);(\d+;\d+)M/
 
 function leftButtonCell(data: string): { cell: string; moved: boolean } | null {
   const match = SGR_MOUSE.exec(data)
-  if (!match || (Number(match[1]) & 3) !== 0) return null
-  return { cell: match[2], moved: (Number(match[1]) & 32) !== 0 }
+  const button = match ? Number(match[1]) & ~28 : -1
+  return match && (button === 0 || button === 32) ? { cell: match[2], moved: button === 32 } : null
 }
 const decoder = new TextDecoder()
 
@@ -116,10 +116,11 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       missTimer = null
     }
     const press = (event: MouseEvent) => {
+      if (event.button !== 0) return
       cancelMiss()
       const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null && container?.contains(event.target) === true
       const forced = mac ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
-      pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? {} : null
+      pressed = onRows && !forced && term.modes.mouseTrackingMode !== 'none' ? {} : null
     }
     const release = (event: MouseEvent) => {
       if (event.button !== 0) return
@@ -141,7 +142,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     window.addEventListener('mouseup', release, true)
     window.addEventListener('blur', forget)
     const dataSub = term.onData((data) => {
-      const report = pressed && leftButtonCell(data)
+      const report = pressed ? leftButtonCell(data) : null
       if (pressed && report) {
         if (report.moved) pressed.to = report.cell
         else pressed.from ??= report.cell

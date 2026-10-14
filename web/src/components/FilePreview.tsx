@@ -264,13 +264,19 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const [source, setSource] = useState(false)
   const [wrap, setWrap] = useState(false)
   const path = trail[trail.length - 1]
+  const latestNote = () => {
+    const at = ++noteSeq.current
+    return (message: string) => {
+      if (noteSeq.current === at) setNote(message)
+    }
+  }
   const follow = (target: string) => {
     if (target === path) return
     if (known.includes(target)) {
       moved.current = true
       setTrail((t) => [...t, target])
       setSource(false)
-    } else setNote(`${baseName(target)} isn't a file this agent wrote, so it can't be opened here`)
+    } else latestNote()(`${baseName(target)} isn't a file this agent wrote, so it can't be opened here`)
   }
 
   useEffect(() => {
@@ -301,12 +307,6 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
-  const latestNote = () => {
-    const at = ++noteSeq.current
-    return (message: string) => {
-      if (noteSeq.current === at) setNote(message)
-    }
-  }
   const copy = (text: string, done: string, instead: string) => {
     const say = latestNote()
     const failed = `Could not copy — ${instead}`
@@ -329,9 +329,8 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const name = baseName(path)
   const format = useMemo(() => (view ? formatOf(view) : null), [view])
   const showSource = !format || source
-  const copyText = () => {
-    if (text) copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', showSource ? 'select the text below' : 'switch to Source and select it')
-  }
+  const copyText = (body: string) =>
+    copy(body, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', showSource ? 'select the text below' : 'switch to Source and select it')
   return (
     <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
       <header className="file-head">
@@ -370,7 +369,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
             </a>
           ) : null}
           {text ? (
-            <button type="button" onClick={copyText}>
+            <button type="button" onClick={() => copyText(text)}>
               Copy text
             </button>
           ) : null}

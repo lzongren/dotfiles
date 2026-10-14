@@ -432,6 +432,13 @@ describe('TerminalPane', () => {
       a.move('6;1')
       a.move('5;1')
       a.release()
+      a.press()
+      a.term.dataCb!('\x1b[<64;5;1M')
+      a.release()
+      fireEvent.mouseDown(a.area.querySelector('.xterm-screen')!, { button: 0 })
+      a.term.dataCb!('\x1b[<64;5;1M')
+      a.move()
+      a.release()
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()
 
@@ -503,6 +510,7 @@ describe('TerminalPane', () => {
 
       a.press({ altKey: true })
       a.move()
+      fireEvent.mouseDown(document.body, { button: 2 })
       a.release(2)
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()
