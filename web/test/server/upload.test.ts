@@ -47,6 +47,14 @@ describe('remote upload writer', () => {
     expect(parseUpload('null')).toEqual({ error: 'unexpected writer output' })
   })
 
+  it('exits, rather than spinning, when the header itself is cut short', () => {
+    const [head] = uploadInput(dir, 'never.bin', Buffer.from('x'))
+    const out = spawnSync('sh', ['-c', UPLOAD_COMMAND.join(' ')], { input: head.subarray(0, 10), timeout: 5000 })
+    expect(out.signal).toBeNull()
+    expect(out.status).not.toBe(0)
+    expect(readdirSync(dir)).not.toContain('never.bin')
+  })
+
   it('removes a file that arrived short, and reports a missing folder', () => {
     const input = Buffer.concat(uploadInput(dir, 'cut.bin', Buffer.alloc(100_000, 7)))
     expect(run(input.subarray(0, input.length - 10))).toEqual({ error: 'upload cut short' })

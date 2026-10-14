@@ -1,6 +1,6 @@
 import { probeScript } from './insights.js'
 
-export const UPLOAD_COMMAND = ['python3', '-I', '-c', `'import os,json;exec(json.loads(b"".join(iter(lambda:os.read(0,1),b"\\n"))))'`]
+export const UPLOAD_COMMAND = ['python3', '-I', '-c', `'import sys,json;exec(json.loads(sys.stdin.buffer.raw.readline()))'`]
 
 const WRITER = `import json, os, select
 
@@ -36,7 +36,6 @@ def place():
         claimed = os.fstat(fd)
     except OSError:
         os.close(fd)
-        os.unlink(target)
         raise
     try:
         left = ARGS["size"]
