@@ -216,6 +216,9 @@ export function App() {
           tabs={tabs}
           active={activeTab}
           focusSignal={openCount}
+          sessions={data.sessions}
+          insights={insights}
+          now={now}
           onSelect={setActiveTab}
           onClose={closeTerminal}
         />

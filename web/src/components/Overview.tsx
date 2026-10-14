@@ -10,6 +10,7 @@ import {
   modelName,
   projectOf,
   rankArtifacts,
+  shownArtifacts,
   type Lane,
 } from '../insights'
 import { ago } from '../time'
@@ -143,7 +144,7 @@ function Card({
   )
 }
 
-function ArtifactList({
+export function ArtifactList({
   artifacts,
   now,
 }: {
@@ -190,6 +191,7 @@ function Detail({
   const { session, insight } = row
   const state = stateLabel(row)
   const tasks = insight?.tasks
+  const shown = shownArtifacts(insight)
   return (
     <article className="detail-body" aria-label={`${session.name} details`}>
       <header className="detail-head">
@@ -251,7 +253,8 @@ function Detail({
           <>
             <dt>Artifacts</dt>
             <dd>
-              <ArtifactList artifacts={rankArtifacts(insight.artifacts, insight.summary).slice(0, 15)} now={now} />
+              <ArtifactList artifacts={shown} now={now} />
+              {insight.artifacts.length > shown.length ? <p className="lane-empty">{insight.artifacts.length - shown.length} more not shown</p> : null}
             </dd>
           </>
         ) : null}

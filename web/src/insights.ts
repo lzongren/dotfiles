@@ -90,6 +90,16 @@ export function rankArtifacts(artifacts: Artifact[], summary = ''): Array<Artifa
     .sort((a, b) => Number(b.key) - Number(a.key) || Number(b.said) - Number(a.said) || b.hits - a.hits || b.at - a.at)
 }
 
+const ARTIFACTS_SHOWN = 15
+
+export function shownArtifacts(insight: AgentInsight | undefined): Array<Artifact & { key: boolean }> {
+  return rankArtifacts(insight?.artifacts ?? [], insight?.summary).slice(0, ARTIFACTS_SHOWN)
+}
+
+export function openableCount(insight: AgentInsight): number {
+  return Math.min(insight.artifacts.length, ARTIFACTS_SHOWN) + (insight.files ?? []).filter((f) => !f.gone).length
+}
+
 export function displayTitle(paneHeadline: string, insight: AgentInsight | undefined): string {
   if (insight?.title) return insight.title
   if (paneHeadline) return paneHeadline

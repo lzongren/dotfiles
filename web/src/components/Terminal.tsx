@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -32,7 +32,17 @@ export function clipboardText(data: string): string | null {
   }
 }
 
-export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; active: boolean; focusSignal?: number }) {
+export function TerminalPane({
+  name,
+  active,
+  focusSignal = 0,
+  tools,
+}: {
+  name: string
+  active: boolean
+  focusSignal?: number
+  tools?: ReactNode
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const reconnectRef = useRef<() => void>(() => undefined)
   const focusRef = useRef<() => void>(() => undefined)
@@ -258,7 +268,9 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
   return (
     <div className="terminal" data-active={active}>
       <div className="terminal-bar">
-        <span className="terminal-name">{name}</span>
+        <span className="terminal-name" title={name}>
+          {name}
+        </span>
         <span className={`terminal-status terminal-status-${status}`}>
           {status === 'rejected' ? 'attach rejected' : status}
         </span>
@@ -270,6 +282,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
             reconnect
           </button>
         ) : null}
+        {tools}
       </div>
       <div ref={containerRef} className="terminal-screen" />
     </div>

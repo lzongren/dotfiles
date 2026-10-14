@@ -164,7 +164,10 @@ rendered with scripts off; "Source" shows the raw text. Links in a Markdown file
 to other files the agent wrote open in the preview, and "Back" returns. A file under a `DEVBOX_SYNCS` folder is read
 from the laptop copy; "Open on laptop" opens text files and images in their
 default app and only shows anything else (scripts, apps, PDFs) in its folder. Other
-files are read over ssh. Only files the agent wrote can be read this way.
+files are read over ssh. Only files the agent wrote can be read this way. In an open
+terminal, "Artifacts" in its top bar counts what that session has for you to
+open and lists it, so you can preview a file without going back to the
+overview.
 
 The theme picker in the top bar starts on your Ghostty theme when it finds
 one: the server reads your Ghostty config for its colors (a `light:…,dark:…`

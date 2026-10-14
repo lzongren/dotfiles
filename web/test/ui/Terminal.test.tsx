@@ -454,7 +454,7 @@ describe('TerminalPane', () => {
 describe('TerminalTabs', () => {
   it('renders tabs, marks the active one, and keeps inactive panes mounted but hidden', () => {
     const { container } = render(
-      <TerminalTabs tabs={['api', 'main']} active="api" onSelect={() => {}} onClose={() => {}} />,
+      <TerminalTabs tabs={['api', 'main']} active="api" sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={() => {}} />,
     )
     const tabButtons = screen.getAllByRole('tab')
     expect(tabButtons.map((t) => t.textContent)).toEqual(['Overview', 'api', 'main'])
@@ -467,7 +467,7 @@ describe('TerminalTabs', () => {
   })
 
   it('selects the Overview tab and hides every pane while it is active', () => {
-    const { container } = render(<TerminalTabs tabs={['api']} active={null} onSelect={() => {}} onClose={() => {}} />)
+    const { container } = render(<TerminalTabs tabs={['api']} active={null} sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={() => {}} />)
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
     expect((container.querySelector('.termpane') as HTMLElement).style.display).toBe('none')
   })
@@ -475,7 +475,7 @@ describe('TerminalTabs', () => {
   it('fires select and close callbacks', () => {
     const onSelect = vi.fn()
     const onClose = vi.fn()
-    render(<TerminalTabs tabs={['api', 'main']} active="api" onSelect={onSelect} onClose={onClose} />)
+    render(<TerminalTabs tabs={['api', 'main']} active="api" sessions={[]} insights={new Map()} now={0} onSelect={onSelect} onClose={onClose} />)
     fireEvent.click(screen.getAllByRole('tab')[2])
     expect(onSelect).toHaveBeenCalledWith('main')
     fireEvent.click(screen.getByRole('tab', { name: 'Overview' }))
@@ -485,7 +485,7 @@ describe('TerminalTabs', () => {
   })
 
   it('renders nothing without tabs', () => {
-    const { container } = render(<TerminalTabs tabs={[]} active={null} onSelect={() => {}} onClose={() => {}} />)
+    const { container } = render(<TerminalTabs tabs={[]} active={null} sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={() => {}} />)
     expect(container).toBeEmptyDOMElement()
   })
 })
