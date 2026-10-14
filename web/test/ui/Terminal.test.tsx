@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clipboardText, TerminalPane } from '../../src/components/Terminal'
 import { TerminalTabs } from '../../src/components/TerminalTabs'
@@ -9,6 +9,7 @@ const hoisted = vi.hoisted(() => {
     static instances: FakeXTerm[] = []
     cols = 80
     rows = 24
+    modes = { mouseTrackingMode: 'none' }
     write = vi.fn()
     writeln = vi.fn()
     loadAddon = vi.fn()
@@ -373,6 +374,203 @@ describe('TerminalPane', () => {
     expect(xterms[0].focus).toHaveBeenCalled()
   })
 
+  it('says nothing was copied, once per pane, when a drag on the rows of an app that keeps the mouse sends no copy', async () => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(async () => undefined) } })
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.useFakeTimers()
+    const later = (ms: number) =>
+      act(async () => {
+        vi.advanceTimersByTime(ms)
+      })
+    try {
+      const pane = (name: string, connect = true) => {
+        const view = render(<TerminalPane name={name} active />)
+        const { container } = view
+        const socket = sockets[sockets.length - 1]
+        if (connect) act(() => socket.serverReady())
+        const term = xterms[xterms.length - 1]
+        const area = container.querySelector('.terminal-screen')!
+        const rows = area.appendChild(document.createElement('div'))
+        rows.className = 'xterm-screen'
+        const status = () => within(container).getByRole('status')
+        const press = (init: MouseEventInit = {}, on: Element = rows) => {
+          fireEvent.mouseDown(on, { button: 0, ...init })
+          term.dataCb!(`\x1b[<${(init.button ?? 0) + (init.shiftKey ? 4 : 0) + (init.altKey ? 8 : 0) + (init.ctrlKey ? 16 : 0)};5;1M`)
+        }
+        const move = (cell = '6;1') => term.dataCb!(`\x1b[<32;${cell}M`)
+        const release = (button = 0) => fireEvent.mouseUp(window, { button })
+        const drag = (init: MouseEventInit = {}, on: Element = rows, moved = true) => {
+          press(init, on)
+          if (moved) move()
+          release()
+        }
+        const show = (active: boolean) => view.rerender(<TerminalPane name={name} active={active} />)
+        return { area, status, press, move, release, drag, term, socket, show }
+      }
+
+      const a = pane('api')
+      a.drag()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+
+      a.term.modes.mouseTrackingMode = 'drag'
+      a.drag({}, a.area)
+      a.drag({}, undefined, false)
+      a.drag({ shiftKey: true })
+      a.drag({ button: 1 })
+      a.press()
+      a.term.dataCb!('\x1b[<34;6;1M')
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      fireEvent.mouseDown(a.area.querySelector('.xterm-screen')!, { button: 0 })
+      a.move()
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.press()
+      a.move('6;1')
+      a.move('5;1')
+      a.release()
+      fireEvent.mouseDown(a.area.querySelector('.xterm-screen')!, { button: 0 })
+      a.term.dataCb!('\x1b[<64;5;1M')
+      a.move()
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+
+      a.press()
+      a.move()
+      await act(async () => {
+        a.term.osc.get(52)!(';aGk=')
+      })
+      expect(a.status()).toHaveTextContent(/^copied$/)
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.drag()
+      await later(500)
+      await act(async () => {
+        a.term.osc.get(52)!(';aGk=')
+      })
+      await later(1000)
+      expect(a.status()).toHaveTextContent(/^copied$/)
+      await later(1500)
+
+      a.press()
+      a.move()
+      fireEvent.blur(window)
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.drag()
+      fireEvent.blur(window)
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.press()
+      a.move()
+      fireEvent.mouseDown(document.body, { button: 0 })
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.drag()
+      await later(500)
+      a.drag({ shiftKey: true })
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+
+      const h = pane('hidden')
+      h.term.modes.mouseTrackingMode = 'drag'
+      h.drag()
+      h.show(false)
+      await later(6500)
+      expect(h.status()).toBeEmptyDOMElement()
+      h.show(true)
+      h.drag()
+      await later(1500)
+      expect(h.status()).toHaveTextContent('nothing copied')
+
+      const c = pane('closing')
+      c.term.modes.mouseTrackingMode = 'drag'
+      c.drag()
+      await act(async () => {
+        c.socket.serverClose(1006)
+      })
+      await later(1500)
+      expect(c.status()).toBeEmptyDOMElement()
+
+      const offline = pane('offline', false)
+      offline.term.modes.mouseTrackingMode = 'drag'
+      offline.drag()
+      await later(1500)
+      expect(offline.status()).toBeEmptyDOMElement()
+
+      a.press({ ctrlKey: true })
+      fireEvent.contextMenu(a.area.querySelector('.xterm-screen')!)
+      a.move()
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.press()
+      a.move()
+      fireEvent.mouseMove(window, { buttons: 1 })
+      fireEvent.mouseMove(window, { buttons: 0 })
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      const rows = a.area.querySelector('.xterm-screen')!
+      rows.addEventListener('contextmenu', (event) => event.stopPropagation(), { once: true })
+      a.press()
+      a.move()
+      fireEvent.mouseDown(rows, { button: 2, buttons: 3 })
+      fireEvent.contextMenu(rows, { button: 2, buttons: 3 })
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.drag()
+      fireEvent.contextMenu(document.body, { button: 2, buttons: 2 })
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+
+      a.press({ altKey: true })
+      a.move()
+      fireEvent.mouseMove(window, { buttons: 1 })
+      fireEvent.mouseDown(document.body, { button: 1, buttons: 5 })
+      a.release(1)
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.release()
+      await later(500)
+      fireEvent.mouseMove(window, { buttons: 0 })
+      fireEvent.mouseDown(document.body, { button: 1, buttons: 4 })
+      await later(1000)
+      expect(a.status()).toHaveTextContent('nothing copied: shift-drag, then ctrl-insert')
+      await later(5000)
+      a.drag()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+
+      vi.stubGlobal('navigator', { platform: 'MacIntel', clipboard: { writeText: vi.fn(async () => undefined) } })
+      const m = pane('mac')
+      m.term.modes.mouseTrackingMode = 'drag'
+      m.drag({ altKey: true })
+      await later(1500)
+      expect(m.status()).toBeEmptyDOMElement()
+      m.drag({ shiftKey: true })
+      await later(1500)
+      expect(m.status()).toHaveTextContent('nothing copied: ⌥-drag, then ⌘C')
+      vi.stubGlobal('navigator', { platform: 'MacIntel' })
+      await act(async () => {
+        m.term.osc.get(52)!(';aGk=')
+      })
+      expect(m.status()).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
+    } finally {
+      focus.mockRestore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('puts text the session copies (OSC 52) on the clipboard, says whether it worked, and never reads the clipboard', async () => {
     const writeText = vi.fn(async () => undefined)
     const readText = vi.fn(async () => 'secret')
@@ -387,7 +585,7 @@ describe('TerminalPane', () => {
         expect(osc('c;aMOpbGxvIOKckw==')).toBe(true)
       })
       expect(writeText).toHaveBeenCalledWith('héllo ✓')
-      expect(screen.getByRole('status')).toHaveTextContent('copied')
+      expect(screen.getByRole('status')).toHaveTextContent(/^copied$/)
       await act(async () => {
         vi.advanceTimersByTime(1500)
       })
@@ -400,7 +598,7 @@ describe('TerminalPane', () => {
       await act(async () => {
         osc(';aGk=')
       })
-      expect(screen.getByRole('status')).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
+      expect(screen.getByRole('status')).toHaveTextContent('copy blocked: shift-drag, then ctrl-insert')
 
       const { rerender } = render(<TerminalPane name="web" active />)
       rerender(<TerminalPane name="web" active={false} />)

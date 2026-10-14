@@ -257,19 +257,26 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const ref = useRef<HTMLDialogElement | null>(null)
   const title = useRef<HTMLHeadingElement | null>(null)
   const moved = useRef(false)
+  const noteSeq = useRef(0)
   const [trail, setTrail] = useState([file.path])
   const [result, setResult] = useState<ApiResult<FileView> | null>(null)
   const [note, setNote] = useState('')
   const [source, setSource] = useState(false)
   const [wrap, setWrap] = useState(false)
   const path = trail[trail.length - 1]
+  const latestNote = () => {
+    const at = ++noteSeq.current
+    return (message: string) => {
+      if (noteSeq.current === at) setNote(message)
+    }
+  }
   const follow = (target: string) => {
     if (target === path) return
     if (known.includes(target)) {
       moved.current = true
       setTrail((t) => [...t, target])
       setSource(false)
-    } else setNote(`${baseName(target)} isn't a file this agent wrote, so it can't be opened here`)
+    } else latestNote()(`${baseName(target)} isn't a file this agent wrote, so it can't be opened here`)
   }
 
   useEffect(() => {
@@ -281,6 +288,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
 
   useEffect(() => {
     let live = true
+    noteSeq.current += 1
     setResult(null)
     setNote('')
     void getFile(file.session, path).then((r) => {
@@ -299,22 +307,30 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
-  const copy = () => {
-    void navigator.clipboard
-      ?.writeText(path)
-      .then(() => setNote('Path copied'))
-      .catch(() => setNote('Could not copy — select the path above'))
+  const copy = (text: string, done: string, instead: string) => {
+    const say = latestNote()
+    const failed = `Could not copy — ${instead}`
+    if (!navigator.clipboard) say(failed)
+    else
+      void navigator.clipboard.writeText(text).then(
+        () => say(done),
+        () => say(failed),
+      )
   }
   const open = () => {
+    const say = latestNote()
     void openFile(file.session, path).then((r) =>
-      setNote(r.kind !== 'ok' ? failure(r) : r.data.revealed ? 'Not a document type, so it is shown in its folder instead' : 'Opened on this laptop'),
+      say(r.kind !== 'ok' ? failure(r) : r.data.revealed ? 'Not a document type, so it is shown in its folder instead' : 'Opened on this laptop'),
     )
   }
 
   const view = result?.kind === 'ok' ? result.data : null
+  const text = view?.kind === 'text' ? view.text : undefined
   const name = baseName(path)
   const format = useMemo(() => (view ? formatOf(view) : null), [view])
   const showSource = !format || source
+  const copyText = (body: string) =>
+    copy(body, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', showSource ? 'select the text below' : 'switch to Source and select it')
   return (
     <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
       <header className="file-head">
@@ -352,7 +368,12 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
               Download
             </a>
           ) : null}
-          <button type="button" onClick={copy}>
+          {text ? (
+            <button type="button" onClick={() => copyText(text)}>
+              Copy text
+            </button>
+          ) : null}
+          <button type="button" onClick={() => copy(path, 'Path copied', 'select the path above')}>
             Copy path
           </button>
           <button type="button" onClick={close}>

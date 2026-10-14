@@ -16,7 +16,18 @@ const HEALTHY_MS = 5000
 const QUEUE_MAX = 64 * 1024
 const COPIED_MS = 1500
 const BLOCKED_MS = 5000
-const BLOCKED = 'copy blocked: ⌥-drag, then ⌘C'
+const MISS_DELAY_MS = 1500
+const SGR_MOUSE = /\x1b\[<(\d+);(\d+;\d+)M/
+const SGR_LEFT = 0
+const SGR_MODIFIERS = 4 | 8 | 16
+const SGR_MOTION = 32
+
+function leftButtonCell(data: string): { cell: string; moved: boolean } | null {
+  const match = SGR_MOUSE.exec(data)
+  if (!match) return null
+  const button = Number(match[1]) & ~SGR_MODIFIERS
+  return button === SGR_LEFT || button === SGR_MOTION ? { cell: match[2], moved: button === SGR_MOTION } : null
+}
 const decoder = new TextDecoder()
 
 export function clipboardText(data: string): string | null {
@@ -100,24 +111,70 @@ export function TerminalPane({
       }
     }
 
-    const dataSub = term.onData(sendInput)
     const resizeSub = term.onResize(sendResize)
     let copiedTimer: number | null = null
     const flash = (note: string) => {
       if (disposed) return
       setCopyNote(note)
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
-      copiedTimer = window.setTimeout(() => setCopyNote(''), note === BLOCKED ? BLOCKED_MS : COPIED_MS)
+      copiedTimer = window.setTimeout(() => setCopyNote(''), note === 'copied' ? COPIED_MS : BLOCKED_MS)
     }
+    const container = containerRef.current
+    const mac = String(navigator.platform).startsWith('Mac')
+    const fallback = mac ? '⌥-drag, then ⌘C' : 'shift-drag, then ctrl-insert'
+    let pressed: { from?: string; to?: string } | null = null
+    let missTimer: number | null = null
+    let missShown = false
+    const cancelMiss = () => {
+      if (missTimer !== null) window.clearTimeout(missTimer)
+      missTimer = null
+    }
+    const press = (event: MouseEvent) => {
+      if (event.button !== 0) return
+      cancelMiss()
+      const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null && container?.contains(event.target) === true
+      const forced = mac ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
+      pressed = onRows && !forced && term.modes.mouseTrackingMode !== 'none' ? {} : null
+    }
+    const release = (event: MouseEvent) => {
+      if (event.button !== 0) return
+      const drag = pressed
+      pressed = null
+      if (missShown || !ready || !drag?.from || !drag.to || drag.to === drag.from) return
+      cancelMiss()
+      missTimer = window.setTimeout(() => {
+        if (!activeRef.current) return
+        missShown = true
+        flash(`nothing copied: ${fallback}`)
+      }, MISS_DELAY_MS)
+    }
+    const forget = () => {
+      pressed = null
+      cancelMiss()
+    }
+    const track = (event: MouseEvent) => {
+      if (pressed && (event.buttons & 1) === 0) forget()
+    }
+    window.addEventListener('mousedown', press, true)
+    window.addEventListener('mouseup', release, true)
+    window.addEventListener('mousemove', track, true)
+    window.addEventListener('blur', forget)
+    window.addEventListener('contextmenu', forget, true)
+    const dataSub = term.onData((data) => {
+      const report = pressed ? leftButtonCell(data) : null
+      if (pressed && report) {
+        if (report.moved) pressed.to = report.cell
+        else pressed.from ??= report.cell
+      }
+      sendInput(data)
+    })
+    const blocked = () => flash(`copy blocked: ${fallback}`)
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
       if (text === null || !activeRef.current || !document.hasFocus()) return true
-      if (!navigator.clipboard) flash(BLOCKED)
-      else
-        void navigator.clipboard.writeText(text).then(
-          () => flash('copied'),
-          () => flash(BLOCKED),
-        )
+      forget()
+      if (!navigator.clipboard) blocked()
+      else void navigator.clipboard.writeText(text).then(() => flash('copied'), blocked)
       return true
     })
 
@@ -209,6 +266,7 @@ export function TerminalPane({
       socket.onclose = (event: CloseEvent) => {
         if (ws === socket) ws = null
         ready = false
+        cancelMiss()
         queued = []
         queuedBytes = 0
         if (healthyTimer !== null) window.clearTimeout(healthyTimer)
@@ -249,9 +307,15 @@ export function TerminalPane({
       if (healthyTimer !== null) window.clearTimeout(healthyTimer)
       if (fitTimer !== null) window.clearTimeout(fitTimer)
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
+      cancelMiss()
       setCopyNote('')
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()
+      window.removeEventListener('mousedown', press, true)
+      window.removeEventListener('mouseup', release, true)
+      window.removeEventListener('mousemove', track, true)
+      window.removeEventListener('blur', forget)
+      window.removeEventListener('contextmenu', forget, true)
       stopLook()
       ws?.close()
       dataSub.dispose()

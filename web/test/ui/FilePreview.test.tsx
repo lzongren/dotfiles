@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FilePreview, indentJson, parseDelimited } from '../../src/components/FilePreview'
 import { Overview } from '../../src/components/Overview'
@@ -91,7 +91,7 @@ describe('agent files', () => {
     expect(details.getByText('old.py').closest('li')).toHaveTextContent('gone')
   })
 
-  it('previews a text file with its path, opens the laptop copy, and copies the path', async () => {
+  it('previews a text file with its path, opens the laptop copy, and copies the text or the path', async () => {
     const writeText = vi.fn(async () => undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     renderOverview()
@@ -107,12 +107,91 @@ describe('agent files', () => {
     await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Opened on this laptop'))
     expect(calls[1]).toMatchObject({ url: '/api/file/open', method: 'POST', body: JSON.stringify({ session: 'api', path: '/home/me/work/api/docs/plan.md' }) })
 
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Text copied'))
+    expect(writeText).toHaveBeenCalledWith('# The plan')
     fireEvent.click(dialog.getByRole('button', { name: 'Copy path' }))
     await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Path copied'))
     expect(writeText).toHaveBeenCalledWith('/home/me/work/api/docs/plan.md')
+    writeText.mockRejectedValueOnce(new Error('NotAllowedError'))
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — switch to Source and select it'))
+    vi.stubGlobal('navigator', {})
+    fireEvent.click(dialog.getByRole('button', { name: 'Source' }))
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — select the text below'))
 
     fireEvent.click(dialog.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('says when Copy text took only the first 1 MB', async () => {
+    const writeText = vi.fn(async () => undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    views['/home/me/work/api/big.log'] = { path: '/home/me/work/api/big.log', size: 5_000_000, mtime: sec(5), kind: 'text', text: 'head', truncated: true }
+    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/big.log' }} known={[]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog', { name: 'big.log' }))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Copied the first 1 MB'))
+    expect(writeText).toHaveBeenCalledWith('head')
+  })
+
+  it('drops a copy note that settles after the preview moved to another file, even on coming Back', async () => {
+    let settle: () => void = () => undefined
+    const writeText = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)))
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    views['/w/a.md'] = { path: '/w/a.md', size: 9, mtime: sec(5), kind: 'text', text: '[b](b.md)', truncated: false }
+    views['/w/b.md'] = { path: '/w/b.md', size: 3, mtime: sec(5), kind: 'text', text: '# B', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/w/a.md' }} known={['/w/a.md', '/w/b.md']} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    fireEvent.click(dialog.getByRole('link', { name: 'b' }))
+    expect(await dialog.findByRole('heading', { name: 'B' })).toBeInTheDocument()
+    fireEvent.click(dialog.getByRole('button', { name: 'Back' }))
+    expect(await dialog.findByRole('link', { name: 'b' })).toBeInTheDocument()
+    await act(async () => settle())
+    expect(dialog.getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it('shows the note for the latest copy when an earlier one settles late', async () => {
+    let refuse: () => void = () => undefined
+    const writeText = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<void>((_, reject) => (refuse = () => reject(new Error('slow')))))
+      .mockImplementation(async () => undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    views['/w/c.txt'] = { path: '/w/c.txt', size: 1, mtime: sec(5), kind: 'text', text: 'c', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/w/c.txt' }} known={[]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy path' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Path copied'))
+    await act(async () => refuse())
+    expect(dialog.getByRole('status')).toHaveTextContent('Path copied')
+  })
+
+  it('keeps the unknown-link note when an earlier copy settles after it', async () => {
+    let settle: () => void = () => undefined
+    const writeText = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)))
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    views['/w/d.md'] = { path: '/w/d.md', size: 9, mtime: sec(5), kind: 'text', text: '[e](e.md)', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/w/d.md' }} known={['/w/d.md']} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    expect(writeText).toHaveBeenCalledWith('[e](e.md)')
+    fireEvent.click(dialog.getByRole('link', { name: 'e' }))
+    expect(dialog.getByRole('status')).toHaveTextContent("e.md isn't a file this agent wrote")
+    await act(async () => settle())
+    expect(dialog.getByRole('status')).toHaveTextContent("e.md isn't a file this agent wrote")
+  })
+
+  it('offers no Copy text for an empty file', async () => {
+    views['/home/me/work/api/empty.txt'] = { path: '/home/me/work/api/empty.txt', size: 0, mtime: sec(5), kind: 'text', text: '', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/empty.txt' }} known={[]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog', { name: 'empty.txt' }))
+    expect(await dialog.findByText(/0 B/)).toBeInTheDocument()
+    expect(dialog.queryByRole('button', { name: 'Copy text' })).toBeNull()
+    expect(dialog.getByRole('button', { name: 'Copy path' })).toBeInTheDocument()
   })
 
   it('shows images inline, and no laptop button for a file read from the host', async () => {
@@ -122,6 +201,7 @@ describe('agent files', () => {
     expect(await dialog.findByRole('img', { name: 'shot.png' })).toHaveAttribute('src', 'data:image/png;base64,AAAA')
     expect(dialog.getByText(/read from host/)).toBeInTheDocument()
     expect(dialog.queryByRole('button', { name: 'Open on laptop' })).toBeNull()
+    expect(dialog.queryByRole('button', { name: 'Copy text' })).toBeNull()
   })
 
   it('says why a file cannot be shown', async () => {
