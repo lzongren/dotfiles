@@ -117,11 +117,23 @@ describe('agent files', () => {
     fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
     await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — switch to Source and select it'))
     vi.stubGlobal('navigator', {})
+    fireEvent.click(dialog.getByRole('button', { name: 'Source' }))
     fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
-    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — switch to Source and select it'))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — select the text below'))
 
     fireEvent.click(dialog.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('says when Copy text took only the first 1 MB', async () => {
+    const writeText = vi.fn(async () => undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    views['/home/me/work/api/big.log'] = { path: '/home/me/work/api/big.log', size: 5_000_000, mtime: sec(5), kind: 'text', text: 'head', truncated: true }
+    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/big.log' }} known={[]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog', { name: 'big.log' }))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Copied the first 1 MB'))
+    expect(writeText).toHaveBeenCalledWith('head')
   })
 
   it('offers no Copy text for an empty file', async () => {

@@ -454,6 +454,16 @@ describe('TerminalPane', () => {
       await later(1500)
       expect(document.querySelectorAll('.terminal-copied')[1]).toHaveTextContent('nothing copied')
 
+      a.press()
+      fireEvent.mouseDown(document.body, { button: 0, clientX: 400, clientY: 400 })
+      a.release(400)
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.drag()
+      a.drag({ shiftKey: true })
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+
       a.drag({ altKey: true })
       await later(1500)
       expect(a.status()).toHaveTextContent('nothing copied: shift-drag, then ctrl-insert')

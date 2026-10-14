@@ -110,7 +110,8 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       missTimer = null
     }
     const press = (event: MouseEvent) => {
-      const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null
+      cancelMiss()
+      const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null && container?.contains(event.target) === true
       const forced = isMac() ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
       pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? { x: event.clientX, y: event.clientY } : null
     }
@@ -130,7 +131,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       cancelMiss()
     }
     const container = containerRef.current
-    container?.addEventListener('mousedown', press, true)
+    window.addEventListener('mousedown', press, true)
     window.addEventListener('mouseup', release, true)
     window.addEventListener('blur', forget)
     const blocked = () => flash(`copy blocked: ${fallback()}`)
@@ -275,7 +276,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       setCopyNote('')
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()
-      container?.removeEventListener('mousedown', press, true)
+      window.removeEventListener('mousedown', press, true)
       window.removeEventListener('mouseup', release, true)
       window.removeEventListener('blur', forget)
       stopLook()

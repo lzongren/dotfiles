@@ -300,7 +300,9 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     else onClose()
   }
   const shown = useRef(path)
-  shown.current = path
+  useEffect(() => {
+    shown.current = path
+  }, [path])
   const copy = (text: string, done: string, instead: string) => {
     const from = path
     const say = (message: string) => () => {
@@ -358,7 +360,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
             </a>
           ) : null}
           {text ? (
-            <button type="button" onClick={() => copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', format ? 'switch to Source and select it' : 'select the text below')}>
+            <button type="button" onClick={() => copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', format && !source ? 'switch to Source and select it' : 'select the text below')}>
               Copy text
             </button>
           ) : null}
