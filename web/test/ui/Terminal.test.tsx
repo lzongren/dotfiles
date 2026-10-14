@@ -395,7 +395,7 @@ describe('TerminalPane', () => {
         const status = () => within(container).getByRole('status')
         const press = (init: MouseEventInit = {}, on: Element = rows) => {
           fireEvent.mouseDown(on, { button: 0, ...init })
-          term.dataCb!(`\x1b[<${init.button ?? 0};5;1M`)
+          term.dataCb!(`\x1b[<${(init.button ?? 0) + (init.shiftKey ? 4 : 0) + (init.altKey ? 8 : 0) + (init.ctrlKey ? 16 : 0)};5;1M`)
         }
         const move = (cell = '6;1') => term.dataCb!(`\x1b[<32;${cell}M`)
         const release = (button = 0) => fireEvent.mouseUp(window, { button })
@@ -506,8 +506,15 @@ describe('TerminalPane', () => {
       expect(offline.status()).toBeEmptyDOMElement()
 
       a.press({ ctrlKey: true })
-      a.move()
       fireEvent.contextMenu(a.area.querySelector('.xterm-screen')!)
+      a.move()
+      a.release()
+      await later(1500)
+      expect(a.status()).toBeEmptyDOMElement()
+      a.press()
+      a.move()
+      fireEvent.mouseMove(window, { buttons: 1 })
+      fireEvent.mouseMove(window, { buttons: 0 })
       a.release()
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()
@@ -518,7 +525,7 @@ describe('TerminalPane', () => {
 
       a.press({ altKey: true })
       a.move()
-      fireEvent.mouseDown(document.body, { button: 2 })
+      fireEvent.mouseMove(window, { buttons: 1 })
       a.release(2)
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()

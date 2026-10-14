@@ -142,10 +142,14 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       pressed = null
       cancelMiss()
     }
+    const track = (event: MouseEvent) => {
+      if (pressed && (event.buttons & 1) === 0) forget()
+    }
     window.addEventListener('mousedown', press, true)
     window.addEventListener('mouseup', release, true)
+    window.addEventListener('mousemove', track, true)
     window.addEventListener('blur', forget)
-    window.addEventListener('contextmenu', forget)
+    window.addEventListener('contextmenu', forget, true)
     const dataSub = term.onData((data) => {
       const report = pressed ? leftButtonCell(data) : null
       if (pressed && report) {
@@ -299,8 +303,9 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       observer.disconnect()
       window.removeEventListener('mousedown', press, true)
       window.removeEventListener('mouseup', release, true)
+      window.removeEventListener('mousemove', track, true)
       window.removeEventListener('blur', forget)
-      window.removeEventListener('contextmenu', forget)
+      window.removeEventListener('contextmenu', forget, true)
       stopLook()
       ws?.close()
       dataSub.dispose()
