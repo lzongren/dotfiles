@@ -194,8 +194,9 @@ reply. In an app that takes the mouse without copying, the tab says
 "nothing copied" (once per tab); then, or if the browser refuses (Safari
 may), hold Option while dragging and press ⌘C, which copies the screen as
 drawn. Off a Mac that is Shift-drag, then Ctrl+Insert, since Ctrl+C reaches
-the shell. Output longer than the screen is easier as a file: the preview's
-"Copy text" copies it, up to the 1 MB the preview reads. Press `/` to
+the shell. For output longer than the screen, ask the agent to write it to
+a file: the preview's "Copy text" copies it, up to the 1 MB the preview
+reads. Press `/` to
 search: Enter attaches a
 running session, starts the chosen agent in an existing workspace folder, or creates a new one with the
 same rules as `devbox --cc <name>` from a synced root. Rows whose names don't

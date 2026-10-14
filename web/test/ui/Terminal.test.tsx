@@ -383,8 +383,9 @@ describe('TerminalPane', () => {
         vi.advanceTimersByTime(ms)
       })
     try {
-      const pane = (name: string) => {
+      const pane = (name: string, connect = true) => {
         const { container } = render(<TerminalPane name={name} active />)
+        if (connect) act(() => sockets[sockets.length - 1].serverReady())
         const area = container.querySelector('.terminal-screen')!
         const rows = area.appendChild(document.createElement('div'))
         rows.className = 'xterm-screen'
@@ -439,6 +440,7 @@ describe('TerminalPane', () => {
       expect(a.status()).toBeEmptyDOMElement()
 
       const { rerender } = render(<TerminalPane name="hidden" active />)
+      act(() => sockets[sockets.length - 1].serverReady())
       const hidden = xterms[xterms.length - 1]
       hidden.modes.mouseTrackingMode = 'drag'
       const hiddenRows = document.querySelectorAll('.terminal-screen')[1].appendChild(document.createElement('div'))
@@ -472,6 +474,12 @@ describe('TerminalPane', () => {
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()
 
+      const offline = pane('offline', false)
+      offline.term.modes.mouseTrackingMode = 'drag'
+      offline.drag()
+      await later(1500)
+      expect(offline.status()).toBeEmptyDOMElement()
+
       vi.stubGlobal('navigator', { platform: 'MacIntel', clipboard: { writeText: vi.fn(async () => undefined) } })
       const m = pane('mac')
       m.term.modes.mouseTrackingMode = 'drag'
@@ -481,6 +489,11 @@ describe('TerminalPane', () => {
       m.drag({ shiftKey: true })
       await later(1500)
       expect(m.status()).toHaveTextContent('nothing copied: ⌥-drag, then ⌘C')
+      vi.stubGlobal('navigator', { platform: 'MacIntel' })
+      await act(async () => {
+        m.term.osc.get(52)!(';aGk=')
+      })
+      expect(m.status()).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
     } finally {
       focus.mockRestore()
       vi.useRealTimers()

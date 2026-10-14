@@ -102,6 +102,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
       copiedTimer = window.setTimeout(() => setCopyNote(''), note === 'copied' ? COPIED_MS : BLOCKED_MS)
     }
+    const container = containerRef.current
     let pressed: { x: number; y: number } | null = null
     let missTimer: number | null = null
     let missShown = false
@@ -118,7 +119,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     const release = (event: MouseEvent) => {
       const drag = pressed
       pressed = null
-      if (missShown || drag === null || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < DRAG_PX) return
+      if (missShown || !ready || drag === null || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < DRAG_PX) return
       cancelMiss()
       missTimer = window.setTimeout(() => {
         if (!activeRef.current) return
@@ -130,7 +131,6 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       pressed = null
       cancelMiss()
     }
-    const container = containerRef.current
     window.addEventListener('mousedown', press, true)
     window.addEventListener('mouseup', release, true)
     window.addEventListener('blur', forget)
