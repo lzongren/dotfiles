@@ -9,12 +9,23 @@ export class BodyError extends Error {
   }
 }
 
-export function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
+export async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
   const type = req.headers['content-type'] ?? ''
-  if (!/^application\/json(\s*;|$)/i.test(type)) {
-    return Promise.reject(new BodyError(415, 'expected application/json'))
+  if (!/^application\/json(\s*;|$)/i.test(type)) throw new BodyError(415, 'expected application/json')
+  const body = await readBody(req, limit)
+  try {
+    return JSON.parse(body.toString('utf8'))
+  } catch {
+    throw new BodyError(400, 'invalid JSON')
   }
+}
+
+export function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    if (req.destroyed) return reject(new BodyError(400, 'request aborted'))
+    req.on('close', () => {
+      if (!req.complete) reject(new BodyError(400, 'request aborted'))
+    })
     const chunks: Buffer[] = []
     let size = 0
     let tooLarge = false
@@ -30,12 +41,7 @@ export function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unkno
       chunks.push(chunk)
     })
     req.on('end', () => {
-      if (tooLarge) return
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
-      } catch {
-        reject(new BodyError(400, 'invalid JSON'))
-      }
+      if (!tooLarge) resolve(Buffer.concat(chunks))
     })
     req.on('error', () => reject(new BodyError(400, 'request aborted')))
   })

@@ -1,4 +1,13 @@
 #!/bin/sh
+case "$*" in
+  *'python3 -I -c'*)
+    cat >"${SSH_STUB_UPLOAD:-/dev/null}"
+    reply='{"path": "/home/me/work/demo/shot.png"}'
+    [ -n "${SSH_STUB_UPLOAD_REPLY:-}" ] && reply=$SSH_STUB_UPLOAD_REPLY
+    printf '%s\n' "$reply"
+    exit "${SSH_STUB_UPLOAD_EXIT:-0}"
+    ;;
+esac
 script=$(cat)
 if [ -n "${SSH_STUB_LOG:-}" ]; then
   printf '%s\n' "$*" >>"$SSH_STUB_LOG"

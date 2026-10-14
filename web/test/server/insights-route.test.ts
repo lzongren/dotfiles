@@ -39,7 +39,7 @@ describe('GET /api/insights', () => {
     const body = (await res.json()) as { agents: Array<{ session: string }> }
     expect(body.agents.map((a) => a.session)).toEqual(['cc-demo', 'logs'])
     const [argv, firstLine] = readFileSync(process.env.SSH_STUB_LOG!, 'utf8').split('\n')
-    expect(argv).toBe('-o BatchMode=yes -o ConnectTimeout=10 -- stub-host python3 -I -')
+    expect(argv).toBe('-T -o BatchMode=yes -o ConnectTimeout=10 -- stub-host python3 -I -')
     expect(firstLine).toMatch(/^ARGS = __import__\("json"\)\.loads\(/)
     expect(firstLine).toContain('CR')
   })
