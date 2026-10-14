@@ -299,11 +299,10 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
-  const copy = (text: string, done: string, where: string) => {
-    void navigator.clipboard
-      ?.writeText(text)
-      .then(() => setNote(done))
-      .catch(() => setNote(`Could not copy — select the ${where}`))
+  const copy = (text: string, done: string, instead: string) => {
+    const refuse = () => setNote(`Could not copy — ${instead}`)
+    if (!navigator.clipboard) return refuse()
+    void navigator.clipboard.writeText(text).then(() => setNote(done), refuse)
   }
   const open = () => {
     void openFile(file.session, path).then((r) =>
@@ -312,6 +311,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   }
 
   const view = result?.kind === 'ok' ? result.data : null
+  const text = view?.kind === 'text' ? view.text : undefined
   const name = baseName(path)
   const format = useMemo(() => (view ? formatOf(view) : null), [view])
   const showSource = !format || source
@@ -352,12 +352,12 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
               Download
             </a>
           ) : null}
-          {view?.kind === 'text' && view.text !== undefined ? (
-            <button type="button" onClick={() => copy(view.text ?? '', view.truncated ? 'Copied the first 1 MB' : 'Text copied', 'text below')}>
+          {text !== undefined ? (
+            <button type="button" onClick={() => copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', 'use Source and select it')}>
               Copy text
             </button>
           ) : null}
-          <button type="button" onClick={() => copy(path, 'Path copied', 'path above')}>
+          <button type="button" onClick={() => copy(path, 'Path copied', 'select the path above')}>
             Copy path
           </button>
           <button type="button" onClick={close}>

@@ -14,11 +14,12 @@ const SSH_FAILED = 255
 const MAX_RETRIES = 6
 const HEALTHY_MS = 5000
 const QUEUE_MAX = 64 * 1024
+const MAC = navigator.platform.startsWith('Mac')
 const COPIED_MS = 1500
 const BLOCKED_MS = 5000
-const BLOCKED = 'copy blocked: ⌥-drag, then ⌘C'
-const MISSED_MS = 1500
-const MISSED = 'nothing copied: ⌥-drag, then ⌘C'
+const BLOCKED = MAC ? 'copy blocked: ⌥-drag, then ⌘C' : 'copy blocked: shift-drag, then ctrl-C'
+const MISS_DELAY_MS = 1500
+const MISSED = MAC ? 'nothing copied: ⌥-drag, then ⌘C' : 'nothing copied: shift-drag, then ctrl-C'
 const DRAG_PX = 8
 const decoder = new TextDecoder()
 
@@ -102,28 +103,45 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
       copiedTimer = window.setTimeout(() => setCopyNote(''), note === 'copied' ? COPIED_MS : BLOCKED_MS)
     }
-    let pressed: { x: number; y: number } | null = null
+    // The hint below is for a drag the app swallowed. Keeping it to the first one
+    // per pane means a drag that was never a selection (resizing a split) says it
+    // once rather than after every drag.
+    let pressed: { x: number; y: number; copied: boolean } | null = null
     let missTimer: number | null = null
+    let missShown = false
+    const forcesSelection = (event: MouseEvent) => event.altKey || event.shiftKey
     const press = (event: MouseEvent) => {
-      pressed = event.button === 0 && !event.altKey && term.modes.mouseTrackingMode !== 'none' ? { x: event.clientX, y: event.clientY } : null
+      pressed =
+        event.button === 0 && !forcesSelection(event) && term.modes.mouseTrackingMode !== 'none'
+          ? { x: event.clientX, y: event.clientY, copied: false }
+          : null
     }
     const release = (event: MouseEvent) => {
-      if (pressed && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) >= DRAG_PX) {
-        if (missTimer !== null) window.clearTimeout(missTimer)
-        missTimer = window.setTimeout(() => flash(MISSED), MISSED_MS)
-      }
+      const drag = pressed
+      pressed = null
+      if (missShown || drag === null || drag.copied) return
+      if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < DRAG_PX) return
+      if (missTimer !== null) window.clearTimeout(missTimer)
+      missTimer = window.setTimeout(() => {
+        missShown = true
+        flash(MISSED)
+      }, MISS_DELAY_MS)
+    }
+    const forget = () => {
       pressed = null
     }
     const container = containerRef.current
     container?.addEventListener('mousedown', press, true)
     window.addEventListener('mouseup', release, true)
+    window.addEventListener('blur', forget)
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
-      if (text !== null && missTimer !== null) {
+      if (text === null || !activeRef.current || !document.hasFocus()) return true
+      if (pressed) pressed.copied = true
+      if (missTimer !== null) {
         window.clearTimeout(missTimer)
         missTimer = null
       }
-      if (text === null || !activeRef.current || !document.hasFocus()) return true
       if (!navigator.clipboard) flash(BLOCKED)
       else
         void navigator.clipboard.writeText(text).then(
@@ -267,6 +285,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       observer.disconnect()
       container?.removeEventListener('mousedown', press, true)
       window.removeEventListener('mouseup', release, true)
+      window.removeEventListener('blur', forget)
       stopLook()
       ws?.close()
       dataSub.dispose()

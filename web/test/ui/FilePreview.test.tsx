@@ -115,7 +115,10 @@ describe('agent files', () => {
     expect(writeText).toHaveBeenCalledWith('/home/me/work/api/docs/plan.md')
     writeText.mockRejectedValueOnce(new Error('NotAllowedError'))
     fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
-    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — select the text below'))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — use Source and select it'))
+    vi.stubGlobal('navigator', {})
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — use Source and select it'))
 
     fireEvent.click(dialog.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()

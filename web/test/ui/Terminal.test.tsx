@@ -374,7 +374,7 @@ describe('TerminalPane', () => {
     expect(xterms[0].focus).toHaveBeenCalled()
   })
 
-  it('says nothing was copied when a drag in an app that keeps the mouse sends no copy', async () => {
+  it('says nothing was copied, once per pane, when a drag in an app that keeps the mouse sends no copy', async () => {
     const writeText = vi.fn(async () => undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
@@ -396,6 +396,8 @@ describe('TerminalPane', () => {
       xterms[0].modes.mouseTrackingMode = 'drag'
       drag(14)
       drag(200, { altKey: true })
+      drag(200, { shiftKey: true })
+      drag(200, { button: 1 })
       await act(async () => {
         vi.advanceTimersByTime(1500)
       })
@@ -414,15 +416,44 @@ describe('TerminalPane', () => {
         vi.advanceTimersByTime(1500)
       })
 
+      fireEvent.mouseDown(screenEl, { button: 0, clientX: 10, clientY: 10 })
+      await act(async () => {
+        xterms[0].osc.get(52)!(';aGk=')
+        vi.advanceTimersByTime(500)
+      })
+      expect(status()).toHaveTextContent('copied')
+      fireEvent.mouseUp(window, { clientX: 200, clientY: 10 })
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(status()).toHaveTextContent('')
+
       drag(200)
       await act(async () => {
         vi.advanceTimersByTime(1500)
       })
-      expect(status()).toHaveTextContent('nothing copied: ⌥-drag, then ⌘C')
+      expect(status()).toHaveTextContent(/^nothing copied: /)
       await act(async () => {
         vi.advanceTimersByTime(4999)
       })
       expect(status()).toHaveTextContent('nothing copied')
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+      })
+
+      drag(200)
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(status()).toHaveTextContent('')
+
+      fireEvent.mouseDown(screenEl, { button: 0, clientX: 10, clientY: 10 })
+      fireEvent.blur(window)
+      fireEvent.mouseUp(window, { clientX: 200, clientY: 10 })
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(status()).toHaveTextContent('')
     } finally {
       focus.mockRestore()
       vi.useRealTimers()
@@ -457,7 +488,7 @@ describe('TerminalPane', () => {
       await act(async () => {
         osc(';aGk=')
       })
-      expect(screen.getByRole('status')).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
+      expect(screen.getByRole('status')).toHaveTextContent(/^copy blocked: /)
 
       const { rerender } = render(<TerminalPane name="web" active />)
       rerender(<TerminalPane name="web" active={false} />)
