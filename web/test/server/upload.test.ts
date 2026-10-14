@@ -77,7 +77,8 @@ describe('remote upload writer', () => {
     let stdout = ''
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
     try {
-      const [head, data] = uploadInput(dir, 'slow.bin', Buffer.alloc(3000, 2), 1)
+      child.stdin.on('error', () => undefined)
+      const [head, data] = uploadInput(dir, 'slow.bin', Buffer.alloc(5000, 2), 1.5)
       child.stdin.write(head)
       for (let at = 0; at < data.length; at += 1000) {
         child.stdin.write(data.subarray(at, at + 1000))

@@ -1,12 +1,8 @@
 import { probeScript } from './insights.js'
 
-export const UPLOAD_COMMAND = ['python3', '-I', '-c', `'import sys,json;exec(json.loads(sys.stdin.buffer.readline()))'`]
+export const UPLOAD_COMMAND = ['python3', '-I', '-c', `'import os,json;exec(json.loads(b"".join(iter(lambda:os.read(0,1),b"\\n"))))'`]
 
-const WRITER = `import json, os, signal, sys
-
-
-def stalled(*_):
-    raise OSError(110, "upload stalled")
+const WRITER = `import json, os, select
 
 
 def numbered(stem, ext, i):
@@ -20,15 +16,12 @@ def numbered(stem, ext, i):
 
 
 def receive(size):
-    signal.alarm(ARGS["stall"])
-    try:
-        return sys.stdin.buffer.read1(size)
-    finally:
-        signal.alarm(0)
+    if not select.select([0], [], [], ARGS["stall"])[0]:
+        raise OSError(110, "upload stalled")
+    return os.read(0, size)
 
 
 def place():
-    signal.signal(signal.SIGALRM, stalled)
     stem, ext = os.path.splitext(ARGS["name"])
     for i in range(100):
         target = os.path.join(ARGS["dir"], numbered(stem, ext, i) if i else ARGS["name"])
@@ -39,9 +32,13 @@ def place():
             continue
     else:
         return {"error": "too many files with that name"}
-    claimed = None
     try:
         claimed = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        os.unlink(target)
+        raise
+    try:
         left = ARGS["size"]
         with os.fdopen(fd, "wb") as out:
             while left > 0:
@@ -52,7 +49,7 @@ def place():
                 left -= len(chunk)
     except BaseException:
         try:
-            if claimed is None or os.path.samestat(claimed, os.lstat(target)):
+            if os.path.samestat(claimed, os.lstat(target)):
                 os.unlink(target)
         except OSError:
             pass
