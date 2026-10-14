@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
-import { ARTIFACTS_SHOWN, shownArtifacts } from '../insights'
+import { shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
@@ -59,15 +59,15 @@ export function TerminalTabs({
     }
   }, [])
 
+  if (filesOpen !== null && (filesOpen !== active || !insights.has(filesOpen))) setFilesOpen(null)
   useEffect(() => {
     if (filesOpen === null) return
-    if (filesOpen !== active || !insights.has(filesOpen)) return setFilesOpen(null)
     const away = (event: PointerEvent) => {
       if (!(event.target instanceof Element && event.target.closest('.files, dialog'))) setFilesOpen(null)
     }
     document.addEventListener('pointerdown', away)
     return () => document.removeEventListener('pointerdown', away)
-  }, [filesOpen, active, insights])
+  }, [filesOpen])
 
   const note = (tab: string, text: string, sticky = false) => {
     if (!alive.current) return
@@ -170,8 +170,8 @@ export function TerminalTabs({
         const insight = insights.get(tab)
         const open = filesOpen === tab && insight !== undefined
         const panel = `${id}-files-${index}`
-        const cwd = sessions.find((s) => s.name === tab)?.path ?? ''
-        const artifacts = open ? shownArtifacts(insight) : []
+        const artifacts = shownArtifacts(insight)
+        const cwd = open ? (sessions.find((s) => s.name === tab)?.path ?? '') : ''
         const files = open ? (insight.files ?? []).map((f) => ({ ...f, session: tab, cwd })) : []
         return (
           <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }} data-drop={over === tab} {...zone(tab)}>
@@ -181,23 +181,27 @@ export function TerminalTabs({
               focusSignal={tab === active ? focusSignal : 0}
               tools={
                 insight ? (
-                  <span
+                  <div
                     className="files"
                     onKeyDown={(event) => {
                       if (event.key !== 'Escape' || !open) return
                       setFilesOpen(null)
                       event.currentTarget.querySelector<HTMLElement>('.files-toggle')?.focus()
                     }}
+                    onBlur={(event) => {
+                      const next = event.relatedTarget
+                      if (next instanceof Element && !event.currentTarget.contains(next) && !next.closest('dialog')) setFilesOpen(null)
+                    }}
                   >
                     <button
                       type="button"
                       className="files-toggle"
                       aria-expanded={open}
-                      aria-controls={panel}
+                      aria-controls={open ? panel : undefined}
                       onClick={() => setFilesOpen(open ? null : tab)}
                     >
                       Artifacts{' '}
-                      <span className="files-count">{Math.min(insight.artifacts.length, ARTIFACTS_SHOWN) + (insight.files?.length ?? 0)}</span>
+                      <span className="files-count">{artifacts.length + (insight.files?.length ?? 0)}</span>
                     </button>
                     {open ? (
                       <section id={panel} className="files-panel" aria-label={`${tab} artifacts`}>
@@ -211,7 +215,7 @@ export function TerminalTabs({
                         {files.length ? <FileList files={files} now={now} onPick={setPreview} /> : <p className="lane-empty">No files written yet.</p>}
                       </section>
                     ) : null}
-                  </span>
+                  </div>
                 ) : null
               }
             />

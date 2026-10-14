@@ -100,7 +100,7 @@ describe('artifacts in a session tab', () => {
     expect(within(screen.getByTestId('pane-shell')).queryByRole('button')).toBeNull()
   })
 
-  it('closes on Escape back to the toggle, on a press outside it, and when the tab or its agent goes away', () => {
+  it('closes on Escape back to the toggle, on a press or Tab outside it, and when the tab or its agent goes away', () => {
     const { rerender } = setup()
     const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: /Artifacts/ })
     const region = () => screen.queryByRole('region', { name: 'api artifacts' })
@@ -117,6 +117,11 @@ describe('artifacts in a session tab', () => {
     expect(region()).toBeNull()
     fireEvent.click(toggle)
     fireEvent.pointerDown(document.body)
+    expect(region()).toBeNull()
+    fireEvent.click(toggle)
+    fireEvent.blur(within(region()!).getByRole('button', { name: 'plan.md' }), { relatedTarget: null })
+    expect(region()).toBeInTheDocument()
+    fireEvent.blur(within(region()!).getByRole('button', { name: 'plan.md' }), { relatedTarget: screen.getByRole('tab', { name: 'web' }) })
     expect(region()).toBeNull()
 
     fireEvent.click(toggle)
