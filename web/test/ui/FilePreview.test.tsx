@@ -170,6 +170,19 @@ describe('agent files', () => {
     expect(dialog.getByRole('status')).toHaveTextContent('Path copied')
   })
 
+  it('keeps the unknown-link note when an earlier copy settles after it', async () => {
+    let settle: () => void = () => undefined
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn(() => new Promise<void>((resolve) => (settle = resolve))) } })
+    views['/w/d.md'] = { path: '/w/d.md', size: 9, mtime: sec(5), kind: 'text', text: '[e](e.md)', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/w/d.md' }} known={['/w/d.md']} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    fireEvent.click(dialog.getByRole('link', { name: 'e' }))
+    expect(dialog.getByRole('status')).toHaveTextContent("e.md isn't a file this agent wrote")
+    await act(async () => settle())
+    expect(dialog.getByRole('status')).toHaveTextContent("e.md isn't a file this agent wrote")
+  })
+
   it('offers no Copy text for an empty file', async () => {
     views['/home/me/work/api/empty.txt'] = { path: '/home/me/work/api/empty.txt', size: 0, mtime: sec(5), kind: 'text', text: '', truncated: false }
     render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/empty.txt' }} known={[]} onClose={vi.fn()} />)
