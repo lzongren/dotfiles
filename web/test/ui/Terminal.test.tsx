@@ -444,7 +444,7 @@ describe('TerminalPane', () => {
       await act(async () => {
         a.term.osc.get(52)!(';aGk=')
       })
-      expect(a.status()).toHaveTextContent('copied')
+      expect(a.status()).toHaveTextContent(/^copied$/)
       a.release()
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()
@@ -454,7 +454,7 @@ describe('TerminalPane', () => {
         a.term.osc.get(52)!(';aGk=')
       })
       await later(1000)
-      expect(a.status()).toHaveTextContent('copied')
+      expect(a.status()).toHaveTextContent(/^copied$/)
       await later(1500)
 
       a.press()
@@ -585,7 +585,7 @@ describe('TerminalPane', () => {
         expect(osc('c;aMOpbGxvIOKckw==')).toBe(true)
       })
       expect(writeText).toHaveBeenCalledWith('héllo ✓')
-      expect(screen.getByRole('status')).toHaveTextContent('copied')
+      expect(screen.getByRole('status')).toHaveTextContent(/^copied$/)
       await act(async () => {
         vi.advanceTimersByTime(1500)
       })
