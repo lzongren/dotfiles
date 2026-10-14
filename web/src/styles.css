@@ -640,7 +640,8 @@ kbd {
   color: var(--accent);
 }
 
-.terminal-bar > button {
+.terminal-bar > button,
+.files-toggle {
   margin-left: auto;
   background: var(--surface);
   border: 1px solid var(--control);

@@ -96,13 +96,8 @@ export function shownArtifacts(insight: AgentInsight | undefined): Array<Artifac
   return rankArtifacts(insight?.artifacts ?? [], insight?.summary).slice(0, ARTIFACTS_SHOWN)
 }
 
-/** What shownArtifacts and the live files add up to, without ranking them. */
 export function openableCount(insight: AgentInsight): number {
   return Math.min(insight.artifacts.length, ARTIFACTS_SHOWN) + (insight.files ?? []).filter((f) => !f.gone).length
-}
-
-export function hiddenArtifacts(insight: AgentInsight): number {
-  return Math.max(0, insight.artifacts.length - ARTIFACTS_SHOWN)
 }
 
 export function displayTitle(paneHeadline: string, insight: AgentInsight | undefined): string {

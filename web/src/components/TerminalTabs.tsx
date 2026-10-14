@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
-import { hiddenArtifacts, openableCount, shownArtifacts } from '../insights'
+import { openableCount, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
@@ -65,8 +65,20 @@ export function TerminalTabs({
     const away = (event: PointerEvent) => {
       if (!(event.target instanceof Element && event.target.closest('.term-files, dialog'))) setFilesOpen(null)
     }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return
+      event.preventDefault()
+      event.stopPropagation()
+      const box = event.target instanceof Element ? event.target.closest('.term-files') : null
+      setFilesOpen(null)
+      box?.querySelector<HTMLElement>('.files-toggle')?.focus()
+    }
     document.addEventListener('pointerdown', away)
-    return () => document.removeEventListener('pointerdown', away)
+    document.addEventListener('keydown', escape, true)
+    return () => {
+      document.removeEventListener('pointerdown', away)
+      document.removeEventListener('keydown', escape, true)
+    }
   }, [filesOpen])
 
   const note = (tab: string, text: string, sticky = false) => {
@@ -183,11 +195,6 @@ export function TerminalTabs({
                 insight ? (
                   <div
                     className="term-files"
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Escape' || !open) return
-                      setFilesOpen(null)
-                      event.currentTarget.querySelector<HTMLElement>('.files-toggle')?.focus()
-                    }}
                     onBlur={(event) => {
                       const next = event.relatedTarget
                       if (next instanceof Element && !event.currentTarget.contains(next) && !next.closest('dialog')) setFilesOpen(null)
@@ -209,7 +216,9 @@ export function TerminalTabs({
                         {artifacts.length ? (
                           <>
                             <ArtifactList artifacts={artifacts} now={now} />
-                            {hiddenArtifacts(insight) ? <p className="lane-empty">{hiddenArtifacts(insight)} older not shown</p> : null}
+                            {insight.artifacts.length > artifacts.length ? (
+                              <p className="lane-empty">{insight.artifacts.length - artifacts.length} more not shown</p>
+                            ) : null}
                           </>
                         ) : (
                           <p className="lane-empty">No pull requests or reviews seen yet.</p>

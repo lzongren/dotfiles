@@ -191,6 +191,7 @@ function Detail({
   const { session, insight } = row
   const state = stateLabel(row)
   const tasks = insight?.tasks
+  const shown = shownArtifacts(insight)
   return (
     <article className="detail-body" aria-label={`${session.name} details`}>
       <header className="detail-head">
@@ -252,7 +253,8 @@ function Detail({
           <>
             <dt>Artifacts</dt>
             <dd>
-              <ArtifactList artifacts={shownArtifacts(insight)} now={now} />
+              <ArtifactList artifacts={shown} now={now} />
+              {insight.artifacts.length > shown.length ? <p className="lane-empty">{insight.artifacts.length - shown.length} more not shown</p> : null}
             </dd>
           </>
         ) : null}

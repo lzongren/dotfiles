@@ -36,7 +36,7 @@ export function FileList({
   return (
     <ul className="file-list">
       {files.map((f) => {
-        const rel = f.path.startsWith(`${f.cwd}/`) ? f.path.slice(f.cwd.length + 1) : f.path
+        const rel = f.cwd && f.path.startsWith(`${f.cwd}/`) ? f.path.slice(f.cwd.length + 1) : f.path
         const parts = rel.split('/').slice(0, -1)
         const dir = parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : parts.join('/')
         return (

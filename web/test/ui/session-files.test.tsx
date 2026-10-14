@@ -102,7 +102,15 @@ describe('artifacts in a session tab', () => {
     fireEvent.click(toggle)
     const panel = within(screen.getByRole('region', { name: 'api artifacts' }))
     expect(panel.getAllByRole('link')).toHaveLength(15)
-    expect(panel.getByText('3 older not shown')).toBeInTheDocument()
+    expect(panel.getByText('3 more not shown')).toBeInTheDocument()
+  })
+
+  it('shows full paths when the tab has outlived its session', () => {
+    const files = [{ path: '/tmp/notes.md', action: 'created' as const, at: sec(5), count: 1, gone: false }]
+    const insights = new Map([['api', { session: 'api', agent: 'claude' as const, state: 'ready' as const, commits: 0, artifacts: [], files }]])
+    render(<TerminalTabs tabs={['api']} active="api" sessions={[]} insights={insights} now={NOW} onSelect={vi.fn()} onClose={vi.fn()} />)
+    fireEvent.click(within(screen.getByTestId('pane-api')).getByRole('button', { name: /Artifacts/ }))
+    expect(screen.getByRole('button', { name: 'notes.md' }).nextSibling).toHaveTextContent(/^\/tmp$/)
   })
 
   it('says when there is nothing yet, and has no toggle for a plain shell', () => {
@@ -129,6 +137,13 @@ describe('artifacts in a session tab', () => {
     fireEvent.click(toggle)
     fireEvent.keyDown(toggle, { key: 'Escape' })
     expect(region()).toBeNull()
+    fireEvent.click(toggle)
+    const typed = vi.fn()
+    document.body.addEventListener('keydown', typed)
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    document.body.removeEventListener('keydown', typed)
+    expect(region()).toBeNull()
+    expect(typed).not.toHaveBeenCalled()
     fireEvent.click(toggle)
     fireEvent.pointerDown(document.body)
     expect(region()).toBeNull()
