@@ -411,7 +411,9 @@ describe('TerminalPane', () => {
         vi.advanceTimersByTime(5000)
       })
       focus.mockReturnValue(false)
-      osc(';aGk=')
+      await act(async () => {
+        osc(';aGk=')
+      })
       expect(writeText).toHaveBeenCalledTimes(2)
       expect(screen.getAllByRole('status')[0]).toHaveTextContent('')
     } finally {
