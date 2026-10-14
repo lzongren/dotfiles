@@ -165,8 +165,8 @@ to other files the agent wrote open in the preview, and "Back" returns. A file u
 from the laptop copy; "Open on laptop" opens text files and images in their
 default app and only shows anything else (scripts, apps, PDFs) in its folder. Other
 files are read over ssh. Only files the agent wrote can be read this way. In an open
-terminal, "Artifacts" in its top bar counts the same links and files and
-lists them for that session, so you can preview one without going back to the
+terminal, "Artifacts" in its top bar counts what that session has for you to
+open and lists it, so you can preview a file without going back to the
 overview.
 
 The theme picker in the top bar starts on your Ghostty theme when it finds

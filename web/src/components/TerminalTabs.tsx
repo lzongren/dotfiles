@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
-import { shownArtifacts } from '../insights'
+import { hiddenArtifacts, openableCount, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
@@ -63,7 +63,7 @@ export function TerminalTabs({
   useEffect(() => {
     if (filesOpen === null) return
     const away = (event: PointerEvent) => {
-      if (!(event.target instanceof Element && event.target.closest('.files, dialog'))) setFilesOpen(null)
+      if (!(event.target instanceof Element && event.target.closest('.term-files, dialog'))) setFilesOpen(null)
     }
     document.addEventListener('pointerdown', away)
     return () => document.removeEventListener('pointerdown', away)
@@ -170,7 +170,7 @@ export function TerminalTabs({
         const insight = insights.get(tab)
         const open = filesOpen === tab && insight !== undefined
         const panel = `${id}-files-${index}`
-        const artifacts = shownArtifacts(insight)
+        const artifacts = open ? shownArtifacts(insight) : []
         const cwd = open ? (sessions.find((s) => s.name === tab)?.path ?? '') : ''
         const files = open ? (insight.files ?? []).map((f) => ({ ...f, session: tab, cwd })) : []
         return (
@@ -182,7 +182,7 @@ export function TerminalTabs({
               tools={
                 insight ? (
                   <div
-                    className="files"
+                    className="term-files"
                     onKeyDown={(event) => {
                       if (event.key !== 'Escape' || !open) return
                       setFilesOpen(null)
@@ -201,13 +201,16 @@ export function TerminalTabs({
                       onClick={() => setFilesOpen(open ? null : tab)}
                     >
                       Artifacts{' '}
-                      <span className="files-count">{artifacts.length + (insight.files?.length ?? 0)}</span>
+                      <span className="files-count">{openableCount(insight)}</span>
                     </button>
                     {open ? (
                       <section id={panel} className="files-panel" aria-label={`${tab} artifacts`}>
                         <h2>Artifacts</h2>
                         {artifacts.length ? (
-                          <ArtifactList artifacts={artifacts} now={now} />
+                          <>
+                            <ArtifactList artifacts={artifacts} now={now} />
+                            {hiddenArtifacts(insight) ? <p className="lane-empty">{hiddenArtifacts(insight)} older not shown</p> : null}
+                          </>
                         ) : (
                           <p className="lane-empty">No pull requests or reviews seen yet.</p>
                         )}

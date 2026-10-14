@@ -640,8 +640,7 @@ kbd {
   color: var(--accent);
 }
 
-.terminal-bar > button,
-.files-toggle {
+.terminal-bar > button {
   margin-left: auto;
   background: var(--surface);
   border: 1px solid var(--control);
@@ -657,12 +656,12 @@ kbd {
   background: var(--raised);
 }
 
-.files {
+.term-files {
   position: relative;
   margin-left: auto;
 }
 
-.files ~ button {
+.term-files ~ button {
   margin-left: 0;
 }
 

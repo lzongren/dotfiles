@@ -74,7 +74,7 @@ const setup = (active = 'api') => render(tabs(active))
 describe('artifacts in a session tab', () => {
   it('counts the links and files it lists, and previews a file', async () => {
     setup()
-    const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: 'Artifacts 4' })
+    const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: 'Artifacts 3' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
@@ -87,8 +87,22 @@ describe('artifacts in a session tab', () => {
     await act(async () => {
       fireEvent.click(panel.getByRole('button', { name: 'plan.md' }))
     })
+    const dialog = screen.getByRole('dialog')
     expect(screen.getByRole('heading', { name: 'plan.md' })).toBeInTheDocument()
+    fireEvent.blur(screen.getByRole('button', { name: 'plan.md' }), { relatedTarget: within(dialog).getByRole('button', { name: 'Close' }) })
+    fireEvent.pointerDown(dialog)
+    expect(screen.getByRole('region', { name: 'api artifacts' })).toBeInTheDocument()
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/file?session=api&path=%2Fhome%2Fme%2Fwork%2Fapi%2Fdocs%2Fplan.md')
+  })
+
+  it('counts at most the 15 links it lists, and says how many are left out', () => {
+    const many = Array.from({ length: 18 }, (_, i) => ({ label: 'PR', url: `https://git.example/o/r/pull/${i}`, at: sec(i), first: sec(i), hits: 1, said: false }))
+    render(tabs('api', new Map([['api', { session: 'api', agent: 'claude' as const, state: 'ready' as const, commits: 0, artifacts: many }]])))
+    const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: 'Artifacts 15' })
+    fireEvent.click(toggle)
+    const panel = within(screen.getByRole('region', { name: 'api artifacts' }))
+    expect(panel.getAllByRole('link')).toHaveLength(15)
+    expect(panel.getByText('3 older not shown')).toBeInTheDocument()
   })
 
   it('says when there is nothing yet, and has no toggle for a plain shell', () => {
