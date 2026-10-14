@@ -15,14 +15,18 @@ const MAX_RETRIES = 6
 const HEALTHY_MS = 5000
 const QUEUE_MAX = 64 * 1024
 const COPIED_MS = 1500
+const BLOCKED_MS = 5000
 const BLOCKED = 'copy blocked: ⌥-drag, then ⌘C'
+const decoder = new TextDecoder()
 
 export function clipboardText(data: string): string | null {
-  if (!data.includes(';')) return null
-  const payload = data.slice(data.indexOf(';') + 1)
-  if (!payload || payload === '?') return null
+  const split = data.indexOf(';')
+  if (split < 0) return null
+  const target = data.slice(0, split)
+  const payload = data.slice(split + 1)
+  if ((target && !target.includes('c')) || !payload || payload === '?') return null
   try {
-    return new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0)))
+    return decoder.decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))) || null
   } catch {
     return null
   }
@@ -93,11 +97,11 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (disposed) return
       setCopyNote(note)
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
-      copiedTimer = window.setTimeout(() => setCopyNote(''), COPIED_MS)
+      copiedTimer = window.setTimeout(() => setCopyNote(''), note === BLOCKED ? BLOCKED_MS : COPIED_MS)
     }
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
-      if (text === null || !activeRef.current) return true
+      if (text === null || !activeRef.current || !document.hasFocus()) return true
       if (!navigator.clipboard) flash(BLOCKED)
       else
         void navigator.clipboard.writeText(text).then(

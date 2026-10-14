@@ -401,8 +401,13 @@ describe('TerminalPane', () => {
       })
       expect(screen.getByRole('status')).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
 
-      render(<TerminalPane name="web" active={false} />)
+      const { rerender } = render(<TerminalPane name="web" active />)
+      rerender(<TerminalPane name="web" active={false} />)
       xterms[1].osc.get(52)!(';aGk=')
+      expect(writeText).toHaveBeenCalledTimes(2)
+
+      vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+      osc(';aGk=')
       expect(writeText).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
@@ -413,7 +418,8 @@ describe('TerminalPane', () => {
   it('decodes OSC 52 payloads and ignores queries and garbage', () => {
     expect(clipboardText('c;aGVsbG8=')).toBe('hello')
     expect(clipboardText(';aGk=')).toBe('hi')
-    for (const bad of ['c;?', 'c;', 'c;***', '', 'aGk=']) expect(clipboardText(bad)).toBeNull()
+    expect(clipboardText('pc;aGk=')).toBe('hi')
+    for (const bad of ['c;?', 'c;', 'c; ', 'c;***', '', 'aGk=', 'p;aGk=', 's;aGk=']) expect(clipboardText(bad)).toBeNull()
   })
 
   it('drops the WebGL renderer when its context is lost', () => {

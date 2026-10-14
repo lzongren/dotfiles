@@ -187,8 +187,8 @@ the selection back and the tab flashes "copied". As with `clipboard-write`
 in the Ghostty config here, anything in the visible session can set the
 clipboard this way; unlike Ghostty's config, nothing can read it. In an
 app that takes the mouse, or if the browser refuses (Safari may), hold
-Option while dragging, then press ⌘C. Press `/` to search: Enter attaches a running session, starts the
-chosen agent in an existing workspace folder, or creates a new one with the
+Option while dragging, then press ⌘C. Press `/` to search: Enter attaches a
+running session, starts the chosen agent in an existing workspace folder, or creates a new one with the
 same rules as `devbox --cc <name>` from a synced root. Rows whose names don't
 match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached from the
 web. The server binds 127.0.0.1 only; the token arrives in the URL
