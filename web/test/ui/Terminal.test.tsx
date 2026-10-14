@@ -377,6 +377,7 @@ describe('TerminalPane', () => {
     const writeText = vi.fn(async () => undefined)
     const readText = vi.fn(async () => 'secret')
     vi.stubGlobal('navigator', { clipboard: { writeText, readText } })
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     vi.useFakeTimers()
     try {
       render(<TerminalPane name="api" active />)
@@ -406,10 +407,15 @@ describe('TerminalPane', () => {
       xterms[1].osc.get(52)!(';aGk=')
       expect(writeText).toHaveBeenCalledTimes(2)
 
-      vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+      await act(async () => {
+        vi.advanceTimersByTime(5000)
+      })
+      focus.mockReturnValue(false)
       osc(';aGk=')
       expect(writeText).toHaveBeenCalledTimes(2)
+      expect(screen.getAllByRole('status')[0]).toHaveTextContent('')
     } finally {
+      focus.mockRestore()
       vi.useRealTimers()
       vi.unstubAllGlobals()
     }
@@ -419,7 +425,8 @@ describe('TerminalPane', () => {
     expect(clipboardText('c;aGVsbG8=')).toBe('hello')
     expect(clipboardText(';aGk=')).toBe('hi')
     expect(clipboardText('pc;aGk=')).toBe('hi')
-    for (const bad of ['c;?', 'c;', 'c; ', 'c;***', '', 'aGk=', 'p;aGk=', 's;aGk=']) expect(clipboardText(bad)).toBeNull()
+    expect(clipboardText('s;aGk=')).toBe('hi')
+    for (const bad of ['c;?', 'c;', 'c; ', 'c;***', '', 'aGk=', 'p;aGk=', 'q0;aGk=', 'xyzc;aGk=', '?c;aGk=']) expect(clipboardText(bad)).toBeNull()
   })
 
   it('drops the WebGL renderer when its context is lost', () => {

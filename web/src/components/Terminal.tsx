@@ -24,7 +24,7 @@ export function clipboardText(data: string): string | null {
   if (split < 0) return null
   const target = data.slice(0, split)
   const payload = data.slice(split + 1)
-  if ((target && !target.includes('c')) || !payload || payload === '?') return null
+  if (!/^[cpqs0-7]*$/.test(target) || (target && !/[cs]/.test(target)) || !payload || payload === '?') return null
   try {
     return decoder.decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))) || null
   } catch {
