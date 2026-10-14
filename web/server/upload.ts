@@ -19,7 +19,16 @@ def numbered(stem, ext, i):
     return stem + suffix + ext
 
 
+def receive(size):
+    signal.alarm(ARGS["stall"])
+    try:
+        return sys.stdin.buffer.read1(size)
+    finally:
+        signal.alarm(0)
+
+
 def place():
+    signal.signal(signal.SIGALRM, stalled)
     stem, ext = os.path.splitext(ARGS["name"])
     for i in range(100):
         target = os.path.join(ARGS["dir"], numbered(stem, ext, i) if i else ARGS["name"])
@@ -30,30 +39,23 @@ def place():
             continue
     else:
         return {"error": "too many files with that name"}
-    claimed = os.fstat(fd)
-    left = ARGS["size"]
-    signal.signal(signal.SIGALRM, stalled)
+    claimed = None
     try:
+        claimed = os.fstat(fd)
+        left = ARGS["size"]
         with os.fdopen(fd, "wb") as out:
             while left > 0:
-                signal.alarm(ARGS["stall"])
-                chunk = sys.stdin.buffer.read(min(left, 65536))
+                chunk = receive(min(left, 65536))
                 if not chunk:
-                    break
+                    raise OSError(5, "upload cut short")
                 out.write(chunk)
                 left -= len(chunk)
-        signal.alarm(0)
-        if left:
-            raise OSError(5, "upload cut short")
-    except BaseException as err:
-        signal.alarm(0)
+    except BaseException:
         try:
-            if os.path.samestat(claimed, os.lstat(target)):
+            if claimed is None or os.path.samestat(claimed, os.lstat(target)):
                 os.unlink(target)
         except OSError:
             pass
-        if isinstance(err, OSError):
-            return {"error": err.strerror or str(err)}
         raise
     return {"path": target}
 

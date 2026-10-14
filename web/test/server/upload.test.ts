@@ -56,14 +56,40 @@ describe('remote upload writer', () => {
 
   it('gives up on an upload that stops arriving and removes what it wrote', async () => {
     const child = spawn('sh', ['-c', UPLOAD_COMMAND.join(' ')])
+    const exited = new Promise((ok) => child.on('exit', ok))
     let stdout = ''
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
-    const [head, data] = uploadInput(dir, 'stalled.bin', Buffer.alloc(200_000, 1), 1)
-    child.stdin.write(head)
-    child.stdin.write(data.subarray(0, 70_000))
-    await expect.poll(() => stdout, { timeout: 5000 }).toContain('upload stalled')
-    child.stdin.end()
-    expect(readdirSync(dir)).not.toContain('stalled.bin')
+    try {
+      const [head, data] = uploadInput(dir, 'stalled.bin', Buffer.alloc(200_000, 1), 1)
+      child.stdin.write(head)
+      child.stdin.write(data.subarray(0, 70_000))
+      await expect.poll(() => stdout, { timeout: 5000 }).toContain('upload stalled')
+      expect(readdirSync(dir)).not.toContain('stalled.bin')
+    } finally {
+      child.kill()
+      await exited
+    }
+  })
+
+  it('keeps a slow upload going as long as bytes keep arriving', async () => {
+    const child = spawn('sh', ['-c', UPLOAD_COMMAND.join(' ')])
+    const exited = new Promise((ok) => child.on('exit', ok))
+    let stdout = ''
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+    try {
+      const [head, data] = uploadInput(dir, 'slow.bin', Buffer.alloc(3000, 2), 1)
+      child.stdin.write(head)
+      for (let at = 0; at < data.length; at += 1000) {
+        child.stdin.write(data.subarray(at, at + 1000))
+        await new Promise((ok) => setTimeout(ok, 600))
+      }
+      child.stdin.end()
+      await exited
+      expect(parseUpload(stdout)).toEqual({ path: path.join(dir, 'slow.bin') })
+      expect(readFileSync(path.join(dir, 'slow.bin'))).toEqual(data)
+    } finally {
+      child.kill()
+    }
   })
 
   it('accepts ordinary file names and refuses paths and control characters', () => {
