@@ -299,11 +299,11 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
-  const copy = () => {
+  const copy = (text: string, done: string, where: string) => {
     void navigator.clipboard
-      ?.writeText(path)
-      .then(() => setNote('Path copied'))
-      .catch(() => setNote('Could not copy — select the path above'))
+      ?.writeText(text)
+      .then(() => setNote(done))
+      .catch(() => setNote(`Could not copy — select the ${where}`))
   }
   const open = () => {
     void openFile(file.session, path).then((r) =>
@@ -352,7 +352,12 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
               Download
             </a>
           ) : null}
-          <button type="button" onClick={copy}>
+          {view?.kind === 'text' && view.text !== undefined ? (
+            <button type="button" onClick={() => copy(view.text ?? '', view.truncated ? 'Copied the first 1 MB' : 'Text copied', 'text below')}>
+              Copy text
+            </button>
+          ) : null}
+          <button type="button" onClick={() => copy(path, 'Path copied', 'path above')}>
             Copy path
           </button>
           <button type="button" onClick={close}>

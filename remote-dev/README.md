@@ -188,9 +188,13 @@ ordinary tmux client, so closing the tab detaches without touching the
 session. Dragging over text copies it to the laptop clipboard: tmux sends
 the selection back and the tab flashes "copied". As with `clipboard-write`
 in the Ghostty config here, anything in the visible session can set the
-clipboard this way; unlike Ghostty's config, nothing can read it. In an
-app that takes the mouse, or if the browser refuses (Safari may), hold
-Option while dragging, then press ⌘C. Press `/` to search: Enter attaches a
+clipboard this way; unlike Ghostty's config, nothing can read it. Claude
+Code copies its own selections the same way, and `/copy` copies its last
+reply. In an app that takes the mouse without copying, the tab says
+"nothing copied"; then, or if the browser refuses (Safari may), hold Option
+while dragging and press ⌘C, which copies the screen as drawn. Output
+longer than the screen is easier as a file: the preview's "Copy text"
+copies all of it. Press `/` to search: Enter attaches a
 running session, starts the chosen agent in an existing workspace folder, or creates a new one with the
 same rules as `devbox --cc <name>` from a synced root. Rows whose names don't
 match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached from the

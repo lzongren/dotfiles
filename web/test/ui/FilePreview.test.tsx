@@ -91,7 +91,7 @@ describe('agent files', () => {
     expect(details.getByText('old.py').closest('li')).toHaveTextContent('gone')
   })
 
-  it('previews a text file with its path, opens the laptop copy, and copies the path', async () => {
+  it('previews a text file with its path, opens the laptop copy, and copies the text or the path', async () => {
     const writeText = vi.fn(async () => undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     renderOverview()
@@ -107,9 +107,15 @@ describe('agent files', () => {
     await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Opened on this laptop'))
     expect(calls[1]).toMatchObject({ url: '/api/file/open', method: 'POST', body: JSON.stringify({ session: 'api', path: '/home/me/work/api/docs/plan.md' }) })
 
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Text copied'))
+    expect(writeText).toHaveBeenCalledWith('# The plan')
     fireEvent.click(dialog.getByRole('button', { name: 'Copy path' }))
     await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Path copied'))
     expect(writeText).toHaveBeenCalledWith('/home/me/work/api/docs/plan.md')
+    writeText.mockRejectedValueOnce(new Error('NotAllowedError'))
+    fireEvent.click(dialog.getByRole('button', { name: 'Copy text' }))
+    await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Could not copy — select the text below'))
 
     fireEvent.click(dialog.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -122,6 +128,7 @@ describe('agent files', () => {
     expect(await dialog.findByRole('img', { name: 'shot.png' })).toHaveAttribute('src', 'data:image/png;base64,AAAA')
     expect(dialog.getByText(/read from host/)).toBeInTheDocument()
     expect(dialog.queryByRole('button', { name: 'Open on laptop' })).toBeNull()
+    expect(dialog.queryByRole('button', { name: 'Copy text' })).toBeNull()
   })
 
   it('says why a file cannot be shown', async () => {

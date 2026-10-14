@@ -9,6 +9,7 @@ const hoisted = vi.hoisted(() => {
     static instances: FakeXTerm[] = []
     cols = 80
     rows = 24
+    modes = { mouseTrackingMode: 'none' }
     write = vi.fn()
     writeln = vi.fn()
     loadAddon = vi.fn()
@@ -371,6 +372,62 @@ describe('TerminalPane', () => {
     expect(xterms[0].focus).not.toHaveBeenCalled()
     rerender(<TerminalPane name="api" active />)
     expect(xterms[0].focus).toHaveBeenCalled()
+  })
+
+  it('says nothing was copied when a drag in an app that keeps the mouse sends no copy', async () => {
+    const writeText = vi.fn(async () => undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.useFakeTimers()
+    try {
+      const { container } = render(<TerminalPane name="api" active />)
+      const screenEl = container.querySelector('.terminal-screen')!
+      const drag = (to: number, init: MouseEventInit = {}) => {
+        fireEvent.mouseDown(screenEl, { button: 0, clientX: 10, clientY: 10, ...init })
+        fireEvent.mouseUp(window, { clientX: to, clientY: 10 })
+      }
+      const status = () => screen.getByRole('status')
+      drag(200)
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(status()).toHaveTextContent('')
+
+      xterms[0].modes.mouseTrackingMode = 'drag'
+      drag(14)
+      drag(200, { altKey: true })
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(status()).toHaveTextContent('')
+
+      drag(200)
+      await act(async () => {
+        vi.advanceTimersByTime(500)
+        xterms[0].osc.get(52)!(';aGk=')
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(1000)
+      })
+      expect(status()).toHaveTextContent('copied')
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+
+      drag(200)
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(status()).toHaveTextContent('nothing copied: ⌥-drag, then ⌘C')
+      await act(async () => {
+        vi.advanceTimersByTime(4999)
+      })
+      expect(status()).toHaveTextContent('nothing copied')
+    } finally {
+      focus.mockRestore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('puts text the session copies (OSC 52) on the clipboard, says whether it worked, and never reads the clipboard', async () => {

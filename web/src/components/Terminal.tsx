@@ -17,6 +17,9 @@ const QUEUE_MAX = 64 * 1024
 const COPIED_MS = 1500
 const BLOCKED_MS = 5000
 const BLOCKED = 'copy blocked: ⌥-drag, then ⌘C'
+const MISSED_MS = 1500
+const MISSED = 'nothing copied: ⌥-drag, then ⌘C'
+const DRAG_PX = 8
 const decoder = new TextDecoder()
 
 export function clipboardText(data: string): string | null {
@@ -97,10 +100,29 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (disposed) return
       setCopyNote(note)
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
-      copiedTimer = window.setTimeout(() => setCopyNote(''), note === BLOCKED ? BLOCKED_MS : COPIED_MS)
+      copiedTimer = window.setTimeout(() => setCopyNote(''), note === 'copied' ? COPIED_MS : BLOCKED_MS)
     }
+    let pressed: { x: number; y: number } | null = null
+    let missTimer: number | null = null
+    const press = (event: MouseEvent) => {
+      pressed = event.button === 0 && !event.altKey && term.modes.mouseTrackingMode !== 'none' ? { x: event.clientX, y: event.clientY } : null
+    }
+    const release = (event: MouseEvent) => {
+      if (pressed && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) >= DRAG_PX) {
+        if (missTimer !== null) window.clearTimeout(missTimer)
+        missTimer = window.setTimeout(() => flash(MISSED), MISSED_MS)
+      }
+      pressed = null
+    }
+    const container = containerRef.current
+    container?.addEventListener('mousedown', press, true)
+    window.addEventListener('mouseup', release, true)
     const clipSub = term.parser.registerOscHandler(52, (data) => {
       const text = clipboardText(data)
+      if (text !== null && missTimer !== null) {
+        window.clearTimeout(missTimer)
+        missTimer = null
+      }
       if (text === null || !activeRef.current || !document.hasFocus()) return true
       if (!navigator.clipboard) flash(BLOCKED)
       else
@@ -239,9 +261,12 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       if (healthyTimer !== null) window.clearTimeout(healthyTimer)
       if (fitTimer !== null) window.clearTimeout(fitTimer)
       if (copiedTimer !== null) window.clearTimeout(copiedTimer)
+      if (missTimer !== null) window.clearTimeout(missTimer)
       setCopyNote('')
       document.removeEventListener('visibilitychange', onVisibility)
       observer.disconnect()
+      container?.removeEventListener('mousedown', press, true)
+      window.removeEventListener('mouseup', release, true)
       stopLook()
       ws?.close()
       dataSub.dispose()
