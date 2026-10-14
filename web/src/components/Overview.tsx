@@ -191,7 +191,7 @@ function Detail({
   const { session, insight } = row
   const state = stateLabel(row)
   const tasks = insight?.tasks
-  const shown = shownArtifacts(insight)
+  const shown = insight?.artifacts.length ? shownArtifacts(insight) : []
   return (
     <article className="detail-body" aria-label={`${session.name} details`}>
       <header className="detail-head">

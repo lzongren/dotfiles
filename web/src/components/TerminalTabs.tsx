@@ -183,6 +183,7 @@ export function TerminalTabs({
                 insight ? (
                   <div
                     className="term-files"
+                    tabIndex={-1}
                     onKeyDown={(event) => {
                       if (event.key !== 'Escape' || !open) return
                       setFilesOpen(null)
@@ -198,10 +199,7 @@ export function TerminalTabs({
                       className="files-toggle"
                       aria-expanded={open}
                       aria-controls={open ? panel : undefined}
-                      onClick={(event) => {
-                        event.currentTarget.focus()
-                        setFilesOpen(open ? null : tab)
-                      }}
+                      onClick={() => setFilesOpen(open ? null : tab)}
                     >
                       Artifacts{' '}
                       <span className="files-count">{openableCount(insight)}</span>
