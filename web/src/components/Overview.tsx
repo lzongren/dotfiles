@@ -143,7 +143,7 @@ function Card({
   )
 }
 
-function ArtifactList({
+export function ArtifactList({
   artifacts,
   now,
 }: {

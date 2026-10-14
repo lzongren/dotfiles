@@ -30,7 +30,7 @@ afterEach(() => {
 
 const setup = () => {
   const onSelect = vi.fn()
-  render(<TerminalTabs tabs={['api', 'web']} active="web" onSelect={onSelect} onClose={vi.fn()} />)
+  render(<TerminalTabs tabs={['api', 'web']} active="web" sessions={[]} insights={new Map()} now={0} onSelect={onSelect} onClose={vi.fn()} />)
   return { onSelect, pane: (name: string) => screen.getByTestId(`pane-${name}`).parentElement! }
 }
 

@@ -1,0 +1,117 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TerminalTabs } from '../../src/components/TerminalTabs'
+import type { AgentInsight, Session } from '../../src/shared/types'
+
+vi.mock('../../src/components/Terminal', () => ({
+  TerminalPane: ({ name, tools }: { name: string; tools?: ReactNode }) => <div data-testid={`pane-${name}`}>{tools}</div>,
+}))
+
+const NOW = 1_800_000_000_000
+const sec = (ago: number) => NOW / 1000 - ago
+
+const session = (name: string): Session => ({
+  name,
+  attached: false,
+  clients: 0,
+  activityEpoch: sec(60),
+  bell: false,
+  cmd: 'claude',
+  title: '',
+  path: `/home/me/work/${name}`,
+  attachable: true,
+})
+
+const INSIGHTS = new Map<string, AgentInsight>([
+  [
+    'api',
+    {
+      session: 'api',
+      agent: 'claude',
+      state: 'ready',
+      commits: 0,
+      summary: 'Opened PR #7.',
+      artifacts: [
+        { label: 'PR', url: 'https://git.example/o/r/pull/3', at: sec(90), first: sec(300), hits: 1, said: false },
+        { label: 'PR', url: 'https://git.example/o/r/pull/7', at: sec(95), first: sec(250), hits: 2, said: true },
+      ],
+      files: [
+        { path: '/home/me/work/api/docs/plan.md', action: 'created', at: sec(30), count: 2, gone: false },
+        { path: '/home/me/work/api/old.py', action: 'deleted', at: sec(40), count: 1, gone: true },
+      ],
+    },
+  ],
+  ['web', { session: 'web', agent: 'claude', state: 'working', commits: 0, artifacts: [] }],
+])
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      Response.json({ path: '/home/me/work/api/docs/plan.md', size: 10, mtime: sec(30), kind: 'text', text: '# The plan', truncated: false }),
+    ),
+  )
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+const setup = (active = 'api') =>
+  render(
+    <TerminalTabs
+      tabs={['api', 'web', 'shell']}
+      active={active}
+      sessions={[session('api'), session('web'), session('shell')]}
+      insights={INSIGHTS}
+      now={NOW}
+      onSelect={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  )
+
+describe('artifacts in a session tab', () => {
+  it('counts links and live files, lists them, and previews a file', async () => {
+    setup()
+    const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: 'Artifacts 3' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const panel = within(screen.getByRole('region', { name: 'api artifacts' }))
+    expect(panel.getAllByRole('link').map((a) => a.textContent)).toEqual([
+      'PR #7 ★ (named in the summary) (opens in a new tab)',
+      'PR #3 (opens in a new tab)',
+    ])
+    expect(panel.getByText('old.py')).not.toHaveRole('button')
+    await act(async () => {
+      fireEvent.click(panel.getByRole('button', { name: 'plan.md' }))
+    })
+    expect(screen.getByRole('heading', { name: 'plan.md' })).toBeInTheDocument()
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/file?session=api&path=%2Fhome%2Fme%2Fwork%2Fapi%2Fdocs%2Fplan.md')
+  })
+
+  it('says when there is nothing yet, and has no toggle for a plain shell', () => {
+    setup('web')
+    fireEvent.click(within(screen.getByTestId('pane-web')).getByRole('button', { name: 'Artifacts 0' }))
+    const panel = within(screen.getByRole('region', { name: 'web artifacts' }))
+    expect(panel.getByText('No pull requests or reviews seen yet.')).toBeInTheDocument()
+    expect(panel.getByText('No files written yet.')).toBeInTheDocument()
+    expect(within(screen.getByTestId('pane-shell')).queryByRole('button')).toBeNull()
+  })
+
+  it('closes on Escape back to the toggle, and on a press outside it', () => {
+    setup()
+    const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: /Artifacts/ })
+    fireEvent.click(toggle)
+    const region = screen.getByRole('region', { name: 'api artifacts' })
+    fireEvent.pointerDown(within(region).getByRole('button', { name: 'plan.md' }))
+    expect(screen.getByRole('region', { name: 'api artifacts' })).toBeInTheDocument()
+    fireEvent.keyDown(within(region).getByRole('button', { name: 'plan.md' }), { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'api artifacts' })).toBeNull()
+    expect(toggle).toHaveFocus()
+    fireEvent.click(toggle)
+    fireEvent.pointerDown(screen.getByTestId('pane-api'))
+    expect(screen.queryByRole('region', { name: 'api artifacts' })).toBeNull()
+  })
+})

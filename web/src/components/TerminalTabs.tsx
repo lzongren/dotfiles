@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
+import { rankArtifacts } from '../insights'
+import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
+import { FileList, FilePreview, type FileRef } from './FilePreview'
+import { ArtifactList } from './Overview'
 import { TerminalPane } from './Terminal'
 
 const NOTE_MS = 8000
@@ -13,15 +17,24 @@ export function TerminalTabs({
   tabs,
   active,
   focusSignal = 0,
+  sessions,
+  insights,
+  now,
   onSelect,
   onClose,
 }: {
   tabs: string[]
   active: string | null
   focusSignal?: number
+  sessions: Session[]
+  insights: Map<string, AgentInsight>
+  now: number
   onSelect: (name: string | null) => void
   onClose: (name: string) => void
 }) {
+  const id = useId()
+  const [filesOpen, setFilesOpen] = useState<string | null>(null)
+  const [preview, setPreview] = useState<FileRef | null>(null)
   const [over, setOver] = useState<string | null>(null)
   const [notes, setNotes] = useState<Record<string, string>>({})
   const timers = useRef(new Map<string, number>())
@@ -45,6 +58,15 @@ export function TerminalTabs({
       for (const timer of pending.values()) window.clearTimeout(timer)
     }
   }, [])
+
+  useEffect(() => {
+    if (filesOpen === null) return
+    const away = (event: PointerEvent) => {
+      if (!(event.target instanceof Element && event.target.closest('.files-panel, .files-toggle, dialog'))) setFilesOpen(null)
+    }
+    document.addEventListener('pointerdown', away)
+    return () => document.removeEventListener('pointerdown', away)
+  }, [filesOpen])
 
   const note = (tab: string, text: string, sticky = false) => {
     if (!alive.current) return
@@ -143,15 +165,64 @@ export function TerminalTabs({
           </span>
         ))}
       </div>
-      {tabs.map((tab) => (
-        <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }} data-drop={over === tab} {...zone(tab)}>
-          <TerminalPane name={tab} active={tab === active} focusSignal={tab === active ? focusSignal : 0} />
-          {over === tab ? <div className="drop-hint">Drop to copy into {tab}'s folder</div> : null}
-          <p className="drop-note" role="status">
-            {notes[tab] ?? ''}
-          </p>
-        </div>
-      ))}
+      {tabs.map((tab, index) => {
+        const insight = insights.get(tab)
+        const cwd = sessions.find((s) => s.name === tab)?.path ?? ''
+        const artifacts = rankArtifacts(insight?.artifacts ?? [], insight?.summary).slice(0, 15)
+        const files = (insight?.files ?? []).map((f) => ({ ...f, session: tab, cwd }))
+        const panel = `${id}-files-${index}`
+        return (
+          <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }} data-drop={over === tab} {...zone(tab)}>
+            <TerminalPane
+              name={tab}
+              active={tab === active}
+              focusSignal={tab === active ? focusSignal : 0}
+              tools={
+                insight ? (
+                  <button
+                    type="button"
+                    className="files-toggle"
+                    aria-expanded={filesOpen === tab}
+                    aria-controls={panel}
+                    onClick={() => setFilesOpen((open) => (open === tab ? null : tab))}
+                  >
+                    Artifacts <span className="files-count">{artifacts.length + files.filter((f) => !f.gone).length}</span>
+                  </button>
+                ) : null
+              }
+            />
+            {filesOpen === tab && insight ? (
+              <section
+                id={panel}
+                className="files-panel"
+                aria-label={`${tab} artifacts`}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return
+                  setFilesOpen(null)
+                  event.currentTarget.parentElement?.querySelector<HTMLElement>('.files-toggle')?.focus()
+                }}
+              >
+                <h2>Artifacts</h2>
+                {artifacts.length ? <ArtifactList artifacts={artifacts} now={now} /> : <p className="lane-empty">No pull requests or reviews seen yet.</p>}
+                <h2>Files</h2>
+                {files.length ? <FileList files={files} now={now} onPick={setPreview} /> : <p className="lane-empty">No files written yet.</p>}
+              </section>
+            ) : null}
+            {over === tab ? <div className="drop-hint">Drop to copy into {tab}'s folder</div> : null}
+            <p className="drop-note" role="status">
+              {notes[tab] ?? ''}
+            </p>
+          </div>
+        )
+      })}
+      {preview ? (
+        <FilePreview
+          key={`${preview.session}${preview.path}`}
+          file={preview}
+          known={(insights.get(preview.session)?.files ?? []).map((f) => f.path)}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
     </section>
   )
 }
