@@ -275,12 +275,12 @@ export function TerminalPane({
         <span className="terminal-copied" role="status">
           {copyNote}
         </span>
-        {tools}
         {status === 'closed' || status === 'rejected' ? (
           <button type="button" onClick={() => reconnectRef.current()}>
             reconnect
           </button>
         ) : null}
+        {tools}
       </div>
       <div ref={containerRef} className="terminal-screen" />
     </div>
