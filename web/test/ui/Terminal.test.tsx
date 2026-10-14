@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { TerminalPane } from '../../src/components/Terminal'
+import { clipboardText, TerminalPane } from '../../src/components/Terminal'
 import { TerminalTabs } from '../../src/components/TerminalTabs'
 import { applyLook, DEVBOX, PRESETS } from '../../src/theme'
 
@@ -18,6 +18,13 @@ const hoisted = vi.hoisted(() => {
     options: Record<string, unknown>
     dataCb: ((data: string) => void) | null = null
     resizeCb: ((size: { cols: number; rows: number }) => void) | null = null
+    osc = new Map<number, (data: string) => boolean>()
+    parser = {
+      registerOscHandler: (code: number, cb: (data: string) => boolean) => {
+        this.osc.set(code, cb)
+        return { dispose: vi.fn(() => this.osc.delete(code)) }
+      },
+    }
 
     constructor(options: Record<string, unknown> = {}) {
       this.options = { ...options }
@@ -364,6 +371,64 @@ describe('TerminalPane', () => {
     expect(xterms[0].focus).not.toHaveBeenCalled()
     rerender(<TerminalPane name="api" active />)
     expect(xterms[0].focus).toHaveBeenCalled()
+  })
+
+  it('puts text the session copies (OSC 52) on the clipboard, says whether it worked, and never reads the clipboard', async () => {
+    const writeText = vi.fn(async () => undefined)
+    const readText = vi.fn(async () => 'secret')
+    vi.stubGlobal('navigator', { clipboard: { writeText, readText } })
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    vi.useFakeTimers()
+    try {
+      render(<TerminalPane name="api" active />)
+      const osc = xterms[0].osc.get(52)!
+      expect(xterms[0].options.macOptionClickForcesSelection).toBe(true)
+      await act(async () => {
+        expect(osc('c;aMOpbGxvIOKckw==')).toBe(true)
+      })
+      expect(writeText).toHaveBeenCalledWith('héllo ✓')
+      expect(screen.getByRole('status')).toHaveTextContent('copied')
+      await act(async () => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(screen.getByRole('status')).toHaveTextContent('')
+      osc('c;?')
+      expect(readText).not.toHaveBeenCalled()
+      expect(writeText).toHaveBeenCalledTimes(1)
+
+      writeText.mockRejectedValueOnce(new Error('NotAllowedError'))
+      await act(async () => {
+        osc(';aGk=')
+      })
+      expect(screen.getByRole('status')).toHaveTextContent('copy blocked: ⌥-drag, then ⌘C')
+
+      const { rerender } = render(<TerminalPane name="web" active />)
+      rerender(<TerminalPane name="web" active={false} />)
+      xterms[1].osc.get(52)!(';aGk=')
+      expect(writeText).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        vi.advanceTimersByTime(5000)
+      })
+      focus.mockReturnValue(false)
+      await act(async () => {
+        osc(';aGk=')
+      })
+      expect(writeText).toHaveBeenCalledTimes(2)
+      expect(screen.getAllByRole('status')[0]).toHaveTextContent('')
+    } finally {
+      focus.mockRestore()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('decodes OSC 52 payloads and ignores queries and garbage', () => {
+    expect(clipboardText('c;aGVsbG8=')).toBe('hello')
+    expect(clipboardText(';aGk=')).toBe('hi')
+    expect(clipboardText('pc;aGk=')).toBe('hi')
+    expect(clipboardText('s;aGk=')).toBe('hi')
+    for (const bad of ['c;?', 'c;', 'c; ', 'c;***', '', 'aGk=', 'p;aGk=', 'q0;aGk=', 'xyzc;aGk=', '?c;aGk=']) expect(clipboardText(bad)).toBeNull()
   })
 
   it('drops the WebGL renderer when its context is lost', () => {

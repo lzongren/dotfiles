@@ -5,6 +5,7 @@ export const TERMINAL_OPTIONS = {
   fontSize: 13,
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   scrollback: 5000,
+  macOptionClickForcesSelection: true,
   minimumContrastRatio: 4.5,
   theme: {
     background: '#0e1014',

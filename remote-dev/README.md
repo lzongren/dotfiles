@@ -182,8 +182,13 @@ The sidebar lists every session, most recent first, with a headline: the
 title the agent gives its terminal (Claude Code and Codex keep it current).
 Click one to open it in a terminal tab beside the list; each tab is an
 ordinary tmux client, so closing the tab detaches without touching the
-session. Press `/` to search: Enter attaches a running session, starts the
-chosen agent in an existing workspace folder, or creates a new one with the
+session. Dragging over text copies it to the laptop clipboard: tmux sends
+the selection back and the tab flashes "copied". As with `clipboard-write`
+in the Ghostty config here, anything in the visible session can set the
+clipboard this way; unlike Ghostty's config, nothing can read it. In an
+app that takes the mouse, or if the browser refuses (Safari may), hold
+Option while dragging, then press ⌘C. Press `/` to search: Enter attaches a
+running session, starts the chosen agent in an existing workspace folder, or creates a new one with the
 same rules as `devbox --cc <name>` from a synced root. Rows whose names don't
 match `[A-Za-z0-9][A-Za-z0-9_-]*` are listed but can't be attached from the
 web. The server binds 127.0.0.1 only; the token arrives in the URL

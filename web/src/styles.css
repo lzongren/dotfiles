@@ -628,6 +628,10 @@ kbd {
   color: var(--bell);
 }
 
+.terminal-copied {
+  color: var(--accent);
+}
+
 .terminal-bar button {
   margin-left: auto;
   background: var(--surface);
