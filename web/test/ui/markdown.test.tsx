@@ -37,6 +37,8 @@ describe('markdown rendering', () => {
     expect(html).toContain('<a data-anchor="md-open-questions" role="link" tabindex="0">jump</a>')
     const ids = [...render('## Setup & Install_now\n## _Draft_ plan\n## See [docs](https://x.io)\n## Q&amp;A\n## The `foo` option\n\nFoo\nbar\n===').matchAll(/id="([^"]+)"/g)].map((m) => m[1])
     expect(ids).toEqual(['md-setup--install_now', 'md-draft-plan', 'md-see-docs', 'md-qa', 'md-the-foo-option', 'md-foo-bar'])
+    expect([...render('# foo\n# foo\n# foo-1').matchAll(/id="([^"]+)"/g)].map((m) => m[1])).toEqual(['md-foo', 'md-foo-1', 'md-foo-1-1'])
+    expect(render('[top](#) [self](plan.md)')).toBe('<p><span>top</span> <span>self</span></p>\n')
   })
 
   it('survives malformed escapes and leaves bare file names as text', () => {
@@ -46,7 +48,7 @@ describe('markdown rendering', () => {
     expect(render('[ftp](ftp://h/x) [p](//cdn.io/a) and //example.com/x')).toBe('<p><span>ftp</span> <span>p</span> and <span>//example.com/x</span></p>\n')
     const self = render('[setup](plan.md#setup) [same](./plan.md) [there](spec.md#intro)')
     expect(self).toContain('<a data-anchor="md-setup" role="link" tabindex="0">setup</a>')
-    expect(self).toContain('<a data-path="/home/me/work/api/docs/plan.md" role="link" tabindex="0">same</a>')
+    expect(self).toContain('<span>same</span>')
     expect(self).toContain('<a data-path="/home/me/work/api/docs/spec.md" role="link" tabindex="0">there</a>')
   })
 
@@ -64,7 +66,10 @@ describe('markdown rendering', () => {
     expect(html).toContain('<li class="md-task"><label><input type="checkbox" disabled checked> done</label></li>')
     expect(render('- \\[ \\] escaped\n- [x]\ttabbed')).toMatch(/<li>\[ \] escaped<\/li>\n<li class="md-task"><label><input type="checkbox" disabled checked> tabbed/)
     expect(render('- [ ] loose\n\n  more\n- not [ ] a task')).toMatch(/<li class="md-task">\s*<p><label><input type="checkbox" disabled> loose<\/label><\/p>[\s\S]*<li>\s*<p>not \[ \] a task<\/p>/)
-    expect(html).toContain('<table tabindex="0">')
+    expect(html).toContain('<div class="md-table" role="region" aria-label="table" tabindex="0"><table>')
+    expect(render('[![build](https://img.shields.io/x.svg)](https://ci.example.com) [![logo](logo.png)](spec.md)')).toBe(
+      '<p><a href="https://ci.example.com" target="_blank" rel="noopener noreferrer"><span class="md-image">image: build</span></a> <a data-path="/home/me/work/api/docs/spec.md" role="link" tabindex="0"><span class="md-image">image: logo</span></a></p>\n',
+    )
     expect(html).toMatch(/<pre tabindex="0"><code class="language-ts"><span class="hljs-keyword">const<\/span>/)
   })
 

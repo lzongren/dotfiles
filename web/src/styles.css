@@ -1380,10 +1380,14 @@ details[open] > .parked-toggle::before {
   color: var(--dim);
 }
 
-.md table {
-  display: block;
+.md .md-table {
   max-width: 100%;
+  margin: 0 0 1em;
   overflow-x: auto;
+}
+
+.md table {
+  margin: 0;
   border-collapse: collapse;
   font-size: 0.92em;
 }

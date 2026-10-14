@@ -79,6 +79,11 @@ function extension(file: string): string {
 }
 
 export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): string[][] {
+  const body = text.replace(/^\uFEFF/, '')
+  return splitRows(body, sep, max, true) ?? splitRows(body, sep, max, false)!
+}
+
+function splitRows(text: string, sep: string, max: number, quotes: boolean): string[][] | null {
   const rows: string[][] = []
   let row: string[] = []
   let cell = ''
@@ -92,7 +97,7 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
         i++
       } else if (c === '"') quoted = false
       else cell += c
-    } else if (c === '"' && cell === '') quoted = touched = true
+    } else if (quotes && c === '"' && cell === '') quoted = touched = true
     else if (c === sep) {
       row.push(cell)
       cell = ''
@@ -106,7 +111,8 @@ export function parseDelimited(text: string, sep: string, max = TABLE_ROWS): str
       touched = false
     } else cell += c
   }
-  if ((cell !== '' || row.length > 0 || (touched && !quoted)) && rows.length < max) rows.push([...row, cell])
+  if (quoted) return null
+  if ((cell !== '' || row.length > 0 || touched) && rows.length < max) rows.push([...row, cell])
   return rows
 }
 

@@ -4,7 +4,7 @@ import { highlight } from './highlight'
 interface Env {
   file: string
   dir: string
-  slugs: Map<string, number>
+  ids: Set<string>
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, highlight: (code, lang) => highlight(code, lang.trim().split(/\s+/)[0] || null) ?? '' })
@@ -72,9 +72,10 @@ md.renderer.rules.heading_open = (tokens, i, options, env: Env, self) => {
     .map((t) => (t.type === 'text' || t.type === 'code_inline' ? t.content : t.type.endsWith('break') ? ' ' : ''))
     .join('')
   const base = `md-${slug(text)}`
-  const seen = env.slugs.get(base) ?? 0
-  env.slugs.set(base, seen + 1)
-  tokens[i].attrSet('id', seen ? `${base}-${seen}` : base)
+  let id = base
+  for (let n = 1; env.ids.has(id); n++) id = `${base}-${n}`
+  env.ids.add(id)
+  tokens[i].attrSet('id', id)
   tokens[i].attrSet('tabindex', '-1')
   return self.renderToken(tokens, i, options)
 }
@@ -89,9 +90,10 @@ md.renderer.rules.link_open = (tokens, i, options, env: Env, self) => {
   }
   const path = href.startsWith('#') ? env.file : local(href, env)
   const hash = href.indexOf('#')
+  const anchor = path === env.file && hash >= 0 ? slug(decode(href.slice(hash + 1))) : ''
   token.attrs = (token.attrs ?? []).filter(([name]) => name !== 'href')
-  if (path === env.file && hash >= 0) token.attrs.push(...internal('data-anchor', `md-${slug(decode(href.slice(hash + 1)))}`))
-  else if (path) token.attrs.push(...internal('data-path', path))
+  if (anchor) token.attrs.push(...internal('data-anchor', `md-${anchor}`))
+  else if (path && path !== env.file) token.attrs.push(...internal('data-path', path))
   else {
     token.tag = 'span'
     let close = i + 1
@@ -101,12 +103,17 @@ md.renderer.rules.link_open = (tokens, i, options, env: Env, self) => {
   return self.renderToken(tokens, i, options)
 }
 
+md.renderer.rules.table_open = () => '<div class="md-table" role="region" aria-label="table" tabindex="0"><table>\n'
+md.renderer.rules.table_close = () => '</table>\n</div>\n'
+
 const image = md.renderer.rules.image!
 md.renderer.rules.image = (tokens: Token[], i, options, env: Env, self) => {
   const token = tokens[i]
   const src = token.attrGet('src') ?? ''
   if (/^data:image\//i.test(src)) return image(tokens, i, options, env, self)
   const alt = md.utils.escapeHtml(self.renderInlineAsText(token.children ?? [], options, env) || src)
+  const linked = tokens.slice(0, i).reduce((depth, t) => depth + (t.type === 'link_open' ? 1 : t.type === 'link_close' ? -1 : 0), 0) > 0
+  if (linked) return `<span class="md-image">image: ${alt}</span>`
   const path = local(src, env)
   if (path) return `<a class="md-image" data-path="${md.utils.escapeHtml(path)}" role="link" tabindex="0">image: ${alt}</a>`
   if (!EXTERNAL.test(src)) return `<span class="md-image">image: ${alt}</span>`
@@ -115,6 +122,6 @@ md.renderer.rules.image = (tokens: Token[], i, options, env: Env, self) => {
 
 export function renderMarkdown(text: string, file: string): string {
   const at = resolvePath('/', file)
-  const env: Env = { file: at, dir: at.slice(0, at.lastIndexOf('/')) || '/', slugs: new Map() }
-  return md.render(text, env).replace(/<(pre|table)>/g, '<$1 tabindex="0">')
+  const env: Env = { file: at, dir: at.slice(0, at.lastIndexOf('/')) || '/', ids: new Set() }
+  return md.render(text, env).replace(/<pre>/g, '<pre tabindex="0">')
 }
