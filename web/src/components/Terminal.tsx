@@ -18,6 +18,7 @@ const COPIED_MS = 1500
 const BLOCKED_MS = 5000
 const MISS_DELAY_MS = 1500
 const SGR_MOUSE = /\x1b\[<(\d+);(\d+;\d+)M/
+const SGR_LEFT = 0
 const SGR_MODIFIERS = 4 | 8 | 16
 const SGR_MOTION = 32
 
@@ -25,7 +26,7 @@ function leftButtonCell(data: string): { cell: string; moved: boolean } | null {
   const match = SGR_MOUSE.exec(data)
   if (!match) return null
   const button = Number(match[1]) & ~SGR_MODIFIERS
-  return button === 0 || button === SGR_MOTION ? { cell: match[2], moved: button === SGR_MOTION } : null
+  return button === SGR_LEFT || button === SGR_MOTION ? { cell: match[2], moved: button === SGR_MOTION } : null
 }
 const decoder = new TextDecoder()
 
@@ -119,10 +120,11 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       missTimer = null
     }
     const press = (event: MouseEvent) => {
+      if (event.button !== 0) return
       cancelMiss()
       const onRows = event.target instanceof Element && event.target.closest('.xterm-screen') !== null && container?.contains(event.target) === true
       const forced = mac ? event.altKey && term.options.macOptionClickForcesSelection : event.shiftKey
-      pressed = onRows && event.button === 0 && !forced && term.modes.mouseTrackingMode !== 'none' ? {} : null
+      pressed = onRows && !forced && term.modes.mouseTrackingMode !== 'none' ? {} : null
     }
     const release = (event: MouseEvent) => {
       if (event.button !== 0) return
@@ -143,11 +145,12 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
     window.addEventListener('mousedown', press, true)
     window.addEventListener('mouseup', release, true)
     window.addEventListener('blur', forget)
+    window.addEventListener('contextmenu', forget)
     const dataSub = term.onData((data) => {
-      if (pressed) {
-        const report = leftButtonCell(data)
-        if (report?.moved) pressed.to = report.cell
-        else if (report) pressed.from ??= report.cell
+      const report = pressed ? leftButtonCell(data) : null
+      if (pressed && report) {
+        if (report.moved) pressed.to = report.cell
+        else pressed.from ??= report.cell
       }
       sendInput(data)
     })
@@ -297,6 +300,7 @@ export function TerminalPane({ name, active, focusSignal = 0 }: { name: string; 
       window.removeEventListener('mousedown', press, true)
       window.removeEventListener('mouseup', release, true)
       window.removeEventListener('blur', forget)
+      window.removeEventListener('contextmenu', forget)
       stopLook()
       ws?.close()
       dataSub.dispose()
