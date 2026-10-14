@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FilePreview, indentJson, parseDelimited } from '../../src/components/FilePreview'
 import { Overview } from '../../src/components/Overview'
 import type { AgentInsight, FileView, Session } from '../../src/shared/types'
 
@@ -97,7 +98,7 @@ describe('agent files', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ship the API' }))
     fireEvent.click(within(screen.getByRole('article', { name: 'api details' })).getByRole('button', { name: 'plan.md' }))
     const dialog = within(screen.getByRole('dialog', { name: 'plan.md' }))
-    expect(await dialog.findByText('# The plan')).toBeInTheDocument()
+    expect(await dialog.findByRole('heading', { name: 'The plan' })).toBeInTheDocument()
     expect(calls[0].url).toBe('/api/file?session=api&path=%2Fhome%2Fme%2Fwork%2Fapi%2Fdocs%2Fplan.md')
     expect(dialog.getByText(/laptop copy/)).toBeInTheDocument()
     expect(dialog.getByRole('link', { name: 'Download' })).toHaveAttribute('download', 'plan.md')
@@ -148,5 +149,130 @@ describe('agent files', () => {
     fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Open on laptop' }))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('shown in its folder'))
+  })
+})
+
+describe('file viewer', () => {
+  const text = (path: string, body: string) => {
+    views[path] = { path, size: body.length, mtime: sec(5), kind: 'text', text: body, truncated: false }
+  }
+  const preview = (path: string, known: string[] = []) => {
+    render(<FilePreview file={{ session: 'api', path }} known={known} onClose={vi.fn()} />)
+    return within(screen.getByRole('dialog'))
+  }
+
+  it('renders Markdown, with the source a click away', async () => {
+    text('/w/plan.md', '# The plan\n\n- [x] done')
+    const dialog = preview('/w/plan.md')
+    expect(await dialog.findByRole('heading', { name: 'The plan' })).toBeInTheDocument()
+    expect(dialog.getByRole('checkbox', { name: 'done' })).toBeChecked()
+    expect(dialog.getByRole('button', { name: 'Rendered' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(dialog.getByRole('button', { name: 'Source' }))
+    expect(dialog.getByLabelText('plan.md contents')).toHaveTextContent('# The plan - [x] done')
+    expect(dialog.queryByRole('heading', { name: 'The plan' })).toBeNull()
+  })
+
+  it('follows links to files the agent wrote, says why it cannot follow others, and jumps to headings', async () => {
+    text('/w/docs/plan.md', '# Plan\n\n[the code](../src/x.ts) [elsewhere](/etc/hosts) [top](#plan) [self](plan.md)')
+    text('/w/src/x.ts', 'const a = 1\n')
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const dialog = preview('/w/docs/plan.md', ['/w/docs/plan.md', '/w/src/x.ts'])
+    fireEvent.click(await dialog.findByRole('link', { name: 'top' }))
+    expect(scroll.mock.contexts[0]).toBe(dialog.getByRole('heading', { name: 'Plan' }))
+    expect(document.activeElement).toBe(dialog.getByRole('heading', { name: 'Plan' }))
+    expect(dialog.getByRole('link', { name: 'the code' })).not.toHaveAttribute('href')
+    expect(dialog.queryByRole('link', { name: 'self' })).toBeNull()
+    expect(dialog.getByText('self').tagName).toBe('SPAN')
+
+    fireEvent.click(dialog.getByRole('link', { name: 'elsewhere' }))
+    expect(dialog.getByRole('status')).toHaveTextContent("hosts isn't a file this agent wrote")
+
+    fireEvent.keyDown(dialog.getByRole('link', { name: 'the code' }), { key: 'Enter' })
+    expect(await dialog.findByRole('heading', { name: 'x.ts' })).toHaveFocus()
+    expect(await dialog.findByLabelText('x.ts contents')).toContainHTML('<span class="hljs-keyword">const</span>')
+    expect(location.hash).toBe('')
+
+    fireEvent.click(dialog.getByRole('button', { name: 'Back' }))
+    await waitFor(() => expect(dialog.getByRole('heading', { name: 'plan.md' })).toHaveFocus())
+    expect(await dialog.findByRole('heading', { name: 'Plan' })).toBeInTheDocument()
+    expect(dialog.queryByRole('button', { name: 'Back' })).toBeNull()
+  })
+
+  it('re-indents JSON without changing a single value', () => {
+    for (const sample of ['{"a":[1,"x",{},[]],"b":{"c":null,"d":[true,false]}}', '[]', '"s"', '{ "e" : [ ] }']) {
+      expect(indentJson(sample)).toBe(JSON.stringify(JSON.parse(sample), null, 2))
+    }
+    expect(indentJson('{"id":12345678901234567890,"n":1.0,"k":1,"k":2,"s":"a\\"},[:"}')).toBe(
+      '{\n  "id": 12345678901234567890,\n  "n": 1.0,\n  "k": 1,\n  "k": 2,\n  "s": "a\\"},[:"\n}',
+    )
+  })
+
+  it('pretty-prints JSON, and shows broken JSON as it is', async () => {
+    text('/w/a.json', '{"a":[1,"x"]}')
+    const dialog = preview('/w/a.json')
+    const formatted = await dialog.findByLabelText('a.json, formatted')
+    expect(formatted.textContent).toBe('{\n  "a": [\n    1,\n    "x"\n  ]\n}')
+    expect(formatted.querySelector('.hljs-number')).toHaveTextContent('1')
+    cleanup()
+
+    text('/w/b.json', '{"a":')
+    const broken = preview('/w/b.json')
+    expect(await broken.findByLabelText('b.json contents')).toHaveTextContent('{"a":')
+    expect(broken.queryByRole('button', { name: 'Formatted' })).toBeNull()
+  })
+
+  it('shows CSV and TSV as tables, keeping quoted separators and newlines inside a cell', async () => {
+    expect(parseDelimited('a,b\r\n"x, ""y""","multi\nline"\n', ',')).toEqual([['a', 'b'], ['x, "y"', 'multi\nline']])
+    expect(parseDelimited('1\n2\n3\n', ',', 2)).toEqual([['1'], ['2']])
+    expect(parseDelimited('name\n""\n\nbob\n\n', ',')).toEqual([['name'], [''], ['bob']])
+    expect(parseDelimited('name\n""', ',')).toEqual([['name'], ['']])
+    expect(parseDelimited('a\n"', ',')).toEqual([['a'], ['"']])
+    expect(parseDelimited('\uFEFF"name","x"\n', ',')).toEqual([['name', 'x']])
+    expect(parseDelimited('a\tb\n"oops\tc\nd\te\n', '\t')).toEqual([['a', 'b'], ['"oops', 'c'], ['d', 'e']])
+    expect(parseDelimited('name,desc\n"Smith, J",ok\n"broken,x\n', ',')).toEqual([['name', 'desc'], ['Smith, J', 'ok'], ['"broken', 'x']])
+    expect(parseDelimited('a,b\n"x, y","multi\nline"\n"cut, off', ',')).toEqual([['a', 'b'], ['x, y', 'multi\nline'], ['"cut', ' off']])
+    expect(parseDelimited('a,b\n"l1\nl2,x', ',')).toEqual([['a', 'b'], ['"l1'], ['l2', 'x']])
+    expect(parseDelimited('a\tb\n"x\ty"\tz\n', '\t')).toEqual([['a', 'b'], ['x\ty', 'z']])
+    text('/w/t.tsv', 'name\tcount\nfoo\t3\n')
+    const dialog = preview('/w/t.tsv')
+    const table = within(await dialog.findByRole('table'))
+    expect(table.getByRole('columnheader', { name: 'count' })).toBeInTheDocument()
+    expect(table.getByRole('cell', { name: 'foo' })).toBeInTheDocument()
+    expect(dialog.getByRole('region', { name: 't.tsv, as a table' })).toBeInTheDocument()
+    cleanup()
+
+    const lines = (n: number) => ['h', ...Array.from({ length: n }, (_, i) => `${i}`)].join('\n')
+    text('/w/full.csv', `${lines(1000)}\n\n\n`)
+    const full = preview('/w/full.csv')
+    expect(await full.findAllByRole('row')).toHaveLength(1001)
+    expect(full.queryByText(/Showing the first/)).toBeNull()
+    cleanup()
+
+    text('/w/more.csv', lines(1001))
+    const more = preview('/w/more.csv')
+    expect(await more.findAllByRole('row')).toHaveLength(1001)
+    expect(more.getByText('Showing the first 1000 rows.')).toBeInTheDocument()
+  })
+
+  it('renders HTML in a sandbox with scripts off', async () => {
+    text('/w/r.html', '<h1>Report</h1><script>parent.x = 1</script>')
+    const dialog = preview('/w/r.html')
+    const frame = await dialog.findByTitle('r.html, rendered without scripts')
+    expect(frame).toHaveAttribute('sandbox', '')
+    expect(frame).toHaveAttribute('srcdoc', '<h1>Report</h1><script>parent.x = 1</script>')
+    expect(dialog.getByText(/Scripts are off/)).toBeInTheDocument()
+  })
+
+  it('numbers source lines and drops the numbers when wrapping', async () => {
+    text('/w/app.py', 'def f():\n    return 1\n')
+    const dialog = preview('/w/app.py')
+    const code = await dialog.findByLabelText('app.py contents')
+    expect(code.querySelector('.hljs-keyword')).toHaveTextContent('def')
+    expect(code.parentElement?.querySelector('.file-gutter')?.textContent).toBe('1\n2')
+    expect(dialog.queryByRole('button', { name: 'Source' })).toBeNull()
+    fireEvent.click(dialog.getByRole('button', { name: 'Wrap lines' }))
+    expect(dialog.getByRole('button', { name: 'Wrap lines' })).toHaveAttribute('aria-pressed', 'true')
+    expect(code.parentElement?.querySelector('.file-gutter')).toBeNull()
   })
 })

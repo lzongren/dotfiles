@@ -72,6 +72,7 @@ const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const TOKENS = [
   '--bg', '--surface', '--raised', '--selected', '--text', '--dim', '--accent', '--bell', '--border', '--control',
   '--term-bg', '--bell-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono', '--term-pad',
+  '--hl-keyword', '--hl-string', '--hl-number', '--hl-title', '--hl-type', '--hl-comment', '--hl-add', '--hl-del',
 ]
 const ANSI = [
   'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
@@ -181,6 +182,7 @@ export function uiTokens(p: Palette, more = false): Record<string, string> {
   const bellBg = mix(bg, p.ansi[3], 0.2)
   const surfaces = [bg, surface, raised, selected]
   const text = (color: string, extra: string[] = []) => readable(color, [...surfaces, ...extra], 4.6, edge)
+  const code = (i: number) => readable(p.ansi[i], [p.background], 4.6, edge)
   return {
     '--bg': bg,
     '--surface': surface,
@@ -198,6 +200,14 @@ export function uiTokens(p: Palette, more = false): Record<string, string> {
     '--on-accent': bg,
     '--on-bell': bg,
     '--on-danger': bg,
+    '--hl-keyword': code(dark ? 13 : 5),
+    '--hl-string': code(dark ? 10 : 2),
+    '--hl-number': code(dark ? 11 : 3),
+    '--hl-title': code(dark ? 12 : 4),
+    '--hl-type': code(dark ? 14 : 6),
+    '--hl-comment': readable(mix(fg, p.background, 0.4), [p.background], 4.6, edge),
+    '--hl-add': code(dark ? 10 : 2),
+    '--hl-del': code(dark ? 9 : 1),
   }
 }
 

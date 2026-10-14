@@ -158,7 +158,10 @@ The same scan records the files each agent wrote (Claude Code's Write and
 Edit, Codex patches), so a card counts them and the detail panel lists them
 by folder; with nothing selected, the side panel shows the latest ones across
 sessions. Click one to preview it: text and images show inline, and anything
-up to 1 MB can be downloaded. A file under a `DEVBOX_SYNCS` folder is read
+up to 1 MB can be downloaded. Markdown is rendered, code is highlighted with
+line numbers, JSON is pretty-printed, CSV and TSV show as tables, and HTML is
+rendered with scripts off; "Source" shows the raw text. Links in a Markdown file
+to other files the agent wrote open in the preview, and "Back" returns. A file under a `DEVBOX_SYNCS` folder is read
 from the laptop copy; "Open on laptop" opens text files and images in their
 default app and only shows anything else (scripts, apps, PDFs) in its folder. Other
 files are read over ssh. Only files the agent wrote can be read this way.
