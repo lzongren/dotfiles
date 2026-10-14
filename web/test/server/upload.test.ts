@@ -49,9 +49,12 @@ describe('remote upload writer', () => {
 
   it('exits, rather than spinning, when the header itself is cut short', () => {
     const [head] = uploadInput(dir, 'never.bin', Buffer.from('x'))
-    const out = spawnSync('sh', ['-c', UPLOAD_COMMAND.join(' ')], { input: head.subarray(0, 10), timeout: 5000 })
-    expect(out.signal).toBeNull()
-    expect(out.status).not.toBe(0)
+    const cut = spawnSync('sh', ['-c', UPLOAD_COMMAND.join(' ')], { input: head.subarray(0, 10), timeout: 5000 })
+    expect(cut.signal).toBeNull()
+    expect(cut.status).toBe(1)
+    expect(cut.stderr.toString()).toContain('JSONDecodeError')
+    const bare = spawnSync('sh', ['-c', UPLOAD_COMMAND.join(' ')], { input: head.subarray(0, head.length - 1), timeout: 5000 })
+    expect(parseUpload(bare.stdout.toString())).toEqual({ error: 'upload cut short' })
     expect(readdirSync(dir)).not.toContain('never.bin')
   })
 
