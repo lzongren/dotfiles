@@ -394,7 +394,10 @@ describe('TerminalPane', () => {
         rows.className = 'xterm-screen'
         const status = () => within(container).getByRole('status')
         const press = (init: MouseEventInit = {}, on: Element = rows) => fireEvent.mouseDown(on, { button: 0, ...init })
-        const move = () => term.dataCb!('\x1b[<32;5;1M')
+        const move = () => {
+          term.dataCb!('\x1b[<32;5;1M')
+          term.dataCb!('\x1b[<32;6;1M')
+        }
         const release = (button = 0) => fireEvent.mouseUp(window, { button })
         const drag = (init: MouseEventInit = {}, on: Element = rows, moved = true) => {
           press(init, on)
@@ -420,6 +423,10 @@ describe('TerminalPane', () => {
       a.release()
       a.press()
       a.term.dataCb!('\x1b[<34;5;1M')
+      a.term.dataCb!('\x1b[<34;6;1M')
+      a.release()
+      a.press()
+      a.term.dataCb!('\x1b[<32;5;1M')
       a.release()
       await later(1500)
       expect(a.status()).toBeEmptyDOMElement()

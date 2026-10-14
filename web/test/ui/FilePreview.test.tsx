@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FilePreview, indentJson, parseDelimited } from '../../src/components/FilePreview'
 import { Overview } from '../../src/components/Overview'
@@ -134,6 +134,23 @@ describe('agent files', () => {
     fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
     await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Copied the first 1 MB'))
     expect(writeText).toHaveBeenCalledWith('head')
+  })
+
+  it('drops a copy note that settles after the preview moved to another file, even on coming Back', async () => {
+    let settle: () => void = () => undefined
+    const writeText = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)))
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    views['/w/a.md'] = { path: '/w/a.md', size: 9, mtime: sec(5), kind: 'text', text: '[b](b.md)', truncated: false }
+    views['/w/b.md'] = { path: '/w/b.md', size: 3, mtime: sec(5), kind: 'text', text: '# B', truncated: false }
+    render(<FilePreview file={{ session: 'api', path: '/w/a.md' }} known={['/w/a.md', '/w/b.md']} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
+    fireEvent.click(dialog.getByRole('link', { name: 'b' }))
+    expect(await dialog.findByRole('heading', { name: 'B' })).toBeInTheDocument()
+    fireEvent.click(dialog.getByRole('button', { name: 'Back' }))
+    expect(await dialog.findByRole('link', { name: 'b' })).toBeInTheDocument()
+    await act(async () => settle())
+    expect(dialog.getByRole('status')).toBeEmptyDOMElement()
   })
 
   it('offers no Copy text for an empty file', async () => {

@@ -301,12 +301,15 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
-  const copy = (text: string, done: string, instead: string) => {
+  const noteForThisVisit = () => {
     const at = visit.current
-    const failed = `Could not copy — ${instead}`
-    const say = (message: string) => {
+    return (message: string) => {
       if (visit.current === at) setNote(message)
     }
+  }
+  const copy = (text: string, done: string, instead: string) => {
+    const say = noteForThisVisit()
+    const failed = `Could not copy — ${instead}`
     if (!navigator.clipboard) say(failed)
     else
       void navigator.clipboard.writeText(text).then(
@@ -315,8 +318,9 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
       )
   }
   const open = () => {
+    const say = noteForThisVisit()
     void openFile(file.session, path).then((r) =>
-      setNote(r.kind !== 'ok' ? failure(r) : r.data.revealed ? 'Not a document type, so it is shown in its folder instead' : 'Opened on this laptop'),
+      say(r.kind !== 'ok' ? failure(r) : r.data.revealed ? 'Not a document type, so it is shown in its folder instead' : 'Opened on this laptop'),
     )
   }
 
@@ -325,6 +329,8 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const name = baseName(path)
   const format = useMemo(() => (view ? formatOf(view) : null), [view])
   const showSource = !format || source
+  const copyText = () =>
+    copy(text ?? '', view?.truncated ? 'Copied the first 1 MB' : 'Text copied', showSource ? 'select the text below' : 'switch to Source and select it')
   return (
     <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
       <header className="file-head">
@@ -363,7 +369,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
             </a>
           ) : null}
           {text ? (
-            <button type="button" onClick={() => copy(text, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', format && !source ? 'switch to Source and select it' : 'select the text below')}>
+            <button type="button" onClick={copyText}>
               Copy text
             </button>
           ) : null}
