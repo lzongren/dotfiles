@@ -80,12 +80,21 @@ export function TerminalTabs({
         job.problems.push(`${job.current}: upload failed${job.files.length ? `, ${job.files.length} more not copied` : ''}`)
       } finally {
         jobs.current.delete(tab)
-        const placed = job.placed.map((p) => ({ ...p, dir: p.path.slice(0, p.path.lastIndexOf('/')) || '/', base: p.path.slice(p.path.lastIndexOf('/') + 1) }))
-        const dirs = new Set(placed.map((p) => p.dir))
-        const renamed = placed.filter((p) => p.base !== p.name).map((p) => `${p.name} saved as ${p.base}`)
-        const done =
-          placed.length === 1 ? `Copied to ${placed[0].path}` : placed.length ? `Copied ${placed.length} files${dirs.size === 1 ? ` to ${placed[0].dir}` : ''}` : ''
-        note(tab, [done, ...(placed.length > 1 ? renamed : []), ...job.problems].filter(Boolean).join(' · '))
+        const { placed } = job
+        const dir = (p: string) => p.slice(0, p.lastIndexOf('/')) || '/'
+        const base = (p: string) => p.slice(p.lastIndexOf('/') + 1)
+        const lines = [...job.problems]
+        if (placed.length === 1) lines.unshift(`Copied to ${placed[0].path}`)
+        else if (placed.length) {
+          const renamed = placed.filter((p) => base(p.path) !== p.name).map((p) => `${p.name} saved as ${base(p.path)}`)
+          const shared = new Set(placed.map((p) => dir(p.path))).size === 1
+          lines.unshift(
+            `Copied ${placed.length} files${shared ? ` to ${dir(placed[0].path)}` : ''}`,
+            ...renamed.slice(0, 3),
+            ...(renamed.length > 3 ? [`${renamed.length - 3} more renamed`] : []),
+          )
+        }
+        note(tab, lines.join(' · '))
       }
     })()
   }
