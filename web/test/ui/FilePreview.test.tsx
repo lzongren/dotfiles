@@ -444,6 +444,7 @@ describe('a quick look that keeps up with the agent', () => {
   })
 
   it('reads again when the first read after an edit still has the old copy, and ignores agent details that drop out and come back', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
     const file = { session: 'api', path: '/w/a.md' }
     md('/w/a.md', '# One')
     const { rerender } = render(<FilePreview file={file} files={[touch('/w/a.md')]} onClose={vi.fn()} />)
@@ -457,9 +458,51 @@ describe('a quick look that keeps up with the agent', () => {
     await waitFor(() => expect(reads()).toBe(2))
     expect(dialog.getByRole('status')).toBeEmptyDOMElement()
     md('/w/a.md', '# Two')
-    expect(await dialog.findByRole('heading', { name: 'Two' }, { timeout: 3000 })).toBeInTheDocument()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(await dialog.findByRole('heading', { name: 'Two' })).toBeInTheDocument()
     expect(reads()).toBe(3)
     expect(dialog.getByRole('status')).toHaveTextContent("Updated to the agent's latest edit")
+    vi.useRealTimers()
+  })
+
+  it('reads again after a failed read, and holds an edit while text in the quick look is selected and it has focus', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const file = { session: 'api', path: '/w/a.md' }
+    md('/w/a.md', '# One')
+    const { rerender } = render(<FilePreview file={file} files={[touch('/w/a.md')]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    await dialog.findByRole('heading', { name: 'One' })
+    const reads = () => calls.filter((c) => c.url.startsWith('/api/file?')).length
+    delete views['/w/a.md']
+    rerender(<FilePreview file={file} files={[touch('/w/a.md', { at: sec(1), count: 2 })]} onClose={vi.fn()} />)
+    await waitFor(() => expect(reads()).toBe(2))
+    md('/w/a.md', '# Two')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(await dialog.findByRole('heading', { name: 'Two' })).toBeInTheDocument()
+    vi.useRealTimers()
+
+    const body = dialog.getByRole('region', { name: 'a.md' })
+    body.focus()
+    const range = document.createRange()
+    range.selectNodeContents(dialog.getByRole('article'))
+    document.getSelection()!.removeAllRanges()
+    document.getSelection()!.addRange(range)
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    md('/w/a.md', '# Three')
+    rerender(<FilePreview file={file} files={[touch('/w/a.md', { at: sec(0), count: 3 })]} onClose={vi.fn()} />)
+    expect(reads()).toBe(3)
+    const outside = document.createElement('button')
+    document.body.append(outside)
+    act(() => outside.focus())
+    expect(await dialog.findByRole('heading', { name: 'Three' })).toBeInTheDocument()
+    outside.remove()
+    document.getSelection()!.removeAllRanges()
   })
 
   it('shows a newly picked file loading, not the last one under its name', async () => {

@@ -58,11 +58,14 @@ const clamp = (n: number, width: number) => {
 function PaneHandle({ share, onShare, onCollapse }: { share: number; onShare: (n: number) => void; onCollapse: () => void }) {
   const dragged = useRef<number | null>(null)
   const held = useRef<HTMLElement | null>(null)
+  const kept = useRef(share)
+  kept.current = share
   const [width, setWidth] = useState(0)
   useEffect(
     () => () => {
       held.current?.removeAttribute('data-resizing')
       held.current?.removeAttribute('data-collapse')
+      held.current?.style.setProperty('--preview-f', String(kept.current))
     },
     [],
   )

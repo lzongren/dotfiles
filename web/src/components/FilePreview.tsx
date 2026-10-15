@@ -75,7 +75,6 @@ const FORMATS: Record<string, Format> = {
 const TABLE_ROWS = 1000
 const LONG_PASTE = 800
 const STALE_RETRY_MS = 2000
-const mac = String(navigator.platform).startsWith('Mac')
 
 function extension(file: string): string {
   const name = baseName(file)
@@ -342,17 +341,18 @@ export function FilePreview({
     if (!refresh) setNote('')
     const fetchFile = (tries: number) =>
       void getFile(file.session, path).then((r) => {
-        if (!live || (refresh && r.kind !== 'ok')) return
+        if (!live) return
         const same = refresh && r.kind === 'ok' && r.data.mtime === before?.mtime && r.data.size === before.size && r.data.text === before.text
-        if (same && tries > 0) {
+        if (refresh && (same || r.kind !== 'ok') && tries > 0) {
           retry = window.setTimeout(() => fetchFile(tries - 1), STALE_RETRY_MS)
           return
         }
+        if (refresh && r.kind !== 'ok') return
         loaded.current = { key, stamp }
         setRead({ key, result: r })
         if (refresh && !same) say("Updated to the agent's latest edit")
       })
-    fetchFile(2)
+    fetchFile(loaded.current.stamp ? 2 : 0)
     return () => {
       live = false
       window.clearTimeout(retry)
@@ -364,15 +364,21 @@ export function FilePreview({
   }, [path])
 
   useEffect(() => {
-    if (!docked) return
     const check = () => {
       const selection = document.getSelection()
+      const root = body.current?.parentElement
       const inside = (node: Node | null) => node !== null && body.current?.contains(node) === true
-      setQuotable(selection !== null && !selection.isCollapsed && inside(selection.anchorNode) && inside(selection.focusNode))
+      setQuotable(
+        selection !== null && !selection.isCollapsed && inside(selection.anchorNode) && inside(selection.focusNode) && root?.contains(document.activeElement) === true,
+      )
     }
     document.addEventListener('selectionchange', check)
-    return () => document.removeEventListener('selectionchange', check)
-  }, [docked])
+    document.addEventListener('focusin', check)
+    return () => {
+      document.removeEventListener('selectionchange', check)
+      document.removeEventListener('focusin', check)
+    }
+  }, [])
 
   const close = () => {
     if (docked) {
@@ -420,7 +426,7 @@ export function FilePreview({
       event.key !== ' ' &&
       !event.metaKey &&
       !event.nativeEvent.isComposing &&
-      (event.getModifierState('AltGraph') || (!event.ctrlKey && (!event.altKey || mac)))
+      ((event.getModifierState('AltGraph') && !/^[a-z\d]$/i.test(event.key)) || (!event.ctrlKey && (!event.altKey || String(navigator.platform).startsWith('Mac'))))
     ) {
       event.preventDefault()
       event.stopPropagation()
