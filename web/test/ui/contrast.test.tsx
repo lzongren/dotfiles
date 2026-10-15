@@ -65,8 +65,15 @@ describe('theme contrast (WCAG AA)', () => {
     expect(worst(fg, bg)).toBeGreaterThanOrEqual(4.5)
   })
 
-  it('the warning banner keeps its text readable', () => {
-    expect(worst('bell', 'bell-bg')).toBeGreaterThanOrEqual(4.5)
+  it.each([
+    ['bell-bg', ['text', 'dim', 'bell']],
+    ['danger-bg', ['text', 'dim', 'danger']],
+  ])('rows and banners tinted --%s keep their text readable', (bg, fgs) => {
+    for (const fg of fgs) expect(worst(fg, bg), `--${fg} on --${bg}`).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('the working mark is at least 3:1 wherever it shows', () => {
+    for (const surface of ['bg', 'surface', 'tile', 'selected']) expect(worst('hl-type', surface), surface).toBeGreaterThanOrEqual(3)
   })
 
   it('never fades content with partial opacity, which these checks cannot see', () => {
@@ -114,7 +121,13 @@ describe.each(
         expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
       }
     }
-    expect(contrast(t['--bell'], t['--bell-bg'])).toBeGreaterThanOrEqual(4.5)
+    for (const [bg, fgs] of [['--bell-bg', ['--text', '--dim', '--bell']], ['--danger-bg', ['--text', '--dim', '--danger']]] as const) {
+      for (const fg of fgs) expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('keeps the working mark at least 3:1 wherever it shows', () => {
+    for (const bg of ['--bg', '--surface', '--tile', '--selected']) expect(contrast(t['--hl-type'], t[bg]), bg).toBeGreaterThanOrEqual(3)
   })
 
   it('keeps every code highlight color at least 4.5:1 on the code background', () => {

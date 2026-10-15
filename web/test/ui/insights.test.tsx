@@ -56,10 +56,10 @@ describe('laneOf', () => {
     expect(laneOf(session({ activityEpoch: sec(30 * 86400) }), agent({ state: 'waiting' }), sec(0), NOW)).toBe('blocked')
   })
 
-  it('blocks on a new error until you have seen it', () => {
+  it('blocks on an error until it is resolved, seen or not', () => {
     const failed = agent({ state: 'error', since: sec(100) })
     expect(laneOf(session(), failed, sec(500), NOW)).toBe('blocked')
-    expect(laneOf(session(), failed, sec(50), NOW)).toBe('recent')
+    expect(laneOf(session(), failed, sec(50), NOW)).toBe('blocked')
   })
 
   it('offers a finished turn for review until you have seen it', () => {
@@ -79,7 +79,7 @@ describe('laneOf', () => {
 
   it('falls back to the bell when the probe could not tell what the agent is doing', () => {
     const rang = session({ bell: true, activityEpoch: sec(30) })
-    expect(laneOf(rang, agent({ state: 'unknown', error: 'probe: boom' }), sec(60), NOW)).toBe('ready')
+    expect(laneOf(rang, agent({ state: 'unknown', error: 'probe: boom' }), sec(60), NOW)).toBe('blocked')
   })
 
   it('parks a week of inactivity, errors included', () => {
@@ -88,8 +88,8 @@ describe('laneOf', () => {
     expect(laneOf(old, agent({ state: 'error', since: sec(8 * 86400) }), 0, NOW)).toBe('parked')
   })
 
-  it('lets a ringing shell ask for review until you have seen it', () => {
-    expect(laneOf(session({ cmd: 'zsh', bell: true, activityEpoch: sec(30) }), undefined, sec(60), NOW)).toBe('ready')
+  it('lets a ringing shell ask for you until you have seen it', () => {
+    expect(laneOf(session({ cmd: 'zsh', bell: true, activityEpoch: sec(30) }), undefined, sec(60), NOW)).toBe('blocked')
     expect(laneOf(session({ cmd: 'zsh', bell: true, activityEpoch: sec(30) }), undefined, sec(10), NOW)).toBe('recent')
     expect(laneOf(session({ cmd: 'zsh' }), undefined, 0, NOW)).toBe('recent')
   })

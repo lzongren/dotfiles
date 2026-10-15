@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { headline, SessionList, sessionSummary } from '../../src/components/SessionList'
-import type { Session } from '../../src/shared/types'
+import type { AgentInsight, Session } from '../../src/shared/types'
 import { ago } from '../../src/time'
 
 const NOW = 1800000000
@@ -71,14 +71,14 @@ describe('SessionList', () => {
     expect(screen.getByRole('button', { name: /old/ })).toHaveTextContent('zsh · /home/me')
   })
 
-  it('shows client count, idle time, and a ringing bell with one polite announcement', () => {
+  it('shows idle time and a ringing bell with one polite announcement, and leaves attached clients to the tooltip', () => {
     const { container } = { container: document.body }
     renderList()
     const row = screen.getByRole('button', { name: /cc-demo/ })
-    expect(row).toHaveTextContent('×2')
     expect(row).toHaveTextContent('2m')
-    expect(row).toHaveAccessibleName(/cc-demo.*bell/)
-    expect(row.querySelector('.state-icon')).toHaveAttribute('data-tone', 'waiting')
+    expect(row).toHaveAccessibleName(/cc-demo.*bell.*attached/)
+    expect(row.querySelector('.session-bell')).not.toBeNull()
+    expect(row).toHaveAttribute('title', expect.stringContaining('attached in a terminal'))
     const regions = container.querySelectorAll('[aria-live="polite"]')
     expect(regions).toHaveLength(1)
     expect(regions[0]).toHaveTextContent('cc-demo needs attention')
@@ -91,6 +91,62 @@ describe('SessionList', () => {
     const row = screen.getByRole('button', { name: /ring/ })
     expect(row.querySelector('.session-bell')).not.toBeNull()
     expect(row).toHaveAccessibleName(/bell.*attached/)
+  })
+
+  it('groups sessions under Needs you, Working, New, Recent and a collapsed Idle, each with a count', () => {
+    const agent = (name: string, over: Partial<AgentInsight>): [string, AgentInsight] => [
+      name,
+      { session: name, agent: 'claude', artifacts: [], commits: 0, state: 'ready', ...over },
+    ]
+    const insights = new Map<string, AgentInsight>([
+      agent('wait', { state: 'waiting', since: NOW - 500, waitingFor: 'permission prompt' }),
+      agent('boom', { state: 'error', since: NOW - 2000, error: 'rate_limit' }),
+      agent('build', { state: 'working', since: NOW - 60 }),
+      agent('stuck', { state: 'working', since: NOW - 1600 }),
+      agent('done', { turnAt: NOW - 100 }),
+    ])
+    const sessions = [
+      session({ name: 'wait', cmd: 'claude' }),
+      session({ name: 'boom', cmd: 'claude', activityEpoch: NOW - 2000 }),
+      session({ name: 'build', cmd: 'claude' }),
+      session({ name: 'stuck', cmd: 'claude', activityEpoch: NOW - 1500 }),
+      session({ name: 'done', cmd: 'claude' }),
+      session({ name: 'ring', bell: true }),
+      session({ name: 'shell' }),
+      session({ name: 'ancient', activityEpoch: NOW - 8 * 86400 }),
+    ]
+    render(<SessionList sessions={sessions} insights={insights} now={NOW * 1000} seenAt={() => NOW - 1000} active={null} onAttach={vi.fn()} />)
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual([
+      'Needs you 3',
+      'Working 2',
+      'New since you looked 1',
+      'Recent 1',
+      'Idle over a week 1',
+    ])
+    const needs = within(screen.getByRole('group', { name: 'Needs you 3' })).getAllByRole('button')
+    expect(needs.map((r) => r.querySelector('.session-why')?.textContent)).toEqual(['Error: rate_limit', 'Permission prompt', 'Bell rang'])
+    expect(screen.getByRole('button', { name: /stuck/ })).toHaveTextContent('quiet 25m')
+    expect(screen.queryByRole('button', { name: /ancient/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Idle over a week 1' }))
+    expect(screen.getByRole('button', { name: /ancient/ })).toBeInTheDocument()
+  })
+
+  it('moves a row to its new section while held, so headings stay true, but keeps the order within a section', () => {
+    const working = new Map<string, AgentInsight>([['b', { session: 'b', agent: 'claude', artifacts: [], commits: 0, state: 'working', since: NOW - 60 }]])
+    const sessions = [session({ name: 'a', activityEpoch: NOW - 10 }), session({ name: 'b', cmd: 'claude' }), session({ name: 'c', activityEpoch: NOW - 50 })]
+    const props = { now: NOW * 1000, seenAt: () => NOW, active: null, onAttach: vi.fn() }
+    const view = render(<SessionList sessions={sessions} insights={working} {...props} />)
+    fireEvent.mouseEnter(screen.getByRole('navigation'))
+    const waiting = new Map([['b', { ...working.get('b')!, state: 'waiting' as const }]])
+    const reordered = [session({ name: 'a', activityEpoch: NOW - 90 }), sessions[1], sessions[2]]
+    view.rerender(<SessionList sessions={reordered} insights={waiting} {...props} />)
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(['Needs you 1', 'Recent 2'])
+    expect(within(screen.getByRole('group', { name: 'Recent 2' })).getAllByRole('button').map((r) => r.querySelector('.session-name')?.textContent)).toEqual(['a', 'c'])
+  })
+
+  it('says so when nothing needs you', () => {
+    renderList()
+    expect(screen.getAllByRole('heading')[0]).toHaveTextContent('Nothing needs you')
   })
 
   it('attaches on click, but not for a name the web cannot use', () => {
@@ -106,7 +162,7 @@ describe('SessionList', () => {
 
   it('keeps the full path in the tooltip of attachable rows', () => {
     renderList()
-    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('title', expect.stringMatching(/\n\/home\/me\/work\/demo$/))
+    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('title', expect.stringMatching(/^cc-demo\n.*\n\/home\/me\/work\/demo(\n|$)/))
   })
 
   it('marks the session whose tab is active', () => {

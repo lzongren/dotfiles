@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { getInsights, getSessions } from './api'
 import type { AgentInsight, SessionsResponse } from './shared/types'
-import { changeMark, laneOf, loadSeen, markSeen } from './insights'
+import { changeMark, laneOf, loadSeen, markSeen, type Lane } from './insights'
 import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
@@ -12,6 +12,51 @@ import { WorkspacePalette } from './components/WorkspacePalette'
 type Cause = 'remote' | 'local' | 'probe'
 
 const INSIGHTS_STALE_MS = 60_000
+const SIDEBAR_KEY = 'devbox.sidebar'
+const SIDEBAR = { min: 200, initial: 320, max: 640 }
+
+function storedWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(SIDEBAR_KEY))
+    return n >= SIDEBAR.min ? Math.min(n, SIDEBAR.max) : SIDEBAR.initial
+  } catch {
+    return SIDEBAR.initial
+  }
+}
+
+function SidebarHandle({ width, onWidth }: { width: number; onWidth: (n: number) => void }) {
+  const max = Math.max(SIDEBAR.min, Math.min(SIDEBAR.max, Math.floor(window.innerWidth / 2)))
+  const shown = Math.min(width, max)
+  const set = (n: number) => onWidth(Math.round(Math.min(max, Math.max(SIDEBAR.min, n))))
+  return (
+    <div
+      className="sidebar-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sessions sidebar"
+      aria-valuemin={SIDEBAR.min}
+      aria-valuemax={max}
+      aria-valuenow={shown}
+      tabIndex={0}
+      title="Drag to resize, double-click to reset"
+      onPointerDown={(event) => {
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }}
+      onPointerMove={(event) => {
+        const aside = event.currentTarget.parentElement
+        if (aside && event.currentTarget.hasPointerCapture(event.pointerId)) set(event.clientX - aside.getBoundingClientRect().left)
+      }}
+      onDoubleClick={() => set(SIDEBAR.initial)}
+      onKeyDown={(event) => {
+        const step = event.key === 'ArrowLeft' ? -16 : event.key === 'ArrowRight' ? 16 : 0
+        if (!step) return
+        event.preventDefault()
+        set(shown + step)
+      }}
+    />
+  )
+}
 
 type View =
   | { phase: 'loading' }
@@ -28,6 +73,7 @@ export function App() {
   const [insights, setInsights] = useState<Map<string, AgentInsight>>(() => new Map())
   const [insightsNotice, setInsightsNotice] = useState<string | null>(null)
   const [seenVersion, setSeenVersion] = useState(0)
+  const [sidebarWidth, setSidebarWidth] = useState(storedWidth)
   const insightsAt = useRef(0)
   const lastGood = useRef<SessionsResponse | null>(null)
 
@@ -129,10 +175,20 @@ export function App() {
   }, [refresh, refreshInsights])
 
   const host = view.phase === 'ready' ? view.data.host : ''
-  const waiting =
-    view.phase === 'ready'
-      ? view.data.sessions.filter((s) => ['blocked', 'ready'].includes(laneOf(s, insights.get(s.name), seenAt(s.name), now))).length
-      : 0
+  const lanes = new Map<Lane, number>()
+  for (const s of view.phase === 'ready' ? view.data.sessions : []) {
+    const lane = laneOf(s, insights.get(s.name), seenAt(s.name), now)
+    lanes.set(lane, (lanes.get(lane) ?? 0) + 1)
+  }
+  const lane = (l: Lane) => lanes.get(l) ?? 0
+  const waiting = lane('blocked') + lane('ready')
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, String(sidebarWidth))
+    } catch {
+      void 0
+    }
+  }, [sidebarWidth])
   useEffect(() => {
     const place = activeTab ?? host
     document.title = `${waiting > 0 ? `(${waiting}) ` : ''}${place ? `${place} · ` : ''}devbox`
@@ -173,7 +229,7 @@ export function App() {
   const { data, staleSince, staleCause } = view
   latest.current = { sessions: data.sessions, insights }
   return (
-    <div className="app">
+    <div className="app" style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}>
       <header className="topbar">
         <h1 className="brand">
           <svg className="brand-mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
@@ -215,6 +271,7 @@ export function App() {
           />
         </div>
         <Notes />
+        <SidebarHandle width={sidebarWidth} onWidth={setSidebarWidth} />
       </aside>
       <main className="workspace">
         <TerminalTabs
@@ -224,7 +281,7 @@ export function App() {
           sessions={data.sessions}
           insights={insights}
           now={now}
-          needs={waiting}
+          counts={{ needs: lane('blocked'), working: lane('working'), fresh: lane('ready') }}
           seenAt={seenAt}
           onSelect={setActiveTab}
           onClose={closeTerminal}

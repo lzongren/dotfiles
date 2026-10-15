@@ -4,6 +4,7 @@ import {
   artifactName,
   changeMark,
   displayTitle,
+  heardAt,
   isFresh,
   laneOf,
   ledger,
@@ -28,10 +29,9 @@ interface Row {
 }
 
 const AUTO_SEEN_MS = 2000
-const QUIET_AFTER = 600
 const SHELF_PEEK = 3
 const RELATED = 5
-type Kind = 'needs' | 'working' | 'recent' | 'parked'
+type Kind = 'needs' | 'working' | 'new' | 'recent' | 'parked'
 interface Shelf {
   kind: Kind
   key: string
@@ -41,6 +41,7 @@ interface Shelf {
 const SECTIONS: Array<{ kind: Exclude<Kind, 'parked'>; title: string; empty: string }> = [
   { kind: 'needs', title: 'Needs you', empty: 'Nothing needs you.' },
   { kind: 'working', title: 'Working', empty: 'No agent is mid-turn.' },
+  { kind: 'new', title: 'New since you looked', empty: '' },
   { kind: 'recent', title: 'Recent, by topic', empty: '' },
 ]
 const KINDS: Kind[] = [...SECTIONS.map((s) => s.kind), 'parked']
@@ -50,19 +51,18 @@ const shelfId = (s: Shelf) => `${s.kind}:${s.key}`
 
 function statusOf(row: Row, now: number): { tone: Tone; label: string; line: string } {
   const { session, insight } = row
-  const tone = toneOf(session, insight, row.fresh)
+  const tone = toneOf(session, insight, row.fresh, now)
   if (tone === 'waiting') {
-    const label = insight?.state === 'waiting' ? `Waiting on you${insight.waitingFor ? `: ${insight.waitingFor}` : ''}` : 'Bell rang'
+    const label = `Waiting on you${insight?.waitingFor ? `: ${insight.waitingFor}` : ''}`
     return { tone, label, line: label }
   }
+  if (tone === 'bell') return { tone, label: 'Bell rang', line: 'Bell rang' }
   if (tone === 'error') {
     const label = insight?.error ? `Error: ${insight.error}` : 'Error'
     return { tone, label, line: label }
   }
-  if (tone === 'working') {
-    const heard = Math.max(session.activityEpoch, changeMark(session, insight))
-    return { tone, label: 'Working', line: Math.floor(now / 1000) - heard >= QUIET_AFTER ? `Quiet for ${ago(now, heard)}` : '' }
-  }
+  if (tone === 'quiet') return { tone, label: 'Working', line: `Quiet for ${ago(now, heardAt(session, insight))}` }
+  if (tone === 'working') return { tone, label: 'Working', line: '' }
   if (tone === 'fresh') return { tone, label: 'New turn', line: '' }
   return { tone, label: insight ? 'Ready' : session.cmd || 'shell', line: '' }
 }
@@ -112,8 +112,8 @@ function layout(rows: Row[]): { shelves: Shelf[]; related: Map<string, string[]>
   return {
     shelves: [
       { kind: 'needs', key: 'blocked', label: '', names: names(pick('blocked', byChange(1))) },
-      { kind: 'needs', key: 'ready', label: '', names: names(picks) },
       { kind: 'working', key: '', label: '', names: names(pick('working', byChange(1))) },
+      { kind: 'new', key: '', label: '', names: names(picks) },
       ...shelves('recent', 'recent'),
       ...shelves('parked', 'parked'),
     ],
@@ -494,9 +494,9 @@ export function Overview({
   const order = shown.flatMap((s) => s.rows.map((r) => r.session.name))
   const current = selected === null ? null : (rows.get(selected) ?? null)
   const tabStop = current && order.includes(current.session.name) ? current.session.name : order[0]
-  const readyNames = of('needs')
+  const readyNames = of('new')
     .flatMap((s) => s.rows)
-    .filter((r) => r.lane === 'ready' && r.fresh)
+    .filter((r) => r.fresh)
     .map((r) => r.session.name)
 
   const focusCard = (name: string) => {
@@ -637,13 +637,13 @@ export function Overview({
           {notice}
         </p>
         {SECTIONS.map(({ kind, title, empty }) =>
-          kind === 'recent' && count(kind) === 0 ? null : (
+          (kind === 'recent' || kind === 'new') && count(kind) === 0 ? null : (
             <section key={kind} className={`lane lane-${kind}`} aria-labelledby={`lane-${kind}`}>
               <div className="lane-head">
                 <h2 id={`lane-${kind}`} className="lane-title">
                   {title} <span className="lane-count">{count(kind)}</span>
                 </h2>
-                {kind === 'needs' && readyNames.length > 1 ? (
+                {kind === 'new' && readyNames.length > 1 ? (
                   <button type="button" className="lane-action" onClick={() => onSeen(readyNames)}>
                     <Icon name="eye" />
                     Mark all seen

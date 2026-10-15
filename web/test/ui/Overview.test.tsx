@@ -92,9 +92,17 @@ afterEach(() => {
 })
 
 describe('Overview sections', () => {
-  it('puts the blocked ahead of the ready, oldest wait first and newest turn first', () => {
+  it('puts the blocked ahead of working and new turns, oldest wait first and newest turn first', () => {
     renderOverview()
-    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'newer', 'older'])
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha'])
+    expect(titles(/New since you looked/)).toEqual(['newer', 'older'])
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent?.replace(/ \d+$/, '')).slice(0, 5)).toEqual([
+      'Needs you',
+      'Working',
+      'New since you looked',
+      'Recent, by topic',
+      'Idle over a week',
+    ])
     expect(titles(/Working/)).toEqual(['run-b', 'run-a'])
   })
 
@@ -113,7 +121,7 @@ describe('Overview sections', () => {
         ].map((a) => [a.session, a]),
       ),
     })
-    expect(titles(/Needs you/)).toEqual(['search-speed', 'docs', 'search-memory'])
+    expect(titles(/New since you looked/)).toEqual(['search-speed', 'docs', 'search-memory'])
   })
 
   it('spreads out a busy topic even when its titles share nothing', () => {
@@ -123,12 +131,12 @@ describe('Overview sections', () => {
       sessions: names.map((n) => session(n)),
       insights: new Map(names.map((n, i) => [n, agent(n, { title: words[i], turnAt: sec(10 * (i + 1)) })])),
     })
-    const top = titles(/Needs you/).slice(0, 4)
+    const top = titles(/New since you looked/).slice(0, 4)
     expect(top.slice(0, 2)).toEqual(['billing-retry', 'search'])
     expect(top.filter((n) => n?.startsWith('billing'))).toHaveLength(2)
   })
 
-  it('keeps the blocked oldest first and above every finished turn, however alike they are', () => {
+  it('keeps the blocked oldest first and in their own section, however alike they are', () => {
     renderOverview({
       sessions: ['b1', 'b2', 'r1'].map((n) => session(n)),
       insights: new Map(
@@ -139,7 +147,8 @@ describe('Overview sections', () => {
         ].map((a) => [a.session, a]),
       ),
     })
-    expect(titles(/Needs you/)).toEqual(['b1', 'b2', 'r1'])
+    expect(titles(/Needs you/)).toEqual(['b1', 'b2'])
+    expect(titles(/New since you looked/)).toEqual(['r1'])
   })
 
   it('shelves the rest by the words their names share, singletons ungrouped, and parks the week-old ones collapsed', () => {
@@ -267,12 +276,14 @@ describe('Overview selection and seen', () => {
     const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
     fireEvent.mouseEnter(lanes)
     view.rerender({ insights: insights([agent('older', { state: 'waiting', since: sec(5000), title: 'Older turn' })]) })
-    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'newer', 'older'])
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha'])
+    expect(titles(/New since you looked/)).toEqual(['newer', 'older'])
     fireEvent.mouseLeave(lanes)
-    expect(titles(/Needs you/)).toEqual(['older', 'zed', 'alpha', 'newer'])
+    expect(titles(/Needs you/)).toEqual(['older', 'zed', 'alpha'])
+    expect(titles(/New since you looked/)).toEqual(['newer'])
   })
 
-  it('keeps a session that starts waiting on you above the finished turns while held', () => {
+  it('lets a new session that is already waiting on you join Needs you while held', () => {
     const view = renderOverview()
     const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
     fireEvent.mouseEnter(lanes)
@@ -280,7 +291,7 @@ describe('Overview selection and seen', () => {
       sessions: [...SESSIONS, session('late')],
       insights: insights([agent('late', { state: 'waiting', since: sec(50), title: 'Late' })]),
     })
-    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'late', 'newer', 'older'])
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'late'])
   })
 
   it('leaves a parked tile in place while held with Parked open', () => {
@@ -291,7 +302,7 @@ describe('Overview selection and seen', () => {
     const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
     fireEvent.mouseEnter(lanes)
     view.rerender({ insights: insights([agent('old', { state: 'waiting', since: sec(30), title: 'Old one' })]) })
-    expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'newer', 'older'])
+    expect(titles(/Needs you/)).toEqual(['zed', 'alpha'])
     expect(screen.getByRole('button', { name: 'old' }).closest('details')).toBe(parked)
   })
 

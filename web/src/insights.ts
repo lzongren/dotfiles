@@ -4,11 +4,16 @@ export type Lane = 'blocked' | 'ready' | 'working' | 'recent' | 'parked'
 
 const KEY = 'devbox.seen'
 const PARK_AFTER = 7 * 86400
+export const QUIET_AFTER = 600
 const FIRST_VISIT_LOOKBACK = 12 * 3600
 
 export function changeMark(session: Session, insight: AgentInsight | undefined): number {
   if (!insight) return session.activityEpoch
   return insight.turnAt ?? insight.since ?? session.activityEpoch
+}
+
+export function heardAt(session: Session, insight: AgentInsight | undefined): number {
+  return Math.max(session.activityEpoch, changeMark(session, insight))
 }
 
 export function isFresh(session: Session, insight: AgentInsight | undefined, seenAt: number): boolean {
@@ -21,8 +26,9 @@ export function laneOf(session: Session, insight: AgentInsight | undefined, seen
   if (insight?.state === 'waiting') return 'blocked'
   if (insight?.state === 'working') return 'working'
   if (Math.floor(nowMs / 1000) - session.activityEpoch >= PARK_AFTER) return 'parked'
+  if (insight?.state === 'error') return 'blocked'
   if (!isFresh(session, insight, seenAt)) return 'recent'
-  return insight?.state === 'error' ? 'blocked' : 'ready'
+  return insight?.state === 'ready' ? 'ready' : 'blocked'
 }
 
 interface Stored {

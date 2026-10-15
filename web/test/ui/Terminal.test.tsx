@@ -655,7 +655,7 @@ describe('TerminalTabs', () => {
       <TerminalTabs tabs={['api', 'main']} active="api" sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={() => {}} />,
     )
     const tabButtons = screen.getAllByRole('tab')
-    expect(tabButtons.map((t) => t.textContent)).toEqual(['Overview', 'api', 'main'])
+    for (const [i, name] of ['Overview', 'api', 'main'].entries()) expect(tabButtons[i]).toHaveAccessibleName(name)
     expect(tabButtons[1]).toHaveAttribute('aria-selected', 'true')
     const panes = container.querySelectorAll('.termpane')
     expect(panes).toHaveLength(2)
@@ -678,18 +678,73 @@ describe('TerminalTabs', () => {
     expect(onSelect).toHaveBeenCalledWith('main')
     fireEvent.click(screen.getByRole('tab', { name: 'Overview' }))
     expect(onSelect).toHaveBeenLastCalledWith(null)
-    fireEvent.click(screen.getByRole('button', { name: 'close api' }))
+    fireEvent.click(screen.getByTitle('Close api'))
     expect(onClose).toHaveBeenCalledWith('api')
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'main' }), { key: 'Delete' })
+    expect(onClose).toHaveBeenLastCalledWith('main')
   })
 
-  it('describes the needs-you count and each tab session state without changing tab names', () => {
+  it('closes a focused tab with Delete or Backspace and moves focus to its neighbour', () => {
+    const onClose = vi.fn()
+    render(<TerminalTabs tabs={['a', 'b', 'c']} active="a" sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={onClose} />)
+    const b = screen.getByRole('tab', { name: 'b' })
+    b.focus()
+    fireEvent.keyDown(b, { key: 'Backspace' })
+    expect(onClose).toHaveBeenCalledWith('b')
+    act(() => {
+      vi.advanceTimersToNextFrame()
+    })
+    expect(screen.getByRole('tab', { name: 'c' })).toHaveFocus()
+  })
+
+  it('keeps the date on tabs whose names would otherwise look the same', () => {
+    render(<TerminalTabs tabs={['0412_fix-auth', '0415_fix-auth', '0420_docs']} active={null} sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={() => {}} />)
+    const shown = (n: string) => screen.getByRole('tab', { name: n }).querySelector('.tab-name')?.textContent
+    expect([shown('0412_fix-auth'), shown('0415_fix-auth'), shown('0420_docs')]).toEqual(['0412_fix-auth', '0415_fix-auth', 'docs'])
+  })
+
+  it('shows and describes the counts and each tab session state in words, without changing tab names', () => {
     const api = { name: 'api', attached: false, clients: 0, activityEpoch: 0, bell: false, cmd: 'claude', title: '', path: '/w/api', attachable: true }
-    const insights = new Map([['api', { session: 'api', agent: 'claude' as const, state: 'waiting' as const, artifacts: [], commits: 0 }]])
+    const agent = { agent: 'claude' as const, artifacts: [], commits: 0 }
+    const insights = new Map([
+      ['api', { ...agent, session: 'api', state: 'waiting' as const }],
+      ['1014_build', { ...agent, session: '1014_build', state: 'working' as const, since: 0 }],
+    ])
     const shell = { ...api, name: 'sh', cmd: 'zsh', bell: true }
-    render(<TerminalTabs tabs={['api', 'sh']} active="api" sessions={[api, shell]} insights={insights} now={0} needs={1} onSelect={() => {}} onClose={() => {}} />)
-    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAccessibleDescription('1 needs you')
+    const build = { ...api, name: '1014_build' }
+    render(
+      <TerminalTabs
+        tabs={['api', 'sh', '1014_build']}
+        active="api"
+        sessions={[api, shell, build]}
+        insights={insights}
+        now={23 * 60_000}
+        counts={{ needs: 1, working: 2, fresh: 3 }}
+        seenAt={() => -1}
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAccessibleDescription('1 needs you, 2 working, 3 new')
     expect(screen.getByRole('tab', { name: 'api' })).toHaveAccessibleDescription('waiting on you')
+    expect(screen.getByRole('tab', { name: 'api' })).toHaveTextContent('needs you')
     expect(screen.getByRole('tab', { name: 'sh' })).toHaveAccessibleDescription('bell rang')
+    expect(screen.getByRole('tab', { name: '1014_build' })).toHaveTextContent('quiet 23m')
+  })
+
+  it('drops the date from tab labels and keeps the last word whole so a cut tab stays recognizable', () => {
+    const names = ['1013_database_modernizer', '1014_SkillHarness_PerformanceFactory', 'shellprobe', 'x_averyveryverylongtail']
+    render(<TerminalTabs tabs={names} active={null} sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={() => {}} />)
+    const parts = names.map((n) => {
+      const tab = screen.getByRole('tab', { name: n })
+      return [tab.querySelector('.tab-head')?.textContent, tab.querySelector('.tab-tail')?.textContent]
+    })
+    expect(parts).toEqual([
+      ['database_', 'modernizer'],
+      ['SkillHarness_Performance', 'Factory'],
+      ['shellprobe', undefined],
+      ['x_averyveryverylongtail', undefined],
+    ])
   })
 
   it('renders nothing without tabs', () => {

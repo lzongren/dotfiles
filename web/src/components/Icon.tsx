@@ -1,32 +1,49 @@
 import type { ReactNode } from 'react'
 import type { AgentInsight, Session } from '../shared/types'
+import { heardAt, QUIET_AFTER } from '../insights'
 
-export type Tone = 'waiting' | 'error' | 'working' | 'fresh' | 'idle'
+export type Tone = 'waiting' | 'bell' | 'error' | 'working' | 'quiet' | 'fresh' | 'idle'
 
-export function toneOf(session: Session, insight: AgentInsight | undefined, fresh: boolean): Tone {
+export function toneOf(session: Session, insight: AgentInsight | undefined, fresh: boolean, nowMs: number): Tone {
   if (insight?.state === 'waiting') return 'waiting'
   if (insight?.state === 'error') return 'error'
-  if (insight?.state === 'working') return 'working'
+  if (insight?.state === 'working') return Math.floor(nowMs / 1000) - heardAt(session, insight) >= QUIET_AFTER ? 'quiet' : 'working'
   if (insight?.state === 'ready') return fresh ? 'fresh' : 'idle'
-  return session.bell ? 'waiting' : 'idle'
+  return session.bell && fresh ? 'bell' : 'idle'
 }
 
 const GLYPHS: Record<Tone, ReactNode> = {
-  waiting: <path d="M8 2.5 13.5 8 8 13.5 2.5 8Z" fill="currentColor" />,
-  error: <path d="M8 2.5 14 13H2Z" fill="currentColor" />,
-  working: (
+  waiting: (
+    <path
+      fillRule="evenodd"
+      d="M8 1a7 7 0 0 0 0 14A7 7 0 0 0 8 1ZM7.1 3.6h1.8v5.6H7.1ZM8 10.5a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2Z"
+      fill="currentColor"
+    />
+  ),
+  bell: (
     <>
-      <circle cx="8" cy="8" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M8 3.25a4.75 4.75 0 0 1 0 9.5Z" fill="currentColor" />
+      <path d="M3.5 11.25V7.5a4.5 4.5 0 0 1 9 0v3.75l1.25 1.5H2.25Z" fill="currentColor" />
+      <path d="M6.5 14.5h3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </>
   ),
-  fresh: <circle cx="8" cy="8" r="4.5" fill="currentColor" />,
-  idle: <circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="1.5" />,
+  error: (
+    <path
+      fillRule="evenodd"
+      d="M8 1a7 7 0 0 0 0 14A7 7 0 0 0 8 1ZM5.17 6.23l1.06-1.06L8 6.94l1.77-1.77 1.06 1.06L9.06 8l1.77 1.77-1.06 1.06L8 9.06l-1.77 1.77-1.06-1.06L6.94 8Z"
+      fill="currentColor"
+    />
+  ),
+  working: <path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />,
+  quiet: (
+    <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="0.01 3.45" strokeLinecap="round" />
+  ),
+  fresh: <circle cx="8" cy="8" r="4" fill="currentColor" />,
+  idle: null,
 }
 
 export function StateIcon({ tone }: { tone: Tone }) {
   return (
-    <svg className="state-icon" data-tone={tone} viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+    <svg className="state-icon" data-tone={tone} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
       {GLYPHS[tone]}
     </svg>
   )
