@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../src/components/Terminal', () => ({
-  TerminalPane: ({ name }: { name: string }) => <div data-testid={`term-${name}`} />,
+  TerminalPane: ({ name, side }: { name: string; side?: ReactNode }) => <div data-testid={`term-${name}`}>{side}</div>,
 }))
 
 vi.mock('../../src/components/WorkspacePalette', () => ({
@@ -177,6 +178,33 @@ describe('App', () => {
     fireEvent.click(details.getByRole('button', { name: 'Open terminal' }))
     expect(screen.getByTestId('term-cc-demo')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'overview', hidden: true })).not.toBeVisible()
+  })
+
+  it('opens a file from the overview beside its terminal', async () => {
+    const ready: AgentInsight = {
+      session: 'cc-demo',
+      agent: 'claude',
+      state: 'ready',
+      title: 'Fix flaky retry test',
+      artifacts: [],
+      commits: 0,
+      files: [{ path: '/home/me/plan.md', action: 'created', at: NOW_EPOCH - 60, count: 1, gone: false }],
+    }
+    fetchMock.mockImplementation(async (url: string) =>
+      url.startsWith('/api/file')
+        ? response({ path: '/home/me/plan.md', size: 6, mtime: NOW_EPOCH - 60, kind: 'text', text: '# Plan', truncated: false })
+        : response(okBody(ROWS)),
+    )
+    insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [ready] }))
+    render(<App />)
+    await flush()
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
+    await flush()
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'plan.md' })).getByRole('button', { name: 'Open beside terminal' }))
+    await flush()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('cc-demo')
+    expect(within(screen.getByTestId('term-cc-demo')).getByRole('complementary', { name: 'plan.md' })).toBeInTheDocument()
   })
 
   it('counts a turn that finished while you watched it in the terminal as seen', async () => {

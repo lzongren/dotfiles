@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FilePreview, indentJson, parseDelimited } from '../../src/components/FilePreview'
 import { Overview } from '../../src/components/Overview'
-import type { AgentInsight, FileView, Session } from '../../src/shared/types'
+import type { AgentInsight, FileTouch, FileView, Session } from '../../src/shared/types'
 
 const NOW = 1_800_000_000_000
 const sec = (ago: number) => NOW / 1000 - ago
@@ -42,6 +42,8 @@ const INSIGHTS = new Map([
   ],
   ['web', agent('web', { title: 'Polish the web', files: [{ path: '/tmp/shot.png', action: 'created', at: sec(10), count: 1, gone: false }] })],
 ])
+
+const touches = (paths: string[]) => paths.map((path) => ({ path, action: 'edited' as const, at: sec(5), count: 1, gone: false }))
 
 let views: Record<string, FileView>
 let calls: Array<{ url: string; method: string; body?: string }>
@@ -130,7 +132,7 @@ describe('agent files', () => {
     const writeText = vi.fn(async () => undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     views['/home/me/work/api/big.log'] = { path: '/home/me/work/api/big.log', size: 5_000_000, mtime: sec(5), kind: 'text', text: 'head', truncated: true }
-    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/big.log' }} known={[]} onClose={vi.fn()} />)
+    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/big.log' }} files={touches([])} onClose={vi.fn()} />)
     const dialog = within(screen.getByRole('dialog', { name: 'big.log' }))
     fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
     await waitFor(() => expect(dialog.getByRole('status')).toHaveTextContent('Copied the first 1 MB'))
@@ -143,7 +145,7 @@ describe('agent files', () => {
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     views['/w/a.md'] = { path: '/w/a.md', size: 9, mtime: sec(5), kind: 'text', text: '[b](b.md)', truncated: false }
     views['/w/b.md'] = { path: '/w/b.md', size: 3, mtime: sec(5), kind: 'text', text: '# B', truncated: false }
-    render(<FilePreview file={{ session: 'api', path: '/w/a.md' }} known={['/w/a.md', '/w/b.md']} onClose={vi.fn()} />)
+    render(<FilePreview file={{ session: 'api', path: '/w/a.md' }} files={touches(['/w/a.md', '/w/b.md'])} onClose={vi.fn()} />)
     const dialog = within(screen.getByRole('dialog'))
     fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
     fireEvent.click(dialog.getByRole('link', { name: 'b' }))
@@ -162,7 +164,7 @@ describe('agent files', () => {
       .mockImplementation(async () => undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     views['/w/c.txt'] = { path: '/w/c.txt', size: 1, mtime: sec(5), kind: 'text', text: 'c', truncated: false }
-    render(<FilePreview file={{ session: 'api', path: '/w/c.txt' }} known={[]} onClose={vi.fn()} />)
+    render(<FilePreview file={{ session: 'api', path: '/w/c.txt' }} files={touches([])} onClose={vi.fn()} />)
     const dialog = within(screen.getByRole('dialog'))
     fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
     fireEvent.click(dialog.getByRole('button', { name: 'Copy path' }))
@@ -176,7 +178,7 @@ describe('agent files', () => {
     const writeText = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)))
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     views['/w/d.md'] = { path: '/w/d.md', size: 9, mtime: sec(5), kind: 'text', text: '[e](e.md)', truncated: false }
-    render(<FilePreview file={{ session: 'api', path: '/w/d.md' }} known={['/w/d.md']} onClose={vi.fn()} />)
+    render(<FilePreview file={{ session: 'api', path: '/w/d.md' }} files={touches(['/w/d.md'])} onClose={vi.fn()} />)
     const dialog = within(screen.getByRole('dialog'))
     fireEvent.click(await dialog.findByRole('button', { name: 'Copy text' }))
     expect(writeText).toHaveBeenCalledWith('[e](e.md)')
@@ -188,7 +190,7 @@ describe('agent files', () => {
 
   it('offers no Copy text for an empty file', async () => {
     views['/home/me/work/api/empty.txt'] = { path: '/home/me/work/api/empty.txt', size: 0, mtime: sec(5), kind: 'text', text: '', truncated: false }
-    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/empty.txt' }} known={[]} onClose={vi.fn()} />)
+    render(<FilePreview file={{ session: 'api', path: '/home/me/work/api/empty.txt' }} files={touches([])} onClose={vi.fn()} />)
     const dialog = within(screen.getByRole('dialog', { name: 'empty.txt' }))
     expect(await dialog.findByText(/0 B/)).toBeInTheDocument()
     expect(dialog.queryByRole('button', { name: 'Copy text' })).toBeNull()
@@ -254,7 +256,7 @@ describe('file viewer', () => {
     views[path] = { path, size: body.length, mtime: sec(5), kind: 'text', text: body, truncated: false }
   }
   const preview = (path: string, known: string[] = []) => {
-    render(<FilePreview file={{ session: 'api', path }} known={known} onClose={vi.fn()} />)
+    render(<FilePreview file={{ session: 'api', path }} files={touches(known)} onClose={vi.fn()} />)
     return within(screen.getByRole('dialog'))
   }
 
@@ -371,5 +373,87 @@ describe('file viewer', () => {
     fireEvent.click(dialog.getByRole('button', { name: 'Wrap lines' }))
     expect(dialog.getByRole('button', { name: 'Wrap lines' })).toHaveAttribute('aria-pressed', 'true')
     expect(code.parentElement?.querySelector('.file-gutter')).toBeNull()
+  })
+})
+
+describe('a quick look that keeps up with the agent', () => {
+  const touch = (path: string, over: Partial<FileTouch> = {}): FileTouch => ({ path, action: 'edited', at: sec(5), count: 1, gone: false, ...over })
+  const md = (path: string, body: string) => {
+    views[path] = { path, size: body.length, mtime: sec(5), kind: 'text', text: body, truncated: false }
+  }
+
+  it('hands the file to its terminal, but only for a session it can open', async () => {
+    const onDock = vi.fn()
+    const overview = (attachable: boolean) =>
+      render(
+        <Overview sessions={[{ ...session('api'), attachable }]} insights={INSIGHTS} now={NOW} seenAt={() => sec(1000)} onOpen={vi.fn()} onSeen={vi.fn()} onDock={onDock} />,
+      )
+    overview(false)
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
+    expect(within(screen.getByRole('dialog', { name: 'plan.md' })).queryByRole('button', { name: 'Open beside terminal' })).toBeNull()
+    cleanup()
+    overview(true)
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'plan.md' }))
+    await dialog.findByRole('heading', { name: 'The plan' })
+    fireEvent.click(dialog.getByRole('button', { name: 'Open beside terminal' }))
+    expect(onDock).toHaveBeenCalledWith({ session: 'api', path: '/home/me/work/api/docs/plan.md' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('steps through the files the agent touched, skipping deleted ones', async () => {
+    md('/w/a.md', '# A')
+    md('/w/c.md', '# C')
+    render(<FilePreview file={{ session: 'api', path: '/w/a.md' }} files={[touch('/w/a.md'), touch('/w/b.md', { gone: true }), touch('/w/c.md')]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    await dialog.findByRole('heading', { name: 'A' })
+    const prev = dialog.getByRole('button', { name: 'Previous file' })
+    const next = dialog.getByRole('button', { name: 'Next file' })
+    expect(prev).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(prev)
+    expect(next).toHaveAttribute('title', 'Next file: c.md')
+    fireEvent.click(next)
+    expect(await dialog.findByRole('heading', { name: 'C' })).toBeInTheDocument()
+    expect(dialog.getByRole('heading', { name: 'c.md' })).toBeInTheDocument()
+    expect(next).toHaveAttribute('aria-disabled', 'true')
+    expect(prev).toHaveAttribute('title', 'Previous file: a.md')
+    expect(dialog.queryByRole('button', { name: 'Back' })).toBeNull()
+  })
+
+  it('reads the file again in place when the agent edits it, and keeps the last copy once it is deleted', async () => {
+    const file = { session: 'api', path: '/w/a.md' }
+    md('/w/a.md', '# One')
+    const { rerender } = render(<FilePreview file={file} files={[touch('/w/a.md')]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    await dialog.findByRole('heading', { name: 'One' })
+    const body = dialog.getByRole('region', { name: 'a.md' })
+    body.scrollTop = 120
+    md('/w/a.md', '# Two')
+    rerender(<FilePreview file={file} files={[touch('/w/a.md', { at: sec(1), count: 2 })]} onClose={vi.fn()} />)
+    expect(dialog.queryByText('Loading…')).toBeNull()
+    expect(await dialog.findByRole('heading', { name: 'Two' })).toBeInTheDocument()
+    expect(body.scrollTop).toBe(120)
+    expect(dialog.getByRole('status')).toHaveTextContent("Updated to the agent's latest edit")
+
+    const reads = calls.length
+    delete views['/w/a.md']
+    rerender(<FilePreview file={file} files={[touch('/w/a.md', { at: sec(0), count: 3, gone: true })]} onClose={vi.fn()} />)
+    expect(dialog.getByText('The agent deleted this file; this is the last copy read.')).toBeInTheDocument()
+    expect(dialog.getByRole('heading', { name: 'Two' })).toBeInTheDocument()
+    expect(calls).toHaveLength(reads)
+  })
+
+  it('jumps to a heading inside its own preview when two show the same file', async () => {
+    md('/w/a.md', '# Top\n\n[up](#top)')
+    render(
+      <>
+        <FilePreview file={{ session: 'api', path: '/w/a.md' }} files={[touch('/w/a.md')]} onClose={vi.fn()} />
+        <FilePreview file={{ session: 'web', path: '/w/a.md' }} files={[touch('/w/a.md')]} onClose={vi.fn()} />
+      </>,
+    )
+    const second = within(screen.getAllByRole('dialog')[1])
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'up' })).toHaveLength(2))
+    fireEvent.click(second.getByRole('link', { name: 'up' }))
+    expect(second.getByRole('heading', { name: 'Top' })).toHaveFocus()
   })
 })

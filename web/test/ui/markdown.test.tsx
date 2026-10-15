@@ -38,6 +38,9 @@ describe('markdown rendering', () => {
     const ids = [...render('## Setup & Install_now\n## _Draft_ plan\n## See [docs](https://x.io)\n## Q&amp;A\n## The `foo` option\n\nFoo\nbar\n===').matchAll(/id="([^"]+)"/g)].map((m) => m[1])
     expect(ids).toEqual(['md-setup--install_now', 'md-draft-plan', 'md-see-docs', 'md-qa', 'md-the-foo-option', 'md-foo-bar'])
     expect([...render('# foo\n# foo\n# foo-1').matchAll(/id="([^"]+)"/g)].map((m) => m[1])).toEqual(['md-foo', 'md-foo-1', 'md-foo-1-1'])
+    const scoped = renderMarkdown('# Top\n\n[up](#top)', '/w/a.md', 'p1-')
+    expect(scoped).toContain('<h1 id="p1-md-top" tabindex="-1">')
+    expect(scoped).toContain('data-anchor="p1-md-top"')
     expect(render('[top](#) [self](plan.md)')).toBe('<p><span>top</span> <span>self</span></p>\n')
   })
 

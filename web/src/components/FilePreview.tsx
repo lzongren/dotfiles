@@ -1,9 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react'
 import { explain, getFile, openFile, retriable, type ApiResult } from '../api'
 import type { FileTouch, FileView } from '../shared/types'
 import { highlight, languageOf } from '../highlight'
 import { renderMarkdown } from '../markdown'
 import { ago } from '../time'
+import { Icon, type IconName } from './Icon'
+import type { TerminalHandle } from './Terminal'
 
 export interface FileRef {
   session: string
@@ -71,6 +73,7 @@ const FORMATS: Record<string, Format> = {
   '.htm': 'html',
 }
 const TABLE_ROWS = 1000
+const LONG_PASTE = 800
 
 function extension(file: string): string {
   const name = baseName(file)
@@ -153,8 +156,8 @@ export function indentJson(text: string): string {
   return out
 }
 
-function Formatted({ format, text, path, onLink }: { format: Format; text: string; path: string; onLink: (path: string) => void }) {
-  const html = useMemo(() => (format === 'markdown' ? renderMarkdown(text, path) : ''), [format, text, path])
+function Formatted({ format, text, path, prefix, onLink }: { format: Format; text: string; path: string; prefix: string; onLink: (path: string) => void }) {
+  const html = useMemo(() => (format === 'markdown' ? renderMarkdown(text, path, prefix) : ''), [format, text, path, prefix])
   const rows = useMemo(() => (format === 'table' ? parseDelimited(text, extension(path) === '.tsv' ? '\t' : ',', TABLE_ROWS + 2) : []), [format, text, path])
   const json = useMemo(() => {
     if (format !== 'json') return null
@@ -168,7 +171,7 @@ function Formatted({ format, text, path, onLink }: { format: Format; text: strin
       if (!link || ('key' in event && event.key !== 'Enter')) return
       event.preventDefault()
       const anchor = link.getAttribute('data-anchor')
-      const heading = anchor ? document.getElementById(anchor) : null
+      const heading = anchor ? event.currentTarget.querySelector<HTMLElement>(`[id="${anchor}"]`) : null
       if (heading) {
         heading.focus({ preventScroll: true })
         heading.scrollIntoView?.({ block: 'start' })
@@ -252,19 +255,48 @@ function formatOf(view: FileView): Format | null {
   return format
 }
 
-export function FilePreview({ file, known, onClose }: { file: FileRef; known: string[]; onClose: () => void }) {
+export function FilePreview({
+  file,
+  files,
+  onClose,
+  onDock,
+  terminal,
+  canQuote = false,
+}: {
+  file: FileRef
+  files: FileTouch[]
+  onClose: () => void
+  onDock?: (file: FileRef) => void
+  terminal?: RefObject<TerminalHandle | null>
+  canQuote?: boolean
+}) {
   const id = useId()
+  const docked = terminal !== undefined
   const ref = useRef<HTMLDialogElement | null>(null)
   const title = useRef<HTMLHeadingElement | null>(null)
+  const body = useRef<HTMLDivElement | null>(null)
   const moved = useRef(false)
   const noteSeq = useRef(0)
+  const loaded = useRef('')
+  const [shown, setShown] = useState(file)
   const [trail, setTrail] = useState([file.path])
   const [result, setResult] = useState<ApiResult<FileView> | null>(null)
   const [note, setNote] = useState('')
   const [source, setSource] = useState(false)
   const [wrap, setWrap] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  const [quotable, setQuotable] = useState(false)
+  if (shown !== file) {
+    setShown(file)
+    setTrail([file.path])
+    setSource(false)
+  }
   const path = trail[trail.length - 1]
+  const at = files.findIndex((f) => f.path === path)
+  const touch = files[at]
+  const stamp = touch ? `${touch.at} ${touch.count} ${touch.gone}` : ''
+  const prev = at < 0 ? undefined : files.slice(0, at).findLast((f) => !f.gone)
+  const next = at < 0 ? undefined : files.slice(at + 1).find((f) => !f.gone)
   const latestNote = () => {
     const at = ++noteSeq.current
     return (message: string) => {
@@ -273,11 +305,16 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   }
   const follow = (target: string) => {
     if (target === path) return
-    if (known.includes(target)) {
+    if (files.some((f) => f.path === target)) {
       moved.current = true
       setTrail((t) => [...t, target])
       setSource(false)
     } else latestNote()(`${baseName(target)} isn't a file this agent wrote, so it can't be opened here`)
+  }
+  const step = (to: FileTouch | undefined) => {
+    if (!to) return
+    setTrail([to.path])
+    setSource(false)
   }
 
   useEffect(() => {
@@ -289,23 +326,44 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
 
   useEffect(() => {
     let live = true
-    noteSeq.current += 1
-    setResult(null)
-    setNote('')
+    const key = `${file.session}\n${path}\n${attempt}`
+    const refresh = loaded.current === key
+    const say = latestNote()
+    if (!refresh) {
+      setResult(null)
+      setNote('')
+    } else if (touch?.gone) return
     void getFile(file.session, path).then((r) => {
-      if (live) setResult(r)
+      if (!live || (refresh && r.kind !== 'ok')) return
+      loaded.current = key
+      setResult(r)
+      if (refresh) say("Updated to the agent's latest edit")
     })
     return () => {
       live = false
     }
-  }, [file.session, path, attempt])
+  }, [file.session, path, attempt, stamp])
 
   useEffect(() => {
     if (moved.current) title.current?.focus()
   }, [path])
 
+  useEffect(() => {
+    if (!docked) return
+    const check = () => {
+      const selection = document.getSelection()
+      const inside = (node: Node | null) => node !== null && body.current?.contains(node) === true
+      setQuotable(selection !== null && !selection.isCollapsed && inside(selection.anchorNode) && inside(selection.focusNode))
+    }
+    document.addEventListener('selectionchange', check)
+    return () => document.removeEventListener('selectionchange', check)
+  }, [docked])
+
   const close = () => {
-    if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
+    if (docked) {
+      terminal.current?.focus()
+      onClose()
+    } else if (typeof ref.current?.close === 'function' && ref.current.open) ref.current.close()
     else onClose()
   }
   const copy = (text: string, done: string, instead: string) => {
@@ -324,22 +382,57 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
       say(r.kind !== 'ok' ? failure(r) : r.data.revealed ? 'Not a document type, so it is shown in its folder instead' : 'Opened on this laptop'),
     )
   }
+  const quote = () => {
+    const say = latestNote()
+    const text = quotable ? (document.getSelection()?.toString().trimEnd() ?? '') : ''
+    if (!text || !terminal?.current) return say('Select text in the file first, then quote it into your reply')
+    const block = text
+      .split('\n')
+      .map((line) => (line ? `> ${line}` : '>'))
+      .join('\n')
+    if (!canQuote || !terminal.current.paste(`${block}\n\n`)) return say("The agent isn't in front in this terminal, so nothing was sent")
+    terminal.current.focus()
+    say(block.length > LONG_PASTE ? 'Quoted. Claude Code shows a long quote as [Pasted text], and the agent still gets all of it' : 'Quoted into your reply, not sent')
+  }
+  const keys = (event: KeyboardEvent<HTMLElement>) => {
+    const term = terminal?.current
+    if (!term) return
+    if (event.key === 'Escape' || event.key === 'F6') {
+      event.preventDefault()
+      term.focus(event.key === 'Escape')
+    } else if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) {
+      event.preventDefault()
+      event.stopPropagation()
+      term.focus()
+      term.input(event.key)
+    }
+  }
 
   const view = result?.kind === 'ok' ? result.data : null
   const text = view?.kind === 'text' ? view.text : undefined
   const name = baseName(path)
   const format = useMemo(() => (view ? formatOf(view) : null), [view])
   const showSource = !format || source
+  const cut = path.lastIndexOf('/', path.lastIndexOf('/') - 1) + 1
   const copyText = (body: string) =>
     copy(body, view?.truncated ? 'Copied the first 1 MB' : 'Text copied', showSource ? 'select the text below' : 'switch to Source and select it')
-  return (
-    <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
+  const act = (icon: IconName, label: string) => (
+    <>
+      <Icon name={icon} size={14} />
+      <span className="file-act">{label}</span>
+    </>
+  )
+  const content = (
+    <>
       <header className="file-head">
         <div className="file-title">
           <h2 id={id} ref={title} tabIndex={-1}>
             {name}
           </h2>
-          <p className="file-path">{path}</p>
+          <p className="file-path" title={path}>
+            <span className="file-path-head">{path.slice(0, cut)}</span>
+            <span className="file-path-tail">{path.slice(cut)}</span>
+          </p>
           {view ? (
             <p className="file-facts">
               {size(view.size)} · changed {ago(Date.now(), view.mtime)} ago · {view.local ? 'laptop copy' : 'read from host'}
@@ -347,38 +440,65 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
           ) : null}
         </div>
         <div className="detail-actions">
+          {prev || next ? (
+            <span className="file-step">
+              <button type="button" aria-disabled={!prev} title={prev ? `Previous file: ${baseName(prev.path)}` : 'This is the first file'} onClick={() => step(prev)}>
+                {act('previous', 'Previous file')}
+              </button>
+              <button type="button" aria-disabled={!next} title={next ? `Next file: ${baseName(next.path)}` : 'This is the last file'} onClick={() => step(next)}>
+                {act('next', 'Next file')}
+              </button>
+            </span>
+          ) : null}
           {trail.length > 1 ? (
             <button
               type="button"
+              title="Back"
               onClick={() => {
                 moved.current = true
                 setTrail((t) => t.slice(0, -1))
                 setSource(false)
               }}
             >
-              Back
+              {act('back', 'Back')}
+            </button>
+          ) : null}
+          {docked ? (
+            <button
+              type="button"
+              aria-disabled={!quotable || !canQuote}
+              title={canQuote ? 'Quote the selected text into your reply' : "Quoting works while the agent's prompt is in front in this terminal"}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={quote}
+            >
+              {act('quote', 'Quote into reply')}
+            </button>
+          ) : null}
+          {onDock ? (
+            <button type="button" title="Keep this file open beside the session's terminal" onClick={() => onDock({ session: file.session, path })}>
+              {act('side', 'Open beside terminal')}
             </button>
           ) : null}
           {view?.local ? (
-            <button type="button" className="primary" onClick={open}>
-              Open on laptop
+            <button type="button" className={docked ? undefined : 'primary'} title="Open on laptop" onClick={open}>
+              {act('open', 'Open on laptop')}
             </button>
           ) : null}
           {view?.data ? (
-            <a className="button" href={view.data} download={name}>
-              Download
+            <a className="button" href={view.data} download={name} title="Download">
+              {act('download', 'Download')}
             </a>
           ) : null}
           {text ? (
-            <button type="button" onClick={() => copyText(text)}>
-              Copy text
+            <button type="button" title="Copy text" onClick={() => copyText(text)}>
+              {act('copy', 'Copy text')}
             </button>
           ) : null}
-          <button type="button" onClick={() => copy(path, 'Path copied', 'select the path above')}>
-            Copy path
+          <button type="button" title="Copy path" onClick={() => copy(path, 'Path copied', 'select the path above')}>
+            {act('link', 'Copy path')}
           </button>
-          <button type="button" onClick={close}>
-            Close
+          <button type="button" title={docked ? 'Close (Esc returns to the terminal)' : 'Close'} onClick={close}>
+            {act('x', 'Close')}
           </button>
         </div>
       </header>
@@ -403,7 +523,8 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
           {note}
         </p>
       </div>
-      <div className="file-body">
+      <div className="file-body" ref={body} role="region" aria-labelledby={id} tabIndex={0}>
+        {touch?.gone && view ? <p className="banner">The agent deleted this file; this is the last copy read.</p> : null}
         {result === null ? <p className="lane-empty">Loading…</p> : null}
         {result && result.kind !== 'ok' ? (
           <p role="alert" className="banner">
@@ -419,7 +540,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
           showSource || !format ? (
             <Source text={view.text} wrap={wrap} path={path} />
           ) : (
-            <Formatted format={format} text={view.text} path={path} onLink={follow} />
+            <Formatted format={format} text={view.text} path={path} prefix={id} onLink={follow} />
           )
         ) : null}
         {view?.kind === 'image' && view.data ? <img className="file-image" src={view.data} alt={name} /> : null}
@@ -428,6 +549,22 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
         ) : null}
         {view?.kind === 'text' && view.truncated ? <p className="hint">Showing the first 1 MB of {size(view.size)}.</p> : null}
       </div>
+    </>
+  )
+  return docked ? (
+    <aside
+      className="file-pane"
+      aria-labelledby={id}
+      onKeyDown={keys}
+      onAnimationEnd={(event) => {
+        if (event.target === event.currentTarget) event.currentTarget.dataset.settled = ''
+      }}
+    >
+      {content}
+    </aside>
+  ) : (
+    <dialog ref={ref} className="file-preview" aria-labelledby={id} onClose={onClose}>
+      {content}
     </dialog>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -34,6 +34,14 @@ const SGR_MOUSE = /\x1b\[<(\d+);(\d+;\d+)M/
 const SGR_LEFT = 0
 const SGR_MODIFIERS = 4 | 8 | 16
 const SGR_MOTION = 32
+const ESC_GUARD_MS = 400
+const CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
+
+export interface TerminalHandle {
+  focus: (guardEsc?: boolean) => void
+  paste: (text: string) => boolean
+  input: (text: string) => void
+}
 
 function leftButtonCell(data: string): { cell: string; moved: boolean } | null {
   const match = SGR_MOUSE.exec(data)
@@ -63,6 +71,9 @@ export function TerminalPane({
   lead,
   reconnectSignal = 0,
   tools,
+  side,
+  onSide,
+  ref,
 }: {
   name: string
   active: boolean
@@ -70,8 +81,15 @@ export function TerminalPane({
   lead?: ReactNode
   reconnectSignal?: number
   tools?: ReactNode
+  side?: ReactNode
+  onSide?: () => void
+  ref?: Ref<TerminalHandle>
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const termRef = useRef<XTerm | null>(null)
+  const escUntil = useRef(0)
+  const onSideRef = useRef(onSide)
+  onSideRef.current = onSide
   const reconnectRef = useRef<() => void>(() => undefined)
   const gaveUpRef = useRef(false)
   const revivableRef = useRef(false)
@@ -89,6 +107,14 @@ export function TerminalPane({
     term.loadAddon(fit)
     if (containerRef.current) term.open(containerRef.current)
     focusRef.current = () => term.focus()
+    termRef.current = term
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.key === 'Escape' && Date.now() < escUntil.current) return false
+      if (event.key !== 'F6' || !onSideRef.current) return true
+      event.preventDefault()
+      if (event.type === 'keydown') onSideRef.current()
+      return false
+    })
     try {
       const webgl = new WebglAddon()
       webgl.onContextLoss(() => webgl.dispose())
@@ -200,16 +226,18 @@ export function TerminalPane({
     })
 
     let fitTimer: number | null = null
-    const observer = new ResizeObserver(() => {
+    const refit = () => {
       if (fitTimer !== null) window.clearTimeout(fitTimer)
       fitTimer = window.setTimeout(() => {
+        if (containerRef.current?.closest('[data-resizing]')) return refit()
         try {
           fit.fit()
         } catch {
           void 0
         }
       }, 150)
-    })
+    }
+    const observer = new ResizeObserver(refit)
     if (containerRef.current) observer.observe(containerRef.current)
     const stopLook = onTerminalLook(() => {
       Object.assign(term.options, terminalLook())
@@ -353,9 +381,28 @@ export function TerminalPane({
       dataSub.dispose()
       resizeSub.dispose()
       clipSub.dispose()
+      termRef.current = null
       term.dispose()
     }
   }, [name])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: (guardEsc = false) => {
+        if (guardEsc) escUntil.current = Date.now() + ESC_GUARD_MS
+        termRef.current?.focus()
+      },
+      paste: (text) => {
+        const term = termRef.current
+        if (!term?.modes.bracketedPasteMode) return false
+        term.paste(text.replace(CONTROLS, ''))
+        return true
+      },
+      input: (text) => termRef.current?.input(text),
+    }),
+    [],
+  )
 
   useEffect(() => {
     if (active) focusRef.current()
@@ -395,7 +442,10 @@ export function TerminalPane({
         ) : null}
         {tools}
       </div>
-      <div ref={containerRef} className="terminal-screen" />
+      <div className="terminal-body">
+        <div ref={containerRef} className="terminal-screen" />
+        {side}
+      </div>
     </div>
   )
 }

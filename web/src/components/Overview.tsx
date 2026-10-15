@@ -445,6 +445,7 @@ export function Overview({
   visible = true,
   onOpen,
   onSeen,
+  onDock,
 }: {
   sessions: Session[]
   insights: Map<string, AgentInsight>
@@ -453,6 +454,7 @@ export function Overview({
   visible?: boolean
   onOpen: (name: string) => void
   onSeen: (names: string[]) => void
+  onDock?: (file: FileRef) => void
 }) {
   const id = useId()
   const [selected, setSelected] = useState<string | null>(null)
@@ -714,8 +716,16 @@ export function Overview({
         <FilePreview
           key={`${preview.session}${preview.path}`}
           file={preview}
-          known={(rows.get(preview.session)?.insight?.files ?? []).map((f) => f.path)}
+          files={rows.get(preview.session)?.insight?.files ?? []}
           onClose={() => setPreview(null)}
+          onDock={
+            onDock && rows.get(preview.session)?.session.attachable
+              ? (file) => {
+                  setPreview(null)
+                  onDock(file)
+                }
+              : undefined
+          }
         />
       ) : null}
     </section>

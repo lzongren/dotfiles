@@ -62,10 +62,19 @@ const PATHS = {
   folder: ['M3.5 7A1.5 1.5 0 0 1 5 5.5h4.4l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18z'],
   plus: ['M12 5v14', 'M5 12h14'],
   bell: ['M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2h-14z', 'M10.5 21h3'],
+  back: ['M19.5 12h-14', 'M11 6.5 5.5 12l5.5 5.5'],
+  copy: ['M9 9.5A1.5 1.5 0 0 1 10.5 8h8A1.5 1.5 0 0 1 20 9.5v9a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 9 18.5z', 'M15.5 5.5V5A1.5 1.5 0 0 0 14 3.5H5.5A1.5 1.5 0 0 0 4 5v8.5A1.5 1.5 0 0 0 5.5 15H6'],
+  link: ['M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1', 'M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1'],
+  quote: ['M5 5.5v13', 'M9.5 7.5h10', 'M9.5 12h10', 'M9.5 16.5h6'],
+  download: ['M12 4v11', 'M7.5 10.5 12 15l4.5-4.5', 'M5 19.5h14'],
+  open: ['M14 4.5h5.5V10', 'M19.5 4.5l-8 8', 'M17.5 14v4a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18V8A1.5 1.5 0 0 1 6 6.5h4'],
+  side: ['M5.5 4.5h13A2.5 2.5 0 0 1 21 7v10a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7a2.5 2.5 0 0 1 2.5-2.5z', 'M14 4.5v15'],
   pr: ['M6 8.5v7', 'M8.5 6a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z', 'M8.5 18a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z', 'M20.5 18a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z', 'M18 15.5V9a3 3 0 0 0-3-3h-3.5', 'M13.5 4l-2 2 2 2'],
 } as const
 
-export function Icon({ name, size = 16 }: { name: keyof typeof PATHS; size?: 14 | 16 }) {
+export type IconName = keyof typeof PATHS
+
+export function Icon({ name, size = 16 }: { name: IconName; size?: 14 | 16 }) {
   return (
     <svg className="icon" viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" focusable="false">
       {PATHS[name].map((d) => (

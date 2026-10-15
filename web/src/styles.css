@@ -1124,10 +1124,147 @@ kbd {
   margin-top: 14px;
 }
 
+.terminal-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  container: term-body / inline-size;
+}
+
 .terminal-screen {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
+}
+
+.pane-resize {
+  position: relative;
+  z-index: 6;
+  flex: none;
+  width: 1px;
+  background: var(--line-1);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pane-resize::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.pane-resize:hover,
+.terminals[data-resizing] .pane-resize {
+  background: var(--line-2);
+}
+
+.pane-resize:is(:active, :focus-visible) {
+  outline: none;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.file-pane {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex: 0 0 clamp(360px, calc(var(--preview-f, 0.4) * 100%), max(360px, 100% - 680px));
+  flex-direction: column;
+  min-width: 0;
+  background: var(--tile);
+  color: var(--text);
+}
+
+.file-pane:focus-within {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.terminals[data-collapse] .file-pane {
+  display: none;
+}
+
+.file-pane .file-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 12px;
+  padding: 10px 10px 0 16px;
+}
+
+.file-pane .file-title {
+  display: contents;
+}
+
+.file-pane .file-title h2 {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-pane :is(.file-path, .file-facts) {
+  grid-column: 1 / -1;
+}
+
+.file-pane .file-head .detail-actions {
+  grid-row: 1;
+  grid-column: 2;
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+.file-pane .detail-actions :is(button, .button),
+.file-step button {
+  width: 28px;
+  padding: 0;
+}
+
+.file-pane .detail-actions :is(button, .button) {
+  border-color: transparent;
+}
+
+.file-pane .file-act,
+.file-step .file-act {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.file-pane .md {
+  max-width: 70ch;
+  font-size: 14px;
+}
+
+@container term-body (width < 1040px) {
+  .pane-resize {
+    display: none;
+  }
+
+  .file-pane {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(400px, 100% - 48px);
+    border-left: 1px solid var(--line-2);
+    box-shadow: var(--elev-2);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .file-pane:not([data-settled]) {
+    animation: pane-in 250ms cubic-bezier(0.05, 0.7, 0.1, 1);
+  }
+}
+
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    translate: 24px 0;
+  }
 }
 
 .terminal-screen .xterm {
@@ -1956,8 +2093,36 @@ details.fact[open] > summary {
   user-select: all;
 }
 
+.file-path {
+  display: flex;
+  white-space: nowrap;
+}
+
+.file-path-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-path-tail {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .file-facts {
   user-select: auto;
+}
+
+.file-step {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.file-head [aria-disabled='true'] {
+  color: var(--dim);
+  cursor: default;
 }
 
 .file-head .detail-actions {
@@ -2017,6 +2182,14 @@ details.fact[open] > summary {
   min-height: 0;
   overflow: auto;
   padding: 0 16px 16px;
+}
+
+.file-body:focus-visible {
+  outline-offset: -2px;
+}
+
+.file-body > .banner {
+  margin-bottom: 12px;
 }
 
 .file-source,

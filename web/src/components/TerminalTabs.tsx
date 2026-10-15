@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { explain, uploadFile } from '../api'
 import { heardAt, isFresh, openableCount, plain, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
@@ -8,7 +8,7 @@ import { FileList, FilePreview, type FileRef } from './FilePreview'
 import { Icon, StateIcon, toneOf, type Tone } from './Icon'
 import { ArtifactList } from './Overview'
 import { headline, sessionSummary } from './SessionList'
-import { TerminalPane } from './Terminal'
+import { TerminalPane, type TerminalHandle } from './Terminal'
 
 const NOTE_MS = 8000
 const TONES: Record<Tone, string> = {
@@ -29,6 +29,83 @@ export interface TabCounts {
 }
 
 const undated = (name: string) => name.replace(/^\d{3,4}_(?=.)/, '')
+
+const PANE_KEY = 'devbox.preview'
+const PANE = { min: 0.2, initial: 0.4, max: 0.75 }
+const PANE_MIN = 360
+const TERM_MIN = 680
+const COLLAPSE = 96
+
+function storedShare(): number {
+  try {
+    const n = Number(localStorage.getItem(PANE_KEY))
+    return n >= PANE.min && n <= PANE.max ? n : PANE.initial
+  } catch {
+    return PANE.initial
+  }
+}
+
+function PaneHandle({ share, onShare, onCollapse }: { share: number; onShare: (n: number) => void; onCollapse: () => void }) {
+  const dragged = useRef<number | null>(null)
+  const clamp = (n: number, width: number) => {
+    const lo = Math.max(PANE.min, Math.min(PANE.max, PANE_MIN / width))
+    return Math.min(Math.max(lo, Math.min(PANE.max, 1 - TERM_MIN / width)), Math.max(lo, n))
+  }
+  const root = (handle: Element) => handle.closest<HTMLElement>('.terminals')
+  const drop = (handle: Element) => {
+    const terminals = root(handle)
+    const collapsed = terminals?.hasAttribute('data-collapse') ?? false
+    terminals?.removeAttribute('data-resizing')
+    terminals?.removeAttribute('data-collapse')
+    if (collapsed) {
+      terminals?.style.setProperty('--preview-f', String(share))
+      onCollapse()
+    } else if (dragged.current !== null) onShare(dragged.current)
+    dragged.current = null
+  }
+  const shown = Math.round(share * 100)
+  return (
+    <div
+      className="pane-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the terminal and the file beside it"
+      aria-valuemin={100 - Math.round(PANE.max * 100)}
+      aria-valuemax={100 - Math.round(PANE.min * 100)}
+      aria-valuenow={100 - shown}
+      aria-valuetext={`terminal ${100 - shown}%, file ${shown}%`}
+      tabIndex={0}
+      title="Drag to resize, double-click to reset, drag to the right edge to close"
+      onPointerDown={(event) => {
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        root(event.currentTarget)?.setAttribute('data-resizing', '')
+      }}
+      onPointerMove={(event) => {
+        const handle = event.currentTarget
+        const body = handle.parentElement
+        if (!body || !handle.hasPointerCapture(event.pointerId)) return
+        const rect = body.getBoundingClientRect()
+        const px = rect.right - event.clientX
+        const terminals = root(handle)
+        terminals?.toggleAttribute('data-collapse', px < PANE_MIN - COLLAPSE)
+        dragged.current = clamp(px / rect.width, rect.width)
+        terminals?.style.setProperty('--preview-f', String(dragged.current))
+      }}
+      onPointerUp={(event) => drop(event.currentTarget)}
+      onLostPointerCapture={(event) => drop(event.currentTarget)}
+      onDoubleClick={() => onShare(PANE.initial)}
+      onKeyDown={(event) => {
+        const width = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0
+        const to =
+          event.key === 'ArrowLeft' ? share + 0.02 : event.key === 'ArrowRight' ? share - 0.02 : event.key === 'Home' ? PANE.max : event.key === 'End' ? PANE.min : null
+        if (to === null || !width) return
+        event.preventDefault()
+        onShare(clamp(to, width))
+      }}
+    />
+  )
+}
 
 function TabName({ name, keepDate }: { name: string; keepDate: boolean }) {
   const rest = keepDate ? name : undated(name)
@@ -62,6 +139,7 @@ export function TerminalTabs({
   now,
   counts = { needs: 0, working: 0, fresh: 0 },
   seenAt = () => Infinity,
+  dock = null,
   onSelect,
   onClose,
 }: {
@@ -74,12 +152,16 @@ export function TerminalTabs({
   now: number
   counts?: TabCounts
   seenAt?: (name: string) => number
+  dock?: FileRef | null
   onSelect: (name: string | null) => void
   onClose: (name: string) => void
 }) {
   const id = useId()
   const [filesOpen, setFilesOpen] = useState<string | null>(null)
-  const [preview, setPreview] = useState<FileRef | null>(null)
+  const [previews, setPreviews] = useState<Map<string, FileRef>>(() => new Map())
+  const [docked, setDocked] = useState(dock)
+  const [share, setShare] = useState(storedShare)
+  const term = useRef<TerminalHandle | null>(null)
   const [over, setOver] = useState<string | null>(null)
   const [notes, setNotes] = useState<Record<string, string>>({})
   const timers = useRef(new Map<string, number>())
@@ -104,11 +186,35 @@ export function TerminalTabs({
     }
   }, [])
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANE_KEY, String(share))
+    } catch {
+      void 0
+    }
+  }, [share])
+
   if (filesOpen !== null && (filesOpen !== active || !insights.has(filesOpen))) setFilesOpen(null)
+  if (dock !== docked) {
+    setDocked(dock)
+    if (dock) setPreviews((p) => new Map(p).set(dock.session, dock))
+  }
+  if ([...previews.keys()].some((tab) => !tabs.includes(tab))) setPreviews((p) => new Map([...p].filter(([tab]) => tabs.includes(tab))))
+  const pick = (tab: string, index: number, file: FileRef) => {
+    setFilesOpen(null)
+    setPreviews((p) => new Map(p).set(tab, file))
+    requestAnimationFrame(() => document.getElementById(`${id}-pane-${index}`)?.querySelector<HTMLElement>('.file-body')?.focus())
+  }
+  const unpick = (tab: string) =>
+    setPreviews((p) => {
+      const next = new Map(p)
+      next.delete(tab)
+      return next
+    })
   useEffect(() => {
     if (filesOpen === null) return
     const away = (event: PointerEvent) => {
-      if (!(event.target instanceof Element && event.target.closest('.term-files, dialog'))) setFilesOpen(null)
+      if (!(event.target instanceof Element && event.target.closest('.term-files'))) setFilesOpen(null)
     }
     document.addEventListener('pointerdown', away)
     return () => document.removeEventListener('pointerdown', away)
@@ -198,7 +304,7 @@ export function TerminalTabs({
     { tone: 'fresh' as const, n: counts.fresh, say: `${counts.fresh} new` },
   ].filter((c) => c.n > 0)
   return (
-    <section className="terminals" data-overview={active === null}>
+    <section className="terminals" data-overview={active === null} style={{ '--preview-f': share } as CSSProperties}>
       <div className="tabstrip" role="tablist">
         <span className="tab" data-active={active === null}>
           <button
@@ -274,11 +380,42 @@ export function TerminalTabs({
         const cwd = open ? (row?.path ?? '') : ''
         const lead = insight?.summary ? plain(insight.summary) : row ? headline(row) || sessionSummary(row).text : ''
         const files = open ? (insight.files ?? []).map((f) => ({ ...f, session: tab, cwd })) : []
+        const preview = previews.get(tab)
         return (
-          <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }} data-drop={over === tab} {...zone(tab)}>
+          <div
+            key={tab}
+            id={`${id}-pane-${index}`}
+            className="termpane"
+            style={{ display: tab === active ? 'flex' : 'none' }}
+            data-drop={over === tab}
+            {...zone(tab)}
+          >
             <TerminalPane
+              ref={tab === active ? term : undefined}
               name={tab}
               active={tab === active}
+              onSide={preview ? () => document.getElementById(`${id}-pane-${index}`)?.querySelector<HTMLElement>('.file-body')?.focus() : undefined}
+              side={
+                preview ? (
+                  <>
+                    <PaneHandle
+                      share={share}
+                      onShare={setShare}
+                      onCollapse={() => {
+                        term.current?.focus()
+                        unpick(tab)
+                      }}
+                    />
+                    <FilePreview
+                      file={preview}
+                      files={insight?.files ?? []}
+                      terminal={term}
+                      canQuote={insight !== undefined && row?.cmd === insight.agent}
+                      onClose={() => unpick(tab)}
+                    />
+                  </>
+                ) : undefined
+              }
               focusSignal={tab === active ? focusSignal : 0}
               lead={lead ? <span className="terminal-lead">{lead}</span> : undefined}
               reconnectSignal={reconnectSignal}
@@ -294,7 +431,7 @@ export function TerminalTabs({
                     }}
                     onBlur={(event) => {
                       const next = event.relatedTarget
-                      if (next instanceof Element && !event.currentTarget.contains(next) && !next.closest('dialog')) setFilesOpen(null)
+                      if (next instanceof Element && !event.currentTarget.contains(next)) setFilesOpen(null)
                     }}
                   >
                     <button
@@ -321,7 +458,11 @@ export function TerminalTabs({
                           <p className="lane-empty">No pull requests or reviews seen yet.</p>
                         )}
                         <h2>Files</h2>
-                        {files.length ? <FileList files={files} now={now} onPick={setPreview} /> : <p className="lane-empty">No files written yet.</p>}
+                        {files.length ? (
+                          <FileList files={files} now={now} onPick={(file) => pick(tab, index, file)} />
+                        ) : (
+                          <p className="lane-empty">No files written yet.</p>
+                        )}
                       </section>
                     ) : null}
                   </div>
@@ -335,14 +476,6 @@ export function TerminalTabs({
           </div>
         )
       })}
-      {preview ? (
-        <FilePreview
-          key={`${preview.session}${preview.path}`}
-          file={preview}
-          known={(insights.get(preview.session)?.files ?? []).map((f) => f.path)}
-          onClose={() => setPreview(null)}
-        />
-      ) : null}
     </section>
   )
 }
