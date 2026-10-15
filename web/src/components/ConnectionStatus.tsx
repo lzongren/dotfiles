@@ -17,6 +17,7 @@ export interface Feed {
 }
 
 export const SLOW_MS = 3000
+export const WAIT_MS = 10_000
 export const RECOVERED_MS = 6000
 export const INSIGHTS_STALE_MS = 60_000
 
@@ -92,7 +93,7 @@ function noticeOf(sessions: Feed, insights: Feed, agentStates: boolean, host: st
       live: `${title}.`,
     }
   }
-  if (sessions.pendingSince !== null && now - sessions.pendingSince >= SLOW_MS) {
+  if (sessions.pendingSince !== null && now - sessions.pendingSince >= (sessions.okAt === null ? SLOW_MS : WAIT_MS)) {
     const waited = secs(now - sessions.pendingSince)
     return sessions.okAt === null
       ? {

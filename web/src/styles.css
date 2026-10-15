@@ -168,7 +168,7 @@ kbd {
 .app {
   display: grid;
   grid-template-columns: min(var(--sidebar-w, 320px), 50vw) 1fr;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr;
   height: 100vh;
   background: var(--s-frame);
 }
@@ -2465,7 +2465,7 @@ details.fact[open] > summary {
 @media (max-width: 760px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto 40vh 1fr;
+    grid-template-rows: auto 40vh 1fr;
   }
 
   .sidebar {
@@ -2564,15 +2564,24 @@ details.fact[open] > summary {
 }
 
 .conn-slot {
-  grid-column: 1 / -1;
+  position: fixed;
+  bottom: 8px;
+  left: 8px;
+  z-index: 50;
+  width: max(260px, min(var(--sidebar-w, 320px), 50vw) - 16px);
 }
 
 .conn {
-  margin: 0 8px 8px 16px;
   padding: 8px 12px;
   border: 1px solid var(--line-2);
   border-radius: 10px;
+  box-shadow: var(--elev-2);
   font-size: 13px;
+}
+
+.conn-slot-page {
+  position: static;
+  width: auto;
 }
 
 .conn-warn {
@@ -2646,8 +2655,8 @@ details.fact[open] > summary {
 }
 
 .conn-slot-page .conn {
-  margin: 0;
   border-radius: 12px;
+  box-shadow: none;
   padding: 16px 20px;
 }
 

@@ -393,16 +393,18 @@ describe('App', () => {
     expect(status()).toHaveTextContent('Retrying in 5s.')
   })
 
-  it('never stacks requests on a host that does not answer, and says it is waiting', async () => {
+  it('never stacks requests on a host that does not answer, and says it is waiting only once a refresh is well past its usual time', async () => {
     fetchMock.mockImplementationOnce(async () => response(okBody(ROWS)))
     fetchMock.mockImplementation(() => new Promise(() => undefined))
     render(<App />)
     await flush()
     await advance(5000)
     expect(status.query()).toBeNull()
-    await advance(3000)
+    await advance(9000)
+    expect(status.query()).toBeNull()
+    await advance(1000)
     expect(status()).toHaveTextContent('Waiting on stub-host')
-    expect(status()).toHaveTextContent('Showing sessions as of 8s ago; the refresh has had no answer for 3s.')
+    expect(status()).toHaveTextContent('Showing sessions as of 15s ago; the refresh has had no answer for 10s.')
     await advance(30000)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
