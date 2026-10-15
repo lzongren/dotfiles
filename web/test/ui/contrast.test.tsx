@@ -38,7 +38,7 @@ describe('theme contrast (WCAG AA)', () => {
     expect(contrast('#767676', '#ffffff')).toBeCloseTo(4.54, 2)
   })
 
-  it.each(['text', 'dim', 'accent', 'bell', 'danger'])('--%s text is at least 4.5:1 on every surface', (fg) => {
+  it.each(['text', 'dim', 'accent', 'bell', 'danger', 'grad-a', 'grad-b', 'grad-c'])('--%s text is at least 4.5:1 on every surface', (fg) => {
     for (const surface of ['bg', 'surface', 'tile', 'raised', 'selected', 'term-bg']) {
       expect(worst(fg, surface), `--${fg} on --${surface}`).toBeGreaterThanOrEqual(4.5)
     }
@@ -59,6 +59,9 @@ describe('theme contrast (WCAG AA)', () => {
 
   it.each([
     ['on-accent', 'accent'],
+    ['on-accent', 'grad-a'],
+    ['on-accent', 'grad-b'],
+    ['on-accent', 'grad-c'],
     ['on-bell', 'bell'],
     ['on-danger', 'danger'],
   ])('--%s text is at least 4.5:1 on its --%s chip', (fg, bg) => {
@@ -105,18 +108,24 @@ const MUDDY: Palette = { background: '#555555', foreground: '#777777', ansi: Arr
 const MID_LIGHT_TEXT: Palette = { background: '#767676', foreground: '#ffffff', ansi: Array(16).fill('#9a9a9a') }
 const MID_DARK_TEXT: Palette = { background: '#808080', foreground: '#000000', ansi: Array(16).fill('#606060') }
 
+type Stops = Parameters<typeof uiTokens>[2]
+const CASES: [string, Palette, Stops][] = [
+  ...PRESETS.flatMap((l): [string, Palette, Stops][] => [
+    [`${l.label} dark`, l.palette!, l.gradient!.dark],
+    [`${l.label} light`, l.lightPalette!, l.gradient!.light],
+  ]),
+  ['Catppuccin Latte', LATTE, undefined],
+  ['a low-contrast palette', MUDDY, undefined],
+  ['a mid-grey background with white text', MID_LIGHT_TEXT, undefined],
+  ['a mid-grey background with black text', MID_DARK_TEXT, undefined],
+]
+
 describe.each(
-  [
-    ...PRESETS.filter((l) => l.palette).map((l) => [l.label, l.palette!] as const),
-    ['Catppuccin Latte', LATTE] as const,
-    ['a low-contrast palette', MUDDY] as const,
-    ['a mid-grey background with white text', MID_LIGHT_TEXT] as const,
-    ['a mid-grey background with black text', MID_DARK_TEXT] as const,
-  ].flatMap(([name, palette]) => [[name, palette, false] as const, [`${name}, more contrast`, palette, true] as const]),
-)('theme derived from %s (WCAG AA)', (_, palette, more) => {
-  const t = uiTokens(palette, more)
+  CASES.flatMap(([name, palette, stops]) => [[name, palette, stops, false] as const, [`${name}, more contrast`, palette, stops, true] as const]),
+)('theme derived from %s (WCAG AA)', (_, palette, stops, more) => {
+  const t = uiTokens(palette, more, stops)
   it('keeps every text token at least 4.5:1 on every surface', () => {
-    for (const fg of ['--text', '--dim', '--accent', '--bell', '--danger']) {
+    for (const fg of ['--text', '--dim', '--accent', '--bell', '--danger', '--grad-a', '--grad-b', '--grad-c']) {
       for (const bg of ['--bg', '--surface', '--tile', '--raised', '--selected']) {
         expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
       }
@@ -137,7 +146,14 @@ describe.each(
   })
 
   it('keeps chip text and control borders readable', () => {
-    for (const [fg, bg] of [['--on-accent', '--accent'], ['--on-bell', '--bell'], ['--on-danger', '--danger']]) {
+    for (const [fg, bg] of [
+      ['--on-accent', '--accent'],
+      ['--on-accent', '--grad-a'],
+      ['--on-accent', '--grad-b'],
+      ['--on-accent', '--grad-c'],
+      ['--on-bell', '--bell'],
+      ['--on-danger', '--danger'],
+    ]) {
       expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
     }
     expect(contrast(t['--control'], t['--bg'])).toBeGreaterThanOrEqual(more ? 4.5 : 3)

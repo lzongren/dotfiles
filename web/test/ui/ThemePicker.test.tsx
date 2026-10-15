@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemePicker } from '../../src/components/ThemePicker'
 import type { GhosttyLook } from '../../src/shared/types'
-import { applyLook, ghosttyLook, onTerminalLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
+import { applyLook, DEVBOX, ghosttyLook, onTerminalLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
 
 const ansi = (c: string) => Array<string>(16).fill(c)
 const GHOSTTY: GhosttyLook = {
@@ -36,6 +36,12 @@ async function renderPicker() {
 }
 
 const bg = () => document.documentElement.style.getPropertyValue('--bg')
+const toggle = () => screen.getAllByRole('button', { name: 'Theme' }).at(-1)!
+
+function pick(name: RegExp) {
+  if (toggle().getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle())
+  fireEvent.click(screen.getByRole('radio', { name }))
+}
 
 beforeEach(() => {
   localStorage.clear()
@@ -67,7 +73,7 @@ describe('ThemePicker', () => {
   it('starts on your Ghostty theme, with its font and cursor in the terminal', async () => {
     serve(GHOSTTY)
     await renderPicker()
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Ghostty · Night / Day')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Ghostty · Night / Day')
     expect(bg()).toBe('#101018')
     expect(terminalLook()).toMatchObject({
       fontSize: 14,
@@ -101,21 +107,56 @@ describe('ThemePicker', () => {
     expect(dim()).not.toBe(before)
   })
 
-  it('falls back to Devbox when the Ghostty theme it saved is gone', async () => {
+  it('falls back to Sunset when the Ghostty theme it saved is gone', async () => {
     serve(GHOSTTY)
     await renderPicker()
     document.body.innerHTML = ''
     serve(null)
     await renderPicker()
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Devbox')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Sunset')
+    expect(bg()).toBe('#09090b')
     expect(savedLook()).toBeNull()
+  })
+
+  it('moves a look saved from a retired preset to your Ghostty theme', async () => {
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    serve(GHOSTTY)
+    await renderPicker()
+    expect(toggle()).toHaveAttribute('title', 'Theme: Ghostty · Night / Day')
+    expect(savedLook()?.id).toBe('ghostty')
+  })
+
+  it('opens a gallery that previews both halves of every theme, and closes on Escape or a click outside', async () => {
+    serve(GHOSTTY)
+    await renderPicker()
+    fireEvent.click(toggle())
+    const gallery = screen.getByRole('group', { name: 'Theme' })
+    expect(screen.getAllByRole('radio').map((r) => r.closest('label')!.querySelectorAll('.theme-mini').length)).toEqual([2, 2, 2, 2, 2])
+    expect(screen.getByRole('radio', { name: 'Ghostty Night / Day' })).toBeChecked()
+    expect(gallery).toHaveTextContent('Light or dark follows your system.')
+    fireEvent.keyDown(screen.getByRole('radio', { name: 'Sunset' }), { key: 'Escape' })
+    expect(screen.queryByRole('group', { name: 'Theme' })).toBeNull()
+    expect(toggle()).toHaveFocus()
+    expect(toggle()).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle())
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('group', { name: 'Theme' })).toBeNull()
+  })
+
+  it('shows one preview for a Ghostty theme without a light half', async () => {
+    serve({ ...GHOSTTY, light: undefined })
+    await renderPicker()
+    fireEvent.click(toggle())
+    expect(screen.getByRole('radio', { name: 'Ghostty Night' }).closest('label')!.querySelectorAll('.theme-mini')).toHaveLength(1)
   })
 
   it('ignores a saved look it cannot paint, and restores presets by id rather than by stored colors', () => {
     localStorage.setItem('devbox.look', JSON.stringify({ id: 'ghostty', palette: { background: '#000', foreground: '#fff', ansi: [] } }))
     expect(savedLook()).toBeNull()
-    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula', palette: { background: '#123456' } }))
-    expect(savedLook()).toBe(PRESETS.find((l) => l.id === 'dracula'))
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'mono', palette: { background: '#123456' } }))
+    expect(savedLook()).toBe(PRESETS.find((l) => l.id === 'mono'))
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    expect(savedLook()).toBeNull()
   })
 
   it('blinks the cursor when Ghostty does not say, as Ghostty does', () => {
@@ -156,24 +197,25 @@ describe('ThemePicker', () => {
   it('puts padding, weight, line height, and contrast back when you leave the Ghostty theme', async () => {
     serve(GHOSTTY)
     await renderPicker()
-    fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value: 'tokyo-night' } })
-    expect(document.documentElement.style.getPropertyValue('--term-pad')).toBe('')
+    pick(/^Aurora/)
+    expect(document.documentElement.style.getPropertyValue('--term-pad')).toBe('8px 12px 8px 12px')
     expect(terminalLook()).toMatchObject({ minimumContrastRatio: 4.5, drawBoldTextInBrightColors: true, fontWeight: 'normal', lineHeight: 1 })
   })
 
   it('switches to a preset and remembers it over the Ghostty default', async () => {
     serve(GHOSTTY)
     await renderPicker()
-    fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value: 'gruvbox-dark' } })
-    expect(bg()).toBe('#282828')
+    pick(/^Mono/)
+    expect(bg()).toBe('#000000')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Mono')
     document.documentElement.removeAttribute('style')
     await renderPicker()
-    expect(screen.getAllByRole('combobox', { name: 'Theme' })[1]).toHaveDisplayValue('Gruvbox Dark')
-    expect(bg()).toBe('#282828')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Mono')
+    expect(bg()).toBe('#000000')
   })
 
   it('keeps your theme when a terminal fails to take it, and reports the failure', async () => {
-    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'mono' }))
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const stop = onTerminalLook(() => {
       throw new Error('terminal disposed')
@@ -183,33 +225,32 @@ describe('ThemePicker', () => {
     stop()
     expect(errors).toHaveBeenCalledWith(expect.objectContaining({ message: 'terminal disposed' }))
     errors.mockRestore()
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Dracula')
-    expect(savedLook()?.id).toBe('dracula')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Mono')
+    expect(savedLook()?.id).toBe('mono')
     expect(bg()).not.toBe('')
   })
 
   it('stays up when even the fallback look cannot be painted, and keeps your choice for next time', async () => {
-    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'mono' }))
     vi.spyOn(document.documentElement.style, 'removeProperty').mockImplementation(() => {
       throw new Error('style locked')
     })
     serve(null)
     await renderPicker()
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveDisplayValue('Dracula')
-    expect(savedLook()?.id).toBe('dracula')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Mono')
+    expect(savedLook()?.id).toBe('mono')
   })
 
-  it('paints Devbox when your saved look fails, and lets you pick Devbox to keep it', async () => {
-    localStorage.setItem('devbox.look', JSON.stringify({ id: 'dracula' }))
+  it('keeps the picker working when your saved look cannot be painted', async () => {
+    localStorage.setItem('devbox.look', JSON.stringify({ id: 'mono' }))
     vi.spyOn(document.documentElement.style, 'setProperty').mockImplementation(() => {
       throw new Error('style locked')
     })
     serve(null)
     await renderPicker()
-    const picker = screen.getByRole('combobox', { name: 'Theme' })
-    expect(picker).toHaveDisplayValue('Dracula')
-    fireEvent.change(picker, { target: { value: 'devbox' } })
-    expect(savedLook()?.id).toBe('devbox')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Mono')
+    pick(/^Sunset/)
+    expect(savedLook()?.id).toBe('sunset')
   })
 
   it('repaints terminals on zoom only when the line height depends on it', async () => {
@@ -224,21 +265,21 @@ describe('ThemePicker', () => {
     zoomTo(2)
     expect(paints).toBe(1)
     expect(terminalLook().lineHeight).not.toBe(before)
-    fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value: 'tokyo-night' } })
+    pick(/^Aurora/)
     paints = 0
     zoomTo(3)
     expect(paints).toBe(0)
     stop()
   })
 
-  it('offers only the presets without Ghostty, and Devbox clears every override', async () => {
+  it('offers only the presets without Ghostty, and the Devbox fallback clears every override', async () => {
     serve(null)
     await renderPicker()
-    const picker = screen.getByRole('combobox', { name: 'Theme' })
-    expect(picker).toHaveDisplayValue('Devbox')
-    expect(screen.queryByRole('option', { name: /Ghostty/ })).toBeNull()
-    fireEvent.change(picker, { target: { value: 'dracula' } })
-    fireEvent.change(picker, { target: { value: 'devbox' } })
+    expect(toggle()).toHaveAttribute('title', 'Theme: Sunset')
+    fireEvent.click(toggle())
+    expect(screen.getAllByRole('radio').map((r) => r.closest('label')!.querySelector('.theme-name')!.textContent)).toEqual(['Sunset', 'Aurora', 'Iris', 'Mono'])
+    pick(/^Iris/)
+    act(() => applyLook(DEVBOX))
     expect(document.documentElement.getAttribute('style') ?? '').toBe('')
   })
 })

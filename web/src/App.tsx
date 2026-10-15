@@ -266,6 +266,13 @@ export function App() {
       <header className="topbar">
         <h1 className="brand">
           <svg className="brand-mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+            <defs>
+              <linearGradient id="devbox-grad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" style={{ stopColor: 'var(--grad-a)' }} />
+                <stop offset="0.5" style={{ stopColor: 'var(--grad-b)' }} />
+                <stop offset="1" style={{ stopColor: 'var(--grad-c)' }} />
+              </linearGradient>
+            </defs>
             <rect className="mark-bg" x="1.5" y="1.5" width="21" height="21" rx="6" />
             <path className="mark-prompt" d="M7 8.5l3.5 3.5L7 15.5" />
             <rect className="mark-cursor" x="12.5" y="14" width="5" height="2" rx="1" />

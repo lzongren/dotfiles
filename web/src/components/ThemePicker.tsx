@@ -1,13 +1,37 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { getTheme } from '../api'
 import { Icon } from './Icon'
-import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, type Look } from '../theme'
+import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, uiTokens, type Look } from '../theme'
+
+function Mini({ look, mode }: { look: Look; mode: 'dark' | 'light' }) {
+  const p = mode === 'light' ? look.lightPalette : look.palette
+  if (!p) return null
+  return (
+    <span className="theme-mini" style={uiTokens(p, false, look.gradient?.[mode]) as CSSProperties}>
+      <span className="theme-mini-side">
+        <span className="theme-mini-dot" />
+        <span className="theme-mini-line" />
+        <span className="theme-mini-line" data-dim />
+        <span className="theme-mini-pill" />
+      </span>
+      <span className="theme-mini-term">
+        <span className="theme-mini-prompt">❯</span>
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <span key={i} className="theme-mini-ansi" style={{ background: p.ansi[i] }} />
+        ))}
+      </span>
+    </span>
+  )
+}
 
 export function ThemePicker() {
-  const [selected, setSelected] = useState<Look>(() => savedLook() ?? DEVBOX)
+  const [selected, setSelected] = useState<Look>(() => savedLook() ?? PRESETS[0])
   const [ghostty, setGhostty] = useState<Look | null>(() => (selected.id === 'ghostty' ? selected : null))
   const [prefs, setPrefs] = useState(mediaPrefs)
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1)
+  const [open, setOpen] = useState(false)
+  const gallery = useId()
+  const toggle = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     let live = true
@@ -18,7 +42,7 @@ export function ThemePicker() {
         setGhostty(null)
         if (saved?.id === 'ghostty') {
           saveLook(null)
-          setSelected(DEVBOX)
+          setSelected(PRESETS[0])
         }
         return
       }
@@ -53,6 +77,15 @@ export function ThemePicker() {
   }, [dpr])
 
   useEffect(() => {
+    if (!open) return
+    const away = (event: PointerEvent) => {
+      if (!(event.target instanceof Element && event.target.closest('.theme-picker'))) setOpen(false)
+    }
+    document.addEventListener('pointerdown', away)
+    return () => document.removeEventListener('pointerdown', away)
+  }, [open])
+
+  useEffect(() => {
     try {
       applyLook(selected, prefs)
     } catch {
@@ -66,23 +99,66 @@ export function ThemePicker() {
 
   const looks = ghostty ? [ghostty, ...PRESETS] : PRESETS
   return (
-    <label className="theme-picker" title={`Theme: ${selected.label}`}>
-      <Icon name="theme" />
-      <span className="visually-hidden">Theme</span>
-      <select
-        value={selected.id}
-        onChange={(e) => {
-          const look = looks.find((l) => l.id === e.target.value) ?? DEVBOX
-          saveLook(look)
-          setSelected(look)
-        }}
+    <div
+      className="theme-picker"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !open) return
+        setOpen(false)
+        toggle.current?.focus()
+      }}
+      onBlur={(event) => {
+        const next = event.relatedTarget
+        if (next instanceof Element && !event.currentTarget.contains(next)) setOpen(false)
+      }}
+    >
+      <button
+        ref={toggle}
+        type="button"
+        className="theme-toggle"
+        title={`Theme: ${selected.label}`}
+        aria-expanded={open}
+        aria-controls={open ? gallery : undefined}
+        onClick={() => setOpen(!open)}
       >
-        {looks.map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.label}
-          </option>
-        ))}
-      </select>
-    </label>
+        <Icon name="theme" />
+        <span className="visually-hidden">Theme</span>
+      </button>
+      {open ? (
+        <fieldset id={gallery} className="theme-gallery">
+          <legend>Theme</legend>
+          <div className="theme-cards">
+            {looks.map((look) => {
+              const [name, ...scheme] = look.label.split(' · ')
+              const checked = look.id === selected.id
+              return (
+                <label key={look.id} className="theme-card">
+                  <input
+                    type="radio"
+                    className="visually-hidden"
+                    name={gallery}
+                    value={look.id}
+                    checked={checked}
+                    onChange={() => {
+                      saveLook(look)
+                      setSelected(look)
+                    }}
+                  />
+                  <span className="theme-minis" aria-hidden="true">
+                    <Mini look={look} mode="dark" />
+                    <Mini look={look} mode="light" />
+                  </span>
+                  <span className="theme-name">
+                    {name}
+                    {checked ? <Icon name="check" size={14} /> : null}
+                  </span>
+                  {scheme.length ? <span className="theme-scheme"> {scheme.join(' · ')}</span> : null}
+                </label>
+              )
+            })}
+          </div>
+          <p className="theme-note">Light or dark follows your system.</p>
+        </fieldset>
+      ) : null}
+    </div>
   )
 }
