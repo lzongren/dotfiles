@@ -4,11 +4,24 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { onTerminalLook, TERMINAL_OPTIONS, terminalLook } from '../theme'
+import { EXPIRED, SERVER_DOWN } from '../api'
 import { getToken } from '../token'
 
 type Status = 'connecting' | 'connected' | 'closed' | 'rejected'
 
 const REJECT_CODES = [4401, 4403, 4404, 1011]
+const REJECTED: Record<number, string> = {
+  4401: EXPIRED,
+  4404: 'no such session · it may have ended',
+  1011: "couldn't start ssh on this laptop",
+}
+const UNREACHABLE = "can't reach the host"
+const SSH_LOST = 'ssh lost the connection to the host'
+const RETRY_REASONS: Record<string, string> = {
+  'session list unavailable': UNREACHABLE,
+  'terminal limit reached': 'too many terminals open · close one',
+  'client limit reached': 'too many dashboard tabs connected',
+}
 const CHUNK = 16 * 1024
 const SSH_FAILED = 255
 const MAX_RETRIES = 6
@@ -48,20 +61,26 @@ export function TerminalPane({
   active,
   focusSignal = 0,
   lead,
+  reconnectSignal = 0,
   tools,
 }: {
   name: string
   active: boolean
   focusSignal?: number
   lead?: ReactNode
+  reconnectSignal?: number
   tools?: ReactNode
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const reconnectRef = useRef<() => void>(() => undefined)
+  const gaveUpRef = useRef(false)
+  const revivableRef = useRef(false)
   const focusRef = useRef<() => void>(() => undefined)
   const activeRef = useRef(active)
   activeRef.current = active
   const [status, setStatus] = useState<Status>('connecting')
+  const [why, setWhy] = useState('')
+  const [attempt, setAttempt] = useState(0)
   const [copyNote, setCopyNote] = useState('')
 
   useEffect(() => {
@@ -201,8 +220,10 @@ export function TerminalPane({
       }
     })
 
-    const scheduleRetry = () => {
+    const scheduleRetry = (reason: string) => {
+      setWhy(reason)
       if (retry >= MAX_RETRIES) {
+        gaveUpRef.current = true
         setStatus('closed')
         return
       }
@@ -214,6 +235,7 @@ export function TerminalPane({
       setStatus('connecting')
       const delay = Math.min(8000, 500 * 2 ** retry)
       retry += 1
+      setAttempt(retry)
       retryTimer = window.setTimeout(connect, delay)
     }
 
@@ -221,6 +243,9 @@ export function TerminalPane({
       retryTimer = null
       ready = false
       lastExit = null
+      gaveUpRef.current = false
+      revivableRef.current = false
+      setAttempt(retry)
       setStatus('connecting')
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
       const params = new URLSearchParams({
@@ -246,6 +271,8 @@ export function TerminalPane({
         if (msg.t === 'ready') {
           ready = true
           setStatus('connected')
+          setWhy('')
+          setAttempt(0)
           const focused = document.activeElement
           if (activeRef.current && (focused === null || focused === document.body || containerRef.current?.contains(focused))) {
             term.focus()
@@ -260,7 +287,7 @@ export function TerminalPane({
           for (const data of pending) sendInput(data)
         } else if (msg.t === 'exit') {
           lastExit = msg.code ?? 0
-          term.writeln(`\r\n[session ended (exit ${lastExit})]`)
+          term.writeln(lastExit === SSH_FAILED ? `\r\n[${SSH_LOST}]` : `\r\n[session ended (exit ${lastExit})]`)
         } else if (msg.t === 'error') {
           term.writeln(`\r\n[${msg.msg ?? 'error'}]`)
         }
@@ -274,15 +301,18 @@ export function TerminalPane({
         if (healthyTimer !== null) window.clearTimeout(healthyTimer)
         healthyTimer = null
         if (disposed) return
+        revivableRef.current = event.code === 4401 || event.code === 1001
         if (REJECT_CODES.includes(event.code)) {
+          setWhy(REJECTED[event.code] ?? 'attach rejected')
           setStatus('rejected')
           return
         }
         if (event.code === 1001 || (event.code === 1000 && lastExit !== SSH_FAILED)) {
+          setWhy(event.code === 1001 ? SERVER_DOWN : 'session ended')
           setStatus('closed')
           return
         }
-        scheduleRetry()
+        scheduleRetry(lastExit === SSH_FAILED ? SSH_LOST : (RETRY_REASONS[event.reason ?? ''] ?? 'connection dropped'))
       }
     }
 
@@ -331,14 +361,29 @@ export function TerminalPane({
     if (active) focusRef.current()
   }, [active, focusSignal])
 
+  useEffect(() => {
+    if (reconnectSignal > 0 && (gaveUpRef.current || revivableRef.current)) reconnectRef.current()
+  }, [reconnectSignal])
+
+  const label =
+    status === 'connecting'
+      ? attempt > 0
+        ? `reconnecting (${attempt}/${MAX_RETRIES}) · ${why}`
+        : 'connecting…'
+      : status === 'connected'
+        ? 'connected'
+        : gaveUpRef.current
+          ? `disconnected · ${why}${why === UNREACHABLE || why === SSH_LOST ? ' · check your VPN or proxy sign-in' : ''}`
+          : why || status
+
   return (
     <div className="terminal" data-active={active}>
       <div className="terminal-bar">
         <span className="terminal-name" title={name}>
           {lead ?? name}
         </span>
-        <span className={`terminal-status terminal-status-${status}`}>
-          {status === 'rejected' ? 'attach rejected' : status}
+        <span className={`terminal-status terminal-status-${status}`} aria-live="polite">
+          {label}
         </span>
         <span className="terminal-copied" role="status">
           {copyNote}

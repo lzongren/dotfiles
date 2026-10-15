@@ -235,6 +235,17 @@ describe('Notes', () => {
     expect(failPuts).toBe(attempts)
   })
 
+  it('says to open a fresh link, not to reload, when the server no longer knows this tab, and keeps the text', async () => {
+    failPuts = 1
+    failStatus = 401
+    render(<Notes />)
+    await settle()
+    fireEvent.change(pad(), { target: { value: 'hello' } })
+    await settle(700)
+    expect(screen.getByRole('status')).toHaveTextContent("not saved: this tab's link expired — run devbox web for a fresh one")
+    expect(localStorage.getItem('devbox.notes.draft.2026-10-13')).toContain('hello')
+  })
+
   it('stops retrying once the pad is gone, keeping the draft for next time', async () => {
     failPuts = 100
     const view = render(<Notes />)

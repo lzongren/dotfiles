@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
-import { uploadFile } from '../api'
+import { explain, uploadFile } from '../api'
 import { heardAt, isFresh, openableCount, plain, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
@@ -56,6 +56,7 @@ export function TerminalTabs({
   tabs,
   active,
   focusSignal = 0,
+  reconnectSignal = 0,
   sessions,
   insights,
   now,
@@ -67,6 +68,7 @@ export function TerminalTabs({
   tabs: string[]
   active: string | null
   focusSignal?: number
+  reconnectSignal?: number
   sessions: Session[]
   insights: Map<string, AgentInsight>
   now: number
@@ -140,7 +142,7 @@ export function TerminalTabs({
           progress(tab, job)
           const result = await uploadFile(tab, file)
           if (result.kind === 'ok') job.placed.push({ name: file.name, path: result.data.path })
-          else job.problems.push(`${file.name}: ${result.kind === 'unauthorized' ? 'server restarted — run devbox web' : result.message}`)
+          else job.problems.push(`${file.name}: ${explain(result)}`)
         }
       } catch {
         job.problems.push(`${job.current}: upload failed${job.files.length ? `, ${job.files.length} more not copied` : ''}`)
@@ -279,6 +281,7 @@ export function TerminalTabs({
               active={tab === active}
               focusSignal={tab === active ? focusSignal : 0}
               lead={lead ? <span className="terminal-lead">{lead}</span> : undefined}
+              reconnectSignal={reconnectSignal}
               tools={
                 insight ? (
                   <div

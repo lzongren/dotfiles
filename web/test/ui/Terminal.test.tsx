@@ -76,7 +76,7 @@ class FakeWebSocket {
   readyState = 1
   sent: Array<string | Uint8Array> = []
   onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null
-  onclose: ((event: { code: number }) => void) | null = null
+  onclose: ((event: { code: number; reason?: string }) => void) | null = null
 
   constructor(url: string) {
     this.url = url
@@ -94,10 +94,10 @@ class FakeWebSocket {
   serverMessage(data: string | ArrayBuffer) {
     this.onmessage?.({ data })
   }
-  serverClose(code: number) {
+  serverClose(code: number, reason?: string) {
     if (this.readyState === 3) return
     this.readyState = 3
-    this.onclose?.({ code })
+    this.onclose?.({ code, reason })
   }
   binaryPayloads(): Uint8Array[] {
     return this.sent.filter((d): d is Uint8Array => typeof d !== 'string')
@@ -315,14 +315,74 @@ describe('TerminalPane', () => {
     expect(sockets).toHaveLength(3)
   })
 
-  it('does not retry a rejected attach', () => {
+  it('does not retry a rejected attach, and says why it was refused', () => {
     render(<TerminalPane name="api" active />)
     act(() => sockets[0].serverClose(4404))
     act(() => {
       vi.advanceTimersByTime(60000)
     })
     expect(sockets).toHaveLength(1)
-    expect(screen.getByText('attach rejected')).toBeInTheDocument()
+    expect(screen.getByText('no such session · it may have ended')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'reconnect' }))
+    act(() => sockets[1].serverClose(4401))
+    expect(screen.getByText("this tab's link expired — run devbox web for a fresh one")).toBeInTheDocument()
+  })
+
+  it('reconnects a tab closed by an expired link or a stopped server once the dashboard is back, but not one that was refused', () => {
+    const { rerender } = render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverClose(4401))
+    rerender(<TerminalPane name="api" active reconnectSignal={1} />)
+    expect(sockets).toHaveLength(2)
+    act(() => sockets[1].serverClose(1001))
+    rerender(<TerminalPane name="api" active reconnectSignal={2} />)
+    expect(sockets).toHaveLength(3)
+    act(() => sockets[2].serverClose(4404))
+    rerender(<TerminalPane name="api" active reconnectSignal={3} />)
+    expect(sockets).toHaveLength(3)
+  })
+
+  it('says ssh lost the connection, not that the session ended, when ssh fails', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 255 })))
+    act(() => sockets[0].serverClose(1000))
+    expect(xterms[0].writeln).toHaveBeenCalledWith('\r\n[ssh lost the connection to the host]')
+    expect(xterms[0].writeln).not.toHaveBeenCalledWith(expect.stringContaining('session ended'))
+    expect(screen.getByText('reconnecting (1/6) · ssh lost the connection to the host')).toBeInTheDocument()
+  })
+
+  it('says why it is reconnecting, and what to check once it gives up', () => {
+    render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverClose(1013, 'session list unavailable'))
+    expect(screen.getByText("reconnecting (1/6) · can't reach the host")).toBeInTheDocument()
+    for (let i = 0; i < 6; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(8000)
+      })
+      act(() => sockets[sockets.length - 1].serverClose(1013, 'session list unavailable'))
+    }
+    expect(screen.getByText("disconnected · can't reach the host · check your VPN or proxy sign-in")).toBeInTheDocument()
+  })
+
+  it('reconnects by itself when the dashboard reaches the host again, but only after giving up', () => {
+    const { rerender } = render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverReady())
+    act(() => sockets[0].serverMessage(JSON.stringify({ t: 'exit', code: 0 })))
+    act(() => sockets[0].serverClose(1000))
+    rerender(<TerminalPane name="api" active reconnectSignal={1} />)
+    expect(sockets).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'reconnect' }))
+    for (let i = 0; i < 7; i += 1) {
+      act(() => sockets[sockets.length - 1].serverClose(1006))
+      act(() => {
+        vi.advanceTimersByTime(8000)
+      })
+    }
+    expect(sockets).toHaveLength(8)
+    expect(screen.getByText('disconnected · connection dropped')).toBeInTheDocument()
+    rerender(<TerminalPane name="api" active reconnectSignal={2} />)
+    expect(sockets).toHaveLength(9)
+    expect(screen.getByText('connecting…')).toBeInTheDocument()
   })
 
   it('waits for the tab to be visible again instead of retrying in the background', () => {

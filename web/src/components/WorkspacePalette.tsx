@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { createSession, getWorkspaces } from '../api'
+import { createSession, explain, getWorkspaces } from '../api'
 import type { AgentChoice, Session, Workspace } from '../shared/types'
 import { isValidSessionName } from '../shared/validate'
 import { ago } from '../time'
@@ -143,10 +143,8 @@ export function WorkspacePalette({
       void refresh()
       onSessionsChanged?.()
       onOpen(item.name)
-    } else if (result.kind === 'unauthorized') {
-      setError('server restarted — run devbox web')
     } else {
-      setError(result.message)
+      setError(explain(result))
     }
   }
 
