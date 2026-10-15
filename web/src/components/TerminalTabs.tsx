@@ -45,15 +45,32 @@ function storedShare(): number {
   }
 }
 
+function bounds(width: number): [number, number] {
+  const lo = Math.max(PANE.min, Math.min(PANE.max, PANE_MIN / width))
+  return [lo, Math.max(lo, Math.min(PANE.max, 1 - TERM_MIN / width))]
+}
+
+const clamp = (n: number, width: number) => {
+  const [lo, hi] = bounds(width)
+  return Math.min(hi, Math.max(lo, n))
+}
+
 function PaneHandle({ share, onShare, onCollapse }: { share: number; onShare: (n: number) => void; onCollapse: () => void }) {
   const dragged = useRef<number | null>(null)
-  const clamp = (n: number, width: number) => {
-    const lo = Math.max(PANE.min, Math.min(PANE.max, PANE_MIN / width))
-    return Math.min(Math.max(lo, Math.min(PANE.max, 1 - TERM_MIN / width)), Math.max(lo, n))
-  }
+  const held = useRef<HTMLElement | null>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(
+    () => () => {
+      held.current?.removeAttribute('data-resizing')
+      held.current?.removeAttribute('data-collapse')
+    },
+    [],
+  )
   const root = (handle: Element) => handle.closest<HTMLElement>('.terminals')
+  const measure = (handle: Element) => handle.parentElement?.getBoundingClientRect().width ?? 0
   const drop = (handle: Element) => {
     const terminals = root(handle)
+    held.current = null
     const collapsed = terminals?.hasAttribute('data-collapse') ?? false
     terminals?.removeAttribute('data-resizing')
     terminals?.removeAttribute('data-collapse')
@@ -63,23 +80,27 @@ function PaneHandle({ share, onShare, onCollapse }: { share: number; onShare: (n
     } else if (dragged.current !== null) onShare(dragged.current)
     dragged.current = null
   }
-  const shown = Math.round(share * 100)
+  const [lo, hi] = width ? bounds(width) : [PANE.min, PANE.max]
+  const now = width ? clamp(share, width) : share
+  const shown = Math.round(now * 100)
   return (
     <div
       className="pane-resize"
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize the terminal and the file beside it"
-      aria-valuemin={100 - Math.round(PANE.max * 100)}
-      aria-valuemax={100 - Math.round(PANE.min * 100)}
+      aria-valuemin={100 - Math.round(hi * 100)}
+      aria-valuemax={100 - Math.round(lo * 100)}
       aria-valuenow={100 - shown}
       aria-valuetext={`terminal ${100 - shown}%, file ${shown}%`}
       tabIndex={0}
       title="Drag to resize, double-click to reset, drag to the right edge to close"
+      onFocus={(event) => setWidth(measure(event.currentTarget))}
       onPointerDown={(event) => {
         event.preventDefault()
         event.currentTarget.setPointerCapture(event.pointerId)
-        root(event.currentTarget)?.setAttribute('data-resizing', '')
+        held.current = root(event.currentTarget)
+        held.current?.setAttribute('data-resizing', '')
       }}
       onPointerMove={(event) => {
         const handle = event.currentTarget
@@ -96,11 +117,13 @@ function PaneHandle({ share, onShare, onCollapse }: { share: number; onShare: (n
       onLostPointerCapture={(event) => drop(event.currentTarget)}
       onDoubleClick={() => onShare(PANE.initial)}
       onKeyDown={(event) => {
-        const width = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0
+        const width = measure(event.currentTarget)
+        const from = clamp(share, width)
         const to =
-          event.key === 'ArrowLeft' ? share + 0.02 : event.key === 'ArrowRight' ? share - 0.02 : event.key === 'Home' ? PANE.max : event.key === 'End' ? PANE.min : null
+          event.key === 'ArrowLeft' ? from + 0.02 : event.key === 'ArrowRight' ? from - 0.02 : event.key === 'Home' ? PANE.max : event.key === 'End' ? PANE.min : null
         if (to === null || !width) return
         event.preventDefault()
+        setWidth(width)
         onShare(clamp(to, width))
       }}
     />
@@ -411,6 +434,7 @@ export function TerminalTabs({
                       files={insight?.files ?? []}
                       terminal={term}
                       canQuote={insight !== undefined && row?.cmd === insight.agent}
+                      visible={tab === active}
                       onClose={() => unpick(tab)}
                     />
                   </>

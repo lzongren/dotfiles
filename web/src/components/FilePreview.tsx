@@ -74,6 +74,8 @@ const FORMATS: Record<string, Format> = {
 }
 const TABLE_ROWS = 1000
 const LONG_PASTE = 800
+const STALE_RETRY_MS = 2000
+const mac = String(navigator.platform).startsWith('Mac')
 
 function extension(file: string): string {
   const name = baseName(file)
@@ -262,6 +264,7 @@ export function FilePreview({
   onDock,
   terminal,
   canQuote = false,
+  visible = true,
 }: {
   file: FileRef
   files: FileTouch[]
@@ -269,6 +272,7 @@ export function FilePreview({
   onDock?: (file: FileRef) => void
   terminal?: RefObject<TerminalHandle | null>
   canQuote?: boolean
+  visible?: boolean
 }) {
   const id = useId()
   const docked = terminal !== undefined
@@ -277,10 +281,10 @@ export function FilePreview({
   const body = useRef<HTMLDivElement | null>(null)
   const moved = useRef(false)
   const noteSeq = useRef(0)
-  const loaded = useRef('')
+  const loaded = useRef({ key: '', stamp: '' })
   const [shown, setShown] = useState(file)
   const [trail, setTrail] = useState([file.path])
-  const [result, setResult] = useState<ApiResult<FileView> | null>(null)
+  const [read, setRead] = useState<{ key: string; result: ApiResult<FileView> } | null>(null)
   const [note, setNote] = useState('')
   const [source, setSource] = useState(false)
   const [wrap, setWrap] = useState(false)
@@ -292,6 +296,9 @@ export function FilePreview({
     setSource(false)
   }
   const path = trail[trail.length - 1]
+  const key = `${file.session}\n${path}\n${attempt}`
+  const result = read?.key === key ? read.result : null
+  const hold = quotable || !visible
   const at = files.findIndex((f) => f.path === path)
   const touch = files[at]
   const stamp = touch ? `${touch.at} ${touch.count} ${touch.gone}` : ''
@@ -313,6 +320,7 @@ export function FilePreview({
   }
   const step = (to: FileTouch | undefined) => {
     if (!to) return
+    moved.current = false
     setTrail([to.path])
     setSource(false)
   }
@@ -325,24 +333,31 @@ export function FilePreview({
   }, [])
 
   useEffect(() => {
+    const refresh = loaded.current.key === key
+    if (refresh && (!stamp || stamp === loaded.current.stamp || touch?.gone || hold)) return
+    const before = result?.kind === 'ok' ? result.data : null
     let live = true
-    const key = `${file.session}\n${path}\n${attempt}`
-    const refresh = loaded.current === key
+    let retry = 0
     const say = latestNote()
-    if (!refresh) {
-      setResult(null)
-      setNote('')
-    } else if (touch?.gone) return
-    void getFile(file.session, path).then((r) => {
-      if (!live || (refresh && r.kind !== 'ok')) return
-      loaded.current = key
-      setResult(r)
-      if (refresh) say("Updated to the agent's latest edit")
-    })
+    if (!refresh) setNote('')
+    const fetchFile = (tries: number) =>
+      void getFile(file.session, path).then((r) => {
+        if (!live || (refresh && r.kind !== 'ok')) return
+        const same = refresh && r.kind === 'ok' && r.data.mtime === before?.mtime && r.data.size === before.size && r.data.text === before.text
+        if (same && tries > 0) {
+          retry = window.setTimeout(() => fetchFile(tries - 1), STALE_RETRY_MS)
+          return
+        }
+        loaded.current = { key, stamp }
+        setRead({ key, result: r })
+        if (refresh && !same) say("Updated to the agent's latest edit")
+      })
+    fetchFile(2)
     return () => {
       live = false
+      window.clearTimeout(retry)
     }
-  }, [file.session, path, attempt, stamp])
+  }, [key, stamp, hold])
 
   useEffect(() => {
     if (moved.current) title.current?.focus()
@@ -400,7 +415,13 @@ export function FilePreview({
     if (event.key === 'Escape' || event.key === 'F6') {
       event.preventDefault()
       term.focus(event.key === 'Escape')
-    } else if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) {
+    } else if (
+      event.key.length === 1 &&
+      event.key !== ' ' &&
+      !event.metaKey &&
+      !event.nativeEvent.isComposing &&
+      (event.getModifierState('AltGraph') || (!event.ctrlKey && (!event.altKey || mac)))
+    ) {
       event.preventDefault()
       event.stopPropagation()
       term.focus()

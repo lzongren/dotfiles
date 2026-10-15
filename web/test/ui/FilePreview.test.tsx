@@ -443,6 +443,39 @@ describe('a quick look that keeps up with the agent', () => {
     expect(calls).toHaveLength(reads)
   })
 
+  it('reads again when the first read after an edit still has the old copy, and ignores agent details that drop out and come back', async () => {
+    const file = { session: 'api', path: '/w/a.md' }
+    md('/w/a.md', '# One')
+    const { rerender } = render(<FilePreview file={file} files={[touch('/w/a.md')]} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    await dialog.findByRole('heading', { name: 'One' })
+    const reads = () => calls.filter((c) => c.url.startsWith('/api/file?')).length
+    rerender(<FilePreview file={file} files={[]} onClose={vi.fn()} />)
+    rerender(<FilePreview file={file} files={[touch('/w/a.md')]} onClose={vi.fn()} />)
+    expect(reads()).toBe(1)
+    rerender(<FilePreview file={file} files={[touch('/w/a.md', { at: sec(1), count: 2 })]} onClose={vi.fn()} />)
+    await waitFor(() => expect(reads()).toBe(2))
+    expect(dialog.getByRole('status')).toBeEmptyDOMElement()
+    md('/w/a.md', '# Two')
+    expect(await dialog.findByRole('heading', { name: 'Two' }, { timeout: 3000 })).toBeInTheDocument()
+    expect(reads()).toBe(3)
+    expect(dialog.getByRole('status')).toHaveTextContent("Updated to the agent's latest edit")
+  })
+
+  it('shows a newly picked file loading, not the last one under its name', async () => {
+    md('/w/a.md', '# A')
+    md('/w/c.md', '# C')
+    const files = [touch('/w/a.md'), touch('/w/c.md')]
+    const { rerender } = render(<FilePreview file={{ session: 'api', path: '/w/a.md' }} files={files} onClose={vi.fn()} />)
+    const dialog = within(screen.getByRole('dialog'))
+    await dialog.findByRole('heading', { name: 'A' })
+    rerender(<FilePreview file={{ session: 'api', path: '/w/c.md' }} files={files} onClose={vi.fn()} />)
+    expect(dialog.getByRole('heading', { name: 'c.md' })).toBeInTheDocument()
+    expect(dialog.queryByRole('heading', { name: 'A' })).toBeNull()
+    expect(dialog.getByText('Loading…')).toBeInTheDocument()
+    expect(await dialog.findByRole('heading', { name: 'C' })).toBeInTheDocument()
+  })
+
   it('jumps to a heading inside its own preview when two show the same file', async () => {
     md('/w/a.md', '# Top\n\n[up](#top)')
     render(

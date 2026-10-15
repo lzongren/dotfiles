@@ -296,6 +296,36 @@ describe('a file open beside the terminal', () => {
     document.getSelection()!.removeAllRanges()
   })
 
+  it('waits to read an edit while its tab is hidden or text in it is selected', async () => {
+    const { rerender, body } = await docked()
+    const edited = new Map(INSIGHTS)
+    const api = INSIGHTS.get('api')!
+    edited.set('api', { ...api, files: [{ ...api.files![0], at: sec(1), count: 3 }, api.files![1]] })
+    const reads = () => vi.mocked(fetch).mock.calls.length
+    rerender(TWO_TABS(['api', 'web'], 'web', edited))
+    rerender(TWO_TABS(['api', 'web'], 'web', edited))
+    expect(reads()).toBe(1)
+    rerender(TWO_TABS(['api', 'web'], 'api', edited))
+    await waitFor(() => expect(reads()).toBe(2))
+
+    const range = document.createRange()
+    range.selectNodeContents(within(body).getByRole('article'))
+    document.getSelection()!.removeAllRanges()
+    document.getSelection()!.addRange(range)
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    const again = new Map(INSIGHTS)
+    again.set('api', { ...api, files: [{ ...api.files![0], at: sec(0), count: 4 }, api.files![1]] })
+    rerender(TWO_TABS(['api', 'web'], 'api', again))
+    expect(reads()).toBe(2)
+    document.getSelection()!.removeAllRanges()
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await waitFor(() => expect(reads()).toBe(3))
+  })
+
   it('closes back to the terminal', async () => {
     const { pane } = await docked()
     fireEvent.click(within(pane).getByRole('button', { name: 'Close' }))
@@ -315,6 +345,9 @@ describe('a file open beside the terminal', () => {
       await docked()
       const divider = screen.getByRole('separator')
       expect(divider).toHaveAttribute('aria-valuenow', '60')
+      fireEvent.focus(divider)
+      expect(divider).toHaveAttribute('aria-valuemin', '49')
+      expect(divider).toHaveAttribute('aria-valuemax', '74')
       fireEvent.keyDown(divider, { key: 'ArrowLeft' })
       expect(divider).toHaveAttribute('aria-valuenow', '58')
       fireEvent.keyDown(divider, { key: 'Home' })
@@ -350,6 +383,17 @@ describe('a file open beside the terminal', () => {
       expect(terminals).not.toHaveAttribute('data-collapse')
       expect(terminals.style.getPropertyValue('--preview-f')).toBe(String(600 / 1400))
       expect(term.focus).toHaveBeenCalled()
+    })
+
+    it('lets the terminals fit again when the pane goes away mid-drag', async () => {
+      const { container, rerender } = await docked()
+      const divider = screen.getByRole('separator')
+      divider.setPointerCapture = vi.fn()
+      fireEvent.pointerDown(divider, { pointerId: 1 })
+      const terminals = container.querySelector<HTMLElement>('.terminals')!
+      expect(terminals).toHaveAttribute('data-resizing')
+      rerender(TWO_TABS(['web'], 'web'))
+      expect(terminals).not.toHaveAttribute('data-resizing')
     })
   })
 })
