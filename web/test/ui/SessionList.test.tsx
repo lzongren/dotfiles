@@ -71,16 +71,26 @@ describe('SessionList', () => {
     expect(screen.getByRole('button', { name: /old/ })).toHaveTextContent('zsh · /home/me')
   })
 
-  it('shows client count, idle time, and a bell badge with one polite announcement', () => {
+  it('shows client count, idle time, and a ringing bell with one polite announcement', () => {
     const { container } = { container: document.body }
     renderList()
     const row = screen.getByRole('button', { name: /cc-demo/ })
     expect(row).toHaveTextContent('×2')
     expect(row).toHaveTextContent('2m')
-    expect(row.querySelector('.bell-badge')).toHaveTextContent('bell')
+    expect(row).toHaveAccessibleName(/cc-demo.*bell/)
+    expect(row.querySelector('.state-icon')).toHaveAttribute('data-tone', 'waiting')
     const regions = container.querySelectorAll('[aria-live="polite"]')
     expect(regions).toHaveLength(1)
     expect(regions[0]).toHaveTextContent('cc-demo needs attention')
+  })
+
+  it('keeps a bell and an attached client visible even when the agent state wins the mark', () => {
+    const ringing = session({ name: 'ring', bell: true, attached: true, clients: 1, cmd: 'claude' })
+    const insights = new Map([['ring', { session: 'ring', agent: 'claude' as const, state: 'ready' as const, artifacts: [], commits: 0 }]])
+    render(<SessionList sessions={[ringing]} insights={insights} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    const row = screen.getByRole('button', { name: /ring/ })
+    expect(row.querySelector('.session-bell')).not.toBeNull()
+    expect(row).toHaveAccessibleName(/bell.*attached/)
   })
 
   it('attaches on click, but not for a name the web cannot use', () => {
@@ -96,7 +106,7 @@ describe('SessionList', () => {
 
   it('keeps the full path in the tooltip of attachable rows', () => {
     renderList()
-    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('title', '/home/me/work/demo')
+    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('title', expect.stringMatching(/\n\/home\/me\/work\/demo$/))
   })
 
   it('marks the session whose tab is active', () => {

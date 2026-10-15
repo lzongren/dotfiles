@@ -8,6 +8,7 @@ import {
   laneOf,
   ledger,
   modelName,
+  plain,
   projectOf,
   rankArtifacts,
   shownArtifacts,
@@ -15,8 +16,9 @@ import {
 } from '../insights'
 import { mmr, rarity, sharedRarest, similarity, topicsOf, words } from '../topics'
 import { ago } from '../time'
-import { headline } from './SessionList'
+import { headline, Name } from './SessionList'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
+import { Icon, StateIcon, toneOf, type Tone } from './Icon'
 
 interface Row {
   session: Session
@@ -26,6 +28,9 @@ interface Row {
 }
 
 const AUTO_SEEN_MS = 2000
+const QUIET_AFTER = 600
+const SHELF_PEEK = 3
+const RELATED = 5
 type Kind = 'needs' | 'working' | 'recent' | 'parked'
 interface Shelf {
   kind: Kind
@@ -34,30 +39,44 @@ interface Shelf {
   names: string[]
 }
 const SECTIONS: Array<{ kind: Exclude<Kind, 'parked'>; title: string; empty: string }> = [
-  { kind: 'needs', title: 'Needs you', empty: 'No agent is waiting on you.' },
+  { kind: 'needs', title: 'Needs you', empty: 'Nothing needs you.' },
   { kind: 'working', title: 'Working', empty: 'No agent is mid-turn.' },
-  { kind: 'recent', title: 'Topics', empty: 'Nothing else active this week.' },
+  { kind: 'recent', title: 'Recent, by topic', empty: '' },
 ]
 const KINDS: Kind[] = [...SECTIONS.map((s) => s.kind), 'parked']
 const byChange = (dir: 1 | -1) => (a: Row, b: Row) => dir * (changeMark(a.session, a.insight) - changeMark(b.session, b.insight))
 const byActivity = (a: Row, b: Row) => b.session.activityEpoch - a.session.activityEpoch
 const shelfId = (s: Shelf) => `${s.kind}:${s.key}`
 
-function stateLabel(row: Row): { text: string; tone: string } {
-  const i = row.insight
-  if (i?.state === 'waiting') return { text: i.waitingFor ? `waiting · ${i.waitingFor}` : 'waiting', tone: 'waiting' }
-  if (i?.state === 'error') return { text: i.error ? `error · ${i.error}` : 'error', tone: 'error' }
-  if (i?.state === 'working') return { text: 'working', tone: 'working' }
-  if (i?.state === 'ready') return row.fresh ? { text: 'ready · new', tone: 'fresh' } : { text: 'ready', tone: 'idle' }
-  if (row.session.bell) return { text: 'bell', tone: 'waiting' }
-  return { text: row.session.cmd || 'shell', tone: 'idle' }
+function statusOf(row: Row, now: number): { tone: Tone; label: string; line: string } {
+  const { session, insight } = row
+  const tone = toneOf(session, insight, row.fresh)
+  if (tone === 'waiting') {
+    const label = insight?.state === 'waiting' ? `Waiting on you${insight.waitingFor ? `: ${insight.waitingFor}` : ''}` : 'Bell rang'
+    return { tone, label, line: label }
+  }
+  if (tone === 'error') {
+    const label = insight?.error ? `Error: ${insight.error}` : 'Error'
+    return { tone, label, line: label }
+  }
+  if (tone === 'working') {
+    const heard = Math.max(session.activityEpoch, changeMark(session, insight))
+    return { tone, label: 'Working', line: Math.floor(now / 1000) - heard >= QUIET_AFTER ? `Quiet for ${ago(now, heard)}` : '' }
+  }
+  if (tone === 'fresh') return { tone, label: 'New turn', line: '' }
+  return { tone, label: insight ? 'Ready' : session.cmd || 'shell', line: '' }
+}
+
+function headlineOf(row: Row): string {
+  const title = displayTitle(headline(row.session), row.insight)
+  return title.length < 4 || title === row.session.name ? '' : title
 }
 
 function ageOf(row: Row): number {
   return row.lane === 'recent' || row.lane === 'parked' ? row.session.activityEpoch : changeMark(row.session, row.insight)
 }
 
-function layout(rows: Row[]): Shelf[] {
+function layout(rows: Row[]): { shelves: Shelf[]; related: Map<string, string[]> } {
   const pick = (lane: Lane, sort: (a: Row, b: Row) => number) =>
     rows.filter((r) => r.lane === lane).sort((a, b) => sort(a, b) || a.session.name.localeCompare(b.session.name))
   const names = (list: Row[]) => list.map((r) => r.session.name)
@@ -80,19 +99,26 @@ function layout(rows: Row[]): Shelf[] {
     (a, b) => Math.max(kin(tok(a).tagged, tok(b).tagged), similarity(tok(a).titled, tok(b).titled, weight)),
   )
   const shelves = (kind: Kind, lane: Lane) =>
-    topicsOf(pick(lane, byActivity), (r) => tok(r).name, corpus).map((t) => ({
+    topicsOf(pick(lane, byActivity), (r) => tok(r).name, corpus, 'Ungrouped').map((t) => ({
       kind,
       key: t.key,
       label: t.label,
       names: names(t.items),
     }))
-  return [
-    { kind: 'needs', key: 'blocked', label: '', names: names(pick('blocked', byChange(1))) },
-    { kind: 'needs', key: 'ready', label: '', names: names(picks) },
-    { kind: 'working', key: '', label: '', names: names(pick('working', byChange(1))) },
-    ...shelves('recent', 'recent'),
-    ...shelves('parked', 'parked'),
-  ]
+  const related = new Map<string, string[]>()
+  for (const t of topicsOf([...rows].sort(byActivity), (r) => tok(r).name, corpus)) {
+    if (t.key) for (const r of t.items) related.set(r.session.name, names(t.items.filter((o) => o !== r)).slice(0, RELATED))
+  }
+  return {
+    shelves: [
+      { kind: 'needs', key: 'blocked', label: '', names: names(pick('blocked', byChange(1))) },
+      { kind: 'needs', key: 'ready', label: '', names: names(picks) },
+      { kind: 'working', key: '', label: '', names: names(pick('working', byChange(1))) },
+      ...shelves('recent', 'recent'),
+      ...shelves('parked', 'parked'),
+    ],
+    related,
+  }
 }
 
 function hold(held: Shelf[], live: Shelf[]): Shelf[] {
@@ -114,67 +140,135 @@ function Card({
   now,
   selected,
   tabbable,
+  usual,
+  dense,
   onSelect,
+  onOpen,
+  onSeen,
 }: {
   row: Row
   now: number
   selected: boolean
   tabbable: boolean
+  usual: string
+  dense: boolean
   onSelect: () => void
+  onOpen: () => void
+  onSeen: () => void
 }) {
   const id = useId()
   const { session, insight } = row
-  const state = stateLabel(row)
-  const title = displayTitle(headline(session), insight)
+  const status = statusOf(row, now)
+  const title = headlineOf(row)
   const notable = rankArtifacts(insight?.artifacts ?? [], insight?.summary).filter((a) => a.key || a.said)
-  const shown = notable.slice(0, 3)
+  const shown = notable.slice(0, 2)
+  const model = insight?.model ? modelName(insight.model) : ''
+  const tasks = insight?.tasks
+  const head = (
+    <>
+      <StateIcon tone={status.tone} />
+      <span id={`${id}-name`} className="card-name">
+        <Name name={session.name} />
+      </span>
+    </>
+  )
+  const age = <span className="card-age">{ago(now, ageOf(row))}</span>
+  const hidden = <span id={`${id}-state`} className="visually-hidden">{status.label}</span>
+  if (dense) {
+    return (
+      <li className="tile" data-tone={status.tone}>
+        <button
+          type="button"
+          className="card card-row"
+          data-session={session.name}
+          aria-pressed={selected}
+          aria-labelledby={`${id}-name`}
+          aria-describedby={`${id}-state ${id}-line`}
+          tabIndex={tabbable ? 0 : -1}
+          onClick={onSelect}
+        >
+          {head}
+          <span id={`${id}-line`} className="card-line">
+            {title || plain(insight?.summary ?? '')}
+          </span>
+          {age}
+          {hidden}
+        </button>
+      </li>
+    )
+  }
+  const keep = (event: { preventDefault: () => void }) => event.preventDefault()
   return (
-    <li>
+    <li className="tile" data-tone={status.tone}>
       <button
         type="button"
         className="card"
         data-session={session.name}
         aria-pressed={selected}
-        aria-labelledby={`${id}-title`}
+        aria-labelledby={title ? `${id}-title` : `${id}-name`}
         aria-describedby={insight?.summary ? `${id}-state ${id}-summary` : `${id}-state`}
         tabIndex={tabbable ? 0 : -1}
         onClick={onSelect}
       >
-        <span className="card-top">
-          <span id={`${id}-state`} className={`chip chip-${state.tone}`}>
-            {state.text}
-          </span>
-          <span id={`${id}-title`} className="card-title">
-            {title || session.name}
-          </span>
-          <span className="card-age">{ago(now, ageOf(row))}</span>
+        <span className="card-head">
+          {head}
+          {age}
         </span>
-        {insight?.summary ? (
-          <span id={`${id}-summary`} className="card-summary">
-            {insight.summary}
+        {status.line ? (
+          <span id={`${id}-state`} className="card-status">
+            {status.line}
+          </span>
+        ) : (
+          hidden
+        )}
+        {title ? (
+          <span id={`${id}-title`} className="card-title">
+            {title}
           </span>
         ) : null}
-        <span className="card-meta">
-          {title ? <span>{session.name}</span> : null}
-          {insight?.tasks ? (
-            <span>
-              {insight.tasks.done}/{insight.tasks.total} tasks
-            </span>
-          ) : null}
-          {shown.map((a) => (
-            <span key={a.url} className="pill">
-              {artifactName(a)}
-            </span>
-          ))}
-          {notable.length > shown.length ? <span>+{notable.length - shown.length}</span> : null}
-          {insight?.files?.length ? (
-            <span>
-              {insight.files.length} file{insight.files.length === 1 ? '' : 's'}
-            </span>
-          ) : null}
-          {insight?.model ? <span>{modelName(insight.model)}</span> : null}
-        </span>
+        {insight?.summary ? (
+          <span id={`${id}-summary`} className="card-summary">
+            {plain(insight.summary)}
+          </span>
+        ) : null}
+        {tasks || shown.length || (model && model !== usual) ? (
+          <span className="card-meta">
+            {tasks ? (
+              <span className="card-tasks">
+                <span className="meter" aria-hidden="true">
+                  <span style={{ width: `${(100 * tasks.done) / Math.max(1, tasks.total)}%` }} />
+                </span>
+                {tasks.done}/{tasks.total}
+              </span>
+            ) : null}
+            {shown.map((a) => (
+              <span key={a.url} className="pill">
+                {artifactName(a)}
+              </span>
+            ))}
+            {notable.length > shown.length ? <span>+{notable.length - shown.length}</span> : null}
+            {model && model !== usual ? <span>{model}</span> : null}
+          </span>
+        ) : null}
       </button>
+      <span className="card-actions">
+        <button
+          type="button"
+          tabIndex={-1}
+          title="Open terminal (Enter)"
+          aria-label={`Open ${session.name}`}
+          disabled={!session.attachable}
+          onMouseDown={keep}
+          onClick={onOpen}
+        >
+          <Icon name="terminal" />
+        </button>
+        {row.fresh ? (
+          <button type="button" tabIndex={-1} title="Mark seen (e)" aria-label={`Mark ${session.name} seen`} onMouseDown={keep} onClick={onSeen}>
+            <Icon name="eye" />
+          </button>
+        ) : null}
+      </span>
     </li>
   )
 }
@@ -191,6 +285,7 @@ export function ArtifactList({
       {artifacts.map((a) => (
         <li key={`${a.session ?? ''}${a.url}`}>
           <a href={a.url} target="_blank" rel="noreferrer noopener">
+            <Icon name="pr" size={14} />
             {artifactName(a)}
             {a.key ? (
               <span className="artifact-key" title="named in the summary">
@@ -213,105 +308,127 @@ export function ArtifactList({
 function Detail({
   row,
   now,
+  related,
   onOpen,
   onSeen,
   onPick,
+  onRelated,
 }: {
   row: Row
   now: number
+  related: Row[]
   onOpen: () => void
   onSeen: () => void
   onPick: (file: FileRef) => void
+  onRelated: (name: string) => void
 }) {
   const { session, insight } = row
-  const state = stateLabel(row)
+  const status = statusOf(row, now)
   const tasks = insight?.tasks
   const shown = shownArtifacts(insight)
+  const files = insight?.files ?? []
   return (
     <article className="detail-body" aria-label={`${session.name} details`}>
       <header className="detail-head">
+        <p className="detail-state" data-tone={status.tone}>
+          <StateIcon tone={status.tone} />
+          <span>
+            {status.label} <span className="when">· {ago(now, changeMark(session, insight))} ago</span>
+          </span>
+        </p>
         <h2>{displayTitle(headline(session), insight) || session.name}</h2>
         <p className="detail-sub">
           {session.name} · {session.path}
+          {insight?.branch ? ` · ${insight.branch}` : ''}
         </p>
         <div className="detail-actions">
           <button type="button" className="primary" onClick={onOpen} disabled={!session.attachable}>
+            <Icon name="terminal" />
             Open terminal
+            <kbd aria-hidden="true">↵</kbd>
           </button>
           {row.fresh ? (
             <button type="button" onClick={onSeen}>
+              <Icon name="eye" />
               Mark seen
+              <kbd aria-hidden="true">e</kbd>
             </button>
           ) : null}
         </div>
       </header>
-      <dl className="facts">
-        <dt>State</dt>
-        <dd>
-          <span className={`chip chip-${state.tone}`}>{state.text}</span> {ago(now, changeMark(session, insight))} ago
-        </dd>
-        {insight?.firstAsk ? (
-          <>
-            <dt>Goal</dt>
-            <dd>{insight.firstAsk}</dd>
-          </>
-        ) : null}
-        {insight?.ask && insight.ask !== insight.firstAsk ? (
-          <>
-            <dt>Latest ask</dt>
-            <dd>
-              {insight.ask}
-              {insight.askAt ? <span className="when"> · {ago(now, insight.askAt)} ago</span> : null}
-            </dd>
-          </>
-        ) : null}
-        {insight?.summary ? (
-          <>
-            <dt>Where it stands</dt>
-            <dd>
-              {insight.summary}
-              {insight.summaryAt ? <span className="when"> · {ago(now, insight.summaryAt)} ago</span> : null}
-            </dd>
-          </>
-        ) : null}
-        {tasks ? (
-          <>
-            <dt>Tasks</dt>
-            <dd>
-              <progress max={tasks.total} value={tasks.done} aria-label={`${tasks.done} of ${tasks.total} tasks done`} />{' '}
-              {tasks.done}/{tasks.total}
-              {tasks.current ? <span className="when"> · now: {tasks.current}</span> : null}
-            </dd>
-          </>
-        ) : null}
-        {insight && insight.artifacts.length > 0 ? (
-          <>
-            <dt>Artifacts</dt>
-            <dd>
-              <ArtifactList artifacts={shown} now={now} />
-              {insight.artifacts.length > shown.length ? <p className="lane-empty">{insight.artifacts.length - shown.length} more not shown</p> : null}
-            </dd>
-          </>
-        ) : null}
-        {insight?.files?.length ? (
-          <>
-            <dt>Files</dt>
-            <dd>
-              <FileList
-                files={insight.files.map((f) => ({ ...f, session: session.name, cwd: session.path }))}
-                now={now}
-                onPick={onPick}
-              />
-            </dd>
-          </>
-        ) : null}
-        <dt>Agent</dt>
-        <dd>
-          {insight ? [insight.agent, insight.model && modelName(insight.model)].filter(Boolean).join(' · ') : session.cmd}
-          {insight?.branch ? ` · ${insight.branch}` : ''}
-          {insight?.commits ? ` · ${insight.commits} commit${insight.commits === 1 ? '' : 's'}` : ''}
-        </dd>
-      </dl>
+      {insight?.summary ? (
+        <section className="fact">
+          <h3>Where it stands</h3>
+          <p>
+            {plain(insight.summary)}
+            {insight.summaryAt ? <span className="when"> · {ago(now, insight.summaryAt)} ago</span> : null}
+          </p>
+        </section>
+      ) : null}
+      {tasks ? (
+        <section className="fact">
+          <h3>Tasks</h3>
+          <p>
+            <progress max={tasks.total} value={tasks.done} aria-label={`${tasks.done} of ${tasks.total} tasks done`} /> {tasks.done}/{tasks.total}
+            {tasks.current ? <span className="when"> · now: {tasks.current}</span> : null}
+          </p>
+        </section>
+      ) : null}
+      {insight && insight.artifacts.length > 0 ? (
+        <section className="fact">
+          <h3>Artifacts</h3>
+          <ArtifactList artifacts={shown} now={now} />
+          {insight.artifacts.length > shown.length ? <p className="lane-empty">{insight.artifacts.length - shown.length} more not shown</p> : null}
+        </section>
+      ) : null}
+      {insight?.ask && insight.ask !== insight.firstAsk ? (
+        <section className="fact">
+          <h3>Latest ask</h3>
+          <p>
+            {insight.ask}
+            {insight.askAt ? <span className="when"> · {ago(now, insight.askAt)} ago</span> : null}
+          </p>
+        </section>
+      ) : null}
+      {insight?.firstAsk ? (
+        <details className="fact">
+          <summary>
+            <Icon name="next" size={14} />
+            Goal
+          </summary>
+          <p>{insight.firstAsk}</p>
+        </details>
+      ) : null}
+      {files.length ? (
+        <section className="fact">
+          <h3>
+            Files <span className="lane-count">{files.length}</span>
+          </h3>
+          <FileList files={files.map((f) => ({ ...f, session: session.name, cwd: session.path }))} now={now} onPick={onPick} />
+        </section>
+      ) : null}
+      {related.length ? (
+        <section className="fact">
+          <h3>Same topic</h3>
+          <ul className="related">
+            {related.map((r) => (
+              <li key={r.session.name}>
+                <button type="button" onClick={() => onRelated(r.session.name)}>
+                  <StateIcon tone={statusOf(r, now).tone} />
+                  <span className="card-name">
+                    <Name name={r.session.name} />
+                  </span>
+                  <span className="card-age">{ago(now, r.session.activityEpoch)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      <p className="detail-foot">
+        {insight ? [insight.agent, insight.model && modelName(insight.model)].filter(Boolean).join(' · ') : session.cmd}
+        {insight?.commits ? ` · ${insight.commits} commit${insight.commits === 1 ? '' : 's'}` : ''}
+      </p>
     </article>
   )
 }
@@ -345,9 +462,11 @@ export function Overview({
   const id = useId()
   const [selected, setSelected] = useState<string | null>(null)
   const [parkedOpen, setParkedOpen] = useState(false)
+  const [opened, setOpened] = useState<Set<string>>(() => new Set())
   const [preview, setPreview] = useState<FileRef | null>(null)
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const lanesRef = useRef<HTMLDivElement | null>(null)
+  const detailRef = useRef<HTMLElement | null>(null)
   const pointerInside = useRef(false)
   const held = useRef<Shelf[] | null>(null)
   const refocus = useRef<string | null>(null)
@@ -363,7 +482,7 @@ export function Overview({
       ]
     }),
   )
-  const live = layout([...rows.values()])
+  const { shelves: live, related } = layout([...rows.values()])
   const holding = pointerInside.current || (lanesRef.current?.contains(document.activeElement) ?? false)
   const placed = holding && held.current ? hold(held.current, live) : live
   if (!holding) held.current = live
@@ -394,6 +513,9 @@ export function Overview({
 
   const currentName = current?.session.name
   const currentFresh = current?.fresh === true
+  useEffect(() => {
+    if (detailRef.current) detailRef.current.scrollTop = 0
+  }, [currentName])
   useEffect(() => {
     if (!visible || !currentFresh || currentName === undefined) return
     const timer = setTimeout(() => onSeen([currentName]), AUTO_SEEN_MS)
@@ -434,36 +556,66 @@ export function Overview({
     return () => document.removeEventListener('keydown', listener)
   }, [])
 
-  const card = (row: Row) => (
+  const models = [...rows.values()].flatMap((r) => (r.insight?.model ? [modelName(r.insight.model)] : []))
+  const tally = new Map<string, number>()
+  for (const m of models) tally.set(m, (tally.get(m) ?? 0) + 1)
+  const usual = [...tally].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''
+  const card = (row: Row, dense = false) => (
     <Card
       key={row.session.name}
       row={row}
       now={now}
       selected={row.session.name === selected}
       tabbable={row.session.name === tabStop}
+      usual={usual}
+      dense={dense}
       onSelect={() => setSelected(row.session.name)}
+      onOpen={() => onOpen(row.session.name)}
+      onSeen={() => onSeen([row.session.name])}
     />
   )
   const shelf = (kind: Kind) =>
     of(kind).map((s) => {
       const heading = `${id}-${kind}-${s.key || 'other'}`
+      const dense = kind === 'parked' || s.key === ''
+      const all = opened.has(shelfId(s))
       return (
         <div key={shelfId(s)} className="group">
-          <h3 id={heading} className="group-title">
-            {s.label} <span className="lane-count">{s.rows.length}</span>
-          </h3>
-          <ul className="cards shelf" aria-labelledby={heading}>
-            {s.rows.map(card)}
+          <div className="group-head">
+            <h3 id={heading} className="group-title">
+              {s.label} <span className="lane-count">{s.rows.length}</span>
+            </h3>
+            {!dense && s.rows.length > SHELF_PEEK ? (
+              <button
+                type="button"
+                className="lane-action"
+                aria-expanded={all}
+                onClick={() =>
+                  setOpened((prev) => {
+                    const next = new Set(prev)
+                    if (all) next.delete(shelfId(s))
+                    else next.add(shelfId(s))
+                    return next
+                  })
+                }
+              >
+                {all ? 'Show less' : `See all ${s.rows.length}`}
+              </button>
+            ) : null}
+          </div>
+          <ul className={dense ? 'rows' : all ? 'cards' : 'cards shelf'} aria-labelledby={heading}>
+            {s.rows.map((r) => card(r, dense))}
           </ul>
         </div>
       )
     })
-  const artifacts = ledger([...rows.values()].map((r) => ({ name: r.session.name, artifacts: r.insight?.artifacts ?? [] })))
+  const artifacts = ledger([...rows.values()].map((r) => ({ name: r.session.name, artifacts: r.insight?.artifacts ?? [] }))).slice(0, 6)
   const recentFiles = [...rows.values()]
     .flatMap((r) => (r.insight?.files ?? []).map((f) => ({ ...f, session: r.session.name, cwd: r.session.path, label: r.session.name })))
     .filter((f) => !f.gone)
     .sort((a, b) => b.at - a.at)
-    .slice(0, 12)
+    .slice(0, 8)
+  const working = count('working')
 
   return (
     <section className="overview" aria-label="overview">
@@ -484,28 +636,37 @@ export function Overview({
         <p className="overview-notice" role="status" hidden={!notice}>
           {notice}
         </p>
-        {SECTIONS.map(({ kind, title, empty }) => (
-          <section key={kind} className="lane" aria-labelledby={`lane-${kind}`}>
-            <div className="lane-head">
-              <h2 id={`lane-${kind}`} className="lane-title">
-                {title} <span className="lane-count">{count(kind)}</span>
-              </h2>
-              {kind === 'needs' && readyNames.length > 1 ? (
-                <button type="button" className="lane-action" onClick={() => onSeen(readyNames)}>
-                  Mark all seen
-                </button>
+        {SECTIONS.map(({ kind, title, empty }) =>
+          kind === 'recent' && count(kind) === 0 ? null : (
+            <section key={kind} className={`lane lane-${kind}`} aria-labelledby={`lane-${kind}`}>
+              <div className="lane-head">
+                <h2 id={`lane-${kind}`} className="lane-title">
+                  {title} <span className="lane-count">{count(kind)}</span>
+                </h2>
+                {kind === 'needs' && readyNames.length > 1 ? (
+                  <button type="button" className="lane-action" onClick={() => onSeen(readyNames)}>
+                    <Icon name="eye" />
+                    Mark all seen
+                  </button>
+                ) : null}
+              </div>
+              {count(kind) === 0 ? (
+                <p className="lane-empty">
+                  {empty}
+                  {kind === 'needs' && working > 0 ? ` ${working} agent${working === 1 ? '' : 's'} working.` : ''}
+                </p>
               ) : null}
-            </div>
-            {count(kind) === 0 ? <p className="lane-empty">{empty}</p> : null}
-            {kind === 'recent' ? shelf('recent') : <ul className="cards">{of(kind).flatMap((s) => s.rows).map(card)}</ul>}
-          </section>
-        ))}
+              {kind === 'recent' ? shelf('recent') : <ul className="cards">{of(kind).flatMap((s) => s.rows).map((r) => card(r))}</ul>}
+            </section>
+          ),
+        )}
         {count('parked') > 0 ? (
-          <section className="lane" aria-labelledby="lane-parked">
+          <section className="lane lane-parked" aria-labelledby="lane-parked">
             <details open={parkedOpen} onToggle={(e) => setParkedOpen(e.currentTarget.open)}>
               <summary className="parked-toggle">
+                <Icon name="next" />
                 <h2 id="lane-parked" className="lane-title">
-                  Parked · idle over a week <span className="lane-count">{count('parked')}</span>
+                  Idle over a week <span className="lane-count">{count('parked')}</span>
                 </h2>
               </summary>
               {shelf('parked')}
@@ -513,7 +674,7 @@ export function Overview({
           </section>
         ) : null}
       </div>
-      <aside className="detail" aria-label="session details">
+      <aside ref={detailRef} className="detail" aria-label="session details">
         {current ? (
           <Detail
             row={current}
@@ -521,10 +682,16 @@ export function Overview({
             onOpen={() => onOpen(current.session.name)}
             onSeen={() => onSeen([current.session.name])}
             onPick={setPreview}
+            related={(related.get(current.session.name) ?? []).flatMap((n) => rows.get(n) ?? [])}
+            onRelated={(name) => {
+              if (order.includes(name)) refocus.current = name
+              else if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+              setSelected(name)
+            }}
           />
         ) : (
           <div className="detail-body">
-            <h2>Latest artifacts</h2>
+            <h2 className="detail-title">Latest artifacts</h2>
             {selected !== null ? <p className="lane-empty">{selected} has ended.</p> : null}
             {artifacts.length > 0 ? (
               <ArtifactList artifacts={artifacts} now={now} />
@@ -533,13 +700,20 @@ export function Overview({
             )}
             {recentFiles.length > 0 ? (
               <>
-                <h2 className="detail-section">Recent files</h2>
+                <h2 className="detail-title">Recent files</h2>
                 <FileList files={recentFiles} now={now} onPick={setPreview} />
               </>
             ) : null}
             <p className="hint">
-              Select a session to see where it stands. <kbd>j</kbd>/<kbd>k</kbd> or <kbd>←</kbd>/<kbd>→</kbd> move, <kbd>Enter</kbd> opens,{' '}
-              <kbd>e</kbd> marks seen.
+              Select a session to see where it stands.{' '}
+              <span className="keys">
+                <kbd>j</kbd>/<kbd>k</kbd>
+              </span>{' '}
+              or{' '}
+              <span className="keys">
+                <kbd>←</kbd>/<kbd>→</kbd>
+              </span>{' '}
+              move, <kbd>Enter</kbd> opens, <kbd>e</kbd> marks seen.
             </p>
           </div>
         )}

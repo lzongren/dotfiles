@@ -682,6 +682,16 @@ describe('TerminalTabs', () => {
     expect(onClose).toHaveBeenCalledWith('api')
   })
 
+  it('describes the needs-you count and each tab session state without changing tab names', () => {
+    const api = { name: 'api', attached: false, clients: 0, activityEpoch: 0, bell: false, cmd: 'claude', title: '', path: '/w/api', attachable: true }
+    const insights = new Map([['api', { session: 'api', agent: 'claude' as const, state: 'waiting' as const, artifacts: [], commits: 0 }]])
+    const shell = { ...api, name: 'sh', cmd: 'zsh', bell: true }
+    render(<TerminalTabs tabs={['api', 'sh']} active="api" sessions={[api, shell]} insights={insights} now={0} needs={1} onSelect={() => {}} onClose={() => {}} />)
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAccessibleDescription('1 needs you')
+    expect(screen.getByRole('tab', { name: 'api' })).toHaveAccessibleDescription('waiting on you')
+    expect(screen.getByRole('tab', { name: 'sh' })).toHaveAccessibleDescription('bell rang')
+  })
+
   it('renders nothing without tabs', () => {
     const { container } = render(<TerminalTabs tabs={[]} active={null} sessions={[]} insights={new Map()} now={0} onSelect={() => {}} onClose={() => {}} />)
     expect(container).toBeEmptyDOMElement()

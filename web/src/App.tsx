@@ -176,7 +176,11 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <h1 className="brand">
-          <img src="/favicon.svg" alt="" width="22" height="22" />
+          <svg className="brand-mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+            <rect className="mark-bg" x="1.5" y="1.5" width="21" height="21" rx="6" />
+            <path className="mark-prompt" d="M7 8.5l3.5 3.5L7 15.5" />
+            <rect className="mark-cursor" x="12.5" y="14" width="5" height="2" rx="1" />
+          </svg>
           devbox <span className="host">{data.host}</span>
         </h1>
         <WorkspacePalette
@@ -205,6 +209,7 @@ export function App() {
             sessions={data.sessions}
             insights={insights}
             now={now}
+            seenAt={seenAt}
             active={activeTab}
             onAttach={openTerminal}
           />
@@ -219,6 +224,8 @@ export function App() {
           sessions={data.sessions}
           insights={insights}
           now={now}
+          needs={waiting}
+          seenAt={seenAt}
           onSelect={setActiveTab}
           onClose={closeTerminal}
         />

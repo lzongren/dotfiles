@@ -1,13 +1,16 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
-import { openableCount, shownArtifacts } from '../insights'
+import { isFresh, openableCount, plain, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
+import { Icon, StateIcon, toneOf, type Tone } from './Icon'
 import { ArtifactList } from './Overview'
+import { headline, sessionSummary } from './SessionList'
 import { TerminalPane } from './Terminal'
 
 const NOTE_MS = 8000
+const TONES: Record<Tone, string> = { waiting: 'waiting on you', error: 'error', working: 'working', fresh: 'new turn', idle: '' }
 
 type UploadJob = { current: string; files: File[]; placed: Array<{ name: string; path: string }>; problems: string[] }
 
@@ -20,6 +23,8 @@ export function TerminalTabs({
   sessions,
   insights,
   now,
+  needs = 0,
+  seenAt = () => Infinity,
   onSelect,
   onClose,
 }: {
@@ -29,6 +34,8 @@ export function TerminalTabs({
   sessions: Session[]
   insights: Map<string, AgentInsight>
   now: number
+  needs?: number
+  seenAt?: (name: string) => number
   onSelect: (name: string | null) => void
   onClose: (name: string) => void
 }) {
@@ -151,27 +158,59 @@ export function TerminalTabs({
     <section className="terminals" data-overview={active === null}>
       <div className="tabstrip" role="tablist">
         <span className="tab" data-active={active === null}>
-          <button type="button" role="tab" aria-selected={active === null} onClick={() => onSelect(null)}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={active === null}
+            aria-describedby={needs > 0 ? `${id}-needs` : undefined}
+            onClick={() => onSelect(null)}
+          >
+            <Icon name="overview" />
             Overview
+            {needs > 0 ? (
+              <span className="tab-count" aria-hidden="true">
+                {needs}
+              </span>
+            ) : null}
           </button>
-        </span>
-        {tabs.map((tab) => (
-          <span key={tab} className="tab" data-active={tab === active} data-drop={over === tab} {...zone(tab)}>
-            <button type="button" role="tab" aria-selected={tab === active} onClick={() => onSelect(tab)}>
-              {tab}
-            </button>
-            <button type="button" aria-label={`close ${tab}`} className="tab-close" onClick={() => onClose(tab)}>
-              ×
-            </button>
+          <span id={`${id}-needs`} hidden>
+            {needs} need{needs === 1 ? 's' : ''} you
           </span>
-        ))}
+        </span>
+        {tabs.map((tab, index) => {
+          const row = sessions.find((s) => s.name === tab)
+          const tone = row ? toneOf(row, insights.get(tab), isFresh(row, insights.get(tab), seenAt(tab))) : 'idle'
+          const label = tone === 'waiting' && insights.get(tab)?.state !== 'waiting' ? 'bell rang' : TONES[tone]
+          return (
+            <span key={tab} className="tab" data-active={tab === active} data-drop={over === tab} {...zone(tab)}>
+              <span id={`${id}-tone-${index}`} hidden>
+                {label}
+              </span>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === active}
+                aria-describedby={label ? `${id}-tone-${index}` : undefined}
+                onClick={() => onSelect(tab)}
+              >
+                <StateIcon tone={tone} />
+                {tab}
+              </button>
+              <button type="button" aria-label={`close ${tab}`} className="tab-close" onClick={() => onClose(tab)}>
+                <Icon name="x" size={14} />
+              </button>
+            </span>
+          )
+        })}
       </div>
       {tabs.map((tab, index) => {
         const insight = insights.get(tab)
         const open = filesOpen === tab && insight !== undefined
         const panel = `${id}-files-${index}`
         const artifacts = open ? shownArtifacts(insight) : []
-        const cwd = open ? (sessions.find((s) => s.name === tab)?.path ?? '') : ''
+        const row = sessions.find((s) => s.name === tab)
+        const cwd = open ? (row?.path ?? '') : ''
+        const lead = insight?.summary ? plain(insight.summary) : row ? headline(row) || sessionSummary(row).text : ''
         const files = open ? (insight.files ?? []).map((f) => ({ ...f, session: tab, cwd })) : []
         return (
           <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }} data-drop={over === tab} {...zone(tab)}>
@@ -179,6 +218,7 @@ export function TerminalTabs({
               name={tab}
               active={tab === active}
               focusSignal={tab === active ? focusSignal : 0}
+              lead={lead ? <span className="terminal-lead">{lead}</span> : undefined}
               tools={
                 insight ? (
                   <div
@@ -201,8 +241,8 @@ export function TerminalTabs({
                       aria-controls={open ? panel : undefined}
                       onClick={() => setFilesOpen(open ? null : tab)}
                     >
-                      Artifacts{' '}
-                      <span className="files-count">{openableCount(insight)}</span>
+                      <Icon name="file" size={14} />
+                      Artifacts <span className="files-count">{openableCount(insight)}</span>
                     </button>
                     {open ? (
                       <section id={panel} className="files-panel" aria-label={`${tab} artifacts`}>

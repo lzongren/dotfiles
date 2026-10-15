@@ -10,6 +10,7 @@ import {
   loadSeen,
   markSeen,
   modelName,
+  plain,
   projectOf,
   rankArtifacts,
 } from '../../src/insights'
@@ -189,6 +190,18 @@ describe('labels', () => {
     expect(displayTitle('', agent({ firstAsk: '/effort', ask: 'Fix the login' }))).toBe('Fix the login')
     expect(displayTitle('', agent({ ask: 'x'.repeat(100) }))).toHaveLength(80)
     expect(displayTitle('', undefined)).toBe('')
+    expect(displayTitle('', agent({ firstAsk: '/goal per https://chat.example/archives/C0123/p99, upgrade the eval' }))).toBe('per chat.example/…/p99, upgrade the eval')
+    expect(displayTitle('review https://code.example/pkg/x#L4', undefined)).toBe('review code.example/…/x')
+    expect(displayTitle('/review https://git.example/org/repo/pull/101', undefined)).toBe('/review git.example/…/101')
+    expect(displayTitle('see https://docs.example/intro', undefined)).toBe('see docs.example/intro')
+    expect(displayTitle('see https://docs.example/guide?tab=1', undefined)).toBe('see docs.example/guide')
+  })
+
+  it('flattens markdown tables, bold and code in a summary to one line of text', () => {
+    expect(plain('Runs: | Stage | Run |\n|---|---|\n| Gamma | **3/3** |, see `CR-9`')).toBe('Runs: Stage Run Gamma 3/3 , see CR-9')
+    expect(plain('edited `__init__.py`; guard with a || b')).toBe('edited __init__.py; guard with a || b')
+    expect(plain('use `x**2` and `y**3`')).toBe('use x**2 and y**3')
+    expect(plain('a | b\n--- | ---\n1 | 2')).toBe('a b 1 2')
   })
 
   it('shortens model ids', () => {

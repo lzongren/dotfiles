@@ -3,6 +3,7 @@ import { createSession, getWorkspaces } from '../api'
 import type { AgentChoice, Session, Workspace } from '../shared/types'
 import { isValidSessionName } from '../shared/validate'
 import { ago } from '../time'
+import { Icon } from './Icon'
 
 interface Item {
   key: string
@@ -178,25 +179,29 @@ export function WorkspacePalette({
       }}
     >
       <div className="palette-bar">
-        <input
-          ref={inputRef}
-          className="palette-input"
-          type="text"
-          role="combobox"
-          aria-expanded={open && items.length > 0}
-          aria-controls={listId}
-          aria-activedescendant={open && current ? `${listId}-${current.key}` : undefined}
-          aria-label="search or create a workspace"
-          placeholder="search or create a workspace  ( / )"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value)
-            setSelectedKey(null)
-            setError(null)
-          }}
-          onKeyDown={onKeyDown}
-          onFocus={() => setOpen(true)}
-        />
+        <span className="palette-field">
+          <Icon name="search" />
+          <input
+            ref={inputRef}
+            className="palette-input"
+            type="text"
+            role="combobox"
+            aria-expanded={open && items.length > 0}
+            aria-controls={listId}
+            aria-activedescendant={open && current ? `${listId}-${current.key}` : undefined}
+            aria-label="search or create a workspace"
+            placeholder="Search or create a workspace"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              setSelectedKey(null)
+              setError(null)
+            }}
+            onKeyDown={onKeyDown}
+            onFocus={() => setOpen(true)}
+          />
+          <kbd aria-hidden="true">/</kbd>
+        </span>
         <div
           role="radiogroup"
           aria-label="agent"
@@ -252,7 +257,9 @@ export function WorkspacePalette({
               if (busy === null) void activate(item)
             }}
           >
-            <span className="palette-dot">{item.kind === 'live' ? '●' : item.kind === 'create' ? '+' : '○'}</span>
+            <span className="palette-dot">
+              <Icon name={item.kind === 'live' ? 'terminal' : item.kind === 'create' ? 'plus' : 'folder'} size={14} />
+            </span>
             <span className="palette-name">
               {item.kind === 'create' ? `create ${item.name}` : item.name}
             </span>

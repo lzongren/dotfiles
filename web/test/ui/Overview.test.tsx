@@ -142,18 +142,75 @@ describe('Overview sections', () => {
     expect(titles(/Needs you/)).toEqual(['b1', 'b2', 'r1'])
   })
 
-  it('shelves the rest by the words their names share, singletons under Other, and parks the week-old ones collapsed', () => {
+  it('shelves the rest by the words their names share, singletons ungrouped, and parks the week-old ones collapsed', () => {
     renderOverview()
-    expect(titles(/Topics/)).toEqual(['shell-late', 'shell-early', 'mid'])
+    expect(titles(/Recent/)).toEqual(['shell-late', 'shell-early', 'mid'])
     expect(screen.getByRole('heading', { name: 'shell 2' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Other 1' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /Parked/ }).closest('details')).not.toHaveAttribute('open')
+    expect(screen.getByRole('heading', { name: 'Ungrouped 1' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Idle over a week/ }).closest('details')).not.toHaveAttribute('open')
   })
 
   it('names each card by its title and describes it with its state and summary', () => {
     renderOverview()
     const card = screen.getByRole('button', { name: 'Newer turn' })
-    expect(card).toHaveAccessibleDescription(/ready · new.*Report drafted in CR-9/)
+    expect(card).toHaveAccessibleDescription(/New turn.*Report drafted in CR-9/)
+  })
+
+  it('heads a tile with its session name when the title says nothing, shortens links, and names an unusual model only', () => {
+    renderOverview({
+      sessions: ['short', 'linked', 'usual-a', 'usual-b'].map((n) => session(n)),
+      insights: new Map(
+        [
+          agent('short', { title: 'CR', model: 'claude-opus-5-5' }),
+          agent('linked', { title: 'see https://chat.example/archives/C0123', model: 'claude-opus-5-5' }),
+          agent('usual-a', { title: 'Tidy the release notes', model: 'claude-opus-5-5' }),
+          agent('usual-b', { title: 'Rebuild the search index', model: 'claude-fable-5' }),
+        ].map((a) => [a.session, a]),
+      ),
+    })
+    expect(screen.getByRole('button', { name: 'short' })).not.toHaveTextContent('CR')
+    expect(screen.getByRole('button', { name: 'see chat.example/…/C0123' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Tidy the release notes' })).not.toHaveTextContent('opus')
+    expect(screen.getByRole('button', { name: 'Rebuild the search index' })).toHaveTextContent('fable-5')
+  })
+
+  it('says how long a working agent has been quiet, and spells out why one is blocked or failed', () => {
+    renderOverview({
+      sessions: [session('busy', { activityEpoch: sec(30) }), session('stuck', { activityEpoch: sec(1200) }), session('zed'), session('boom')],
+      insights: new Map(
+        [
+          agent('busy', { state: 'working', title: 'Busy one', since: sec(1500) }),
+          agent('stuck', { state: 'working', title: 'Stuck one', since: sec(1500) }),
+          agent('zed', { state: 'waiting', waitingFor: 'permission prompt', title: 'Blocked longest', since: sec(900) }),
+          agent('boom', { state: 'error', error: 'rate_limit', title: 'Failed one', turnAt: sec(50) }),
+        ].map((a) => [a.session, a]),
+      ),
+    })
+    expect(screen.getByRole('button', { name: 'Busy one' })).not.toHaveTextContent('Quiet')
+    expect(screen.getByRole('button', { name: 'Stuck one' })).toHaveTextContent('Quiet for 20m')
+    expect(screen.getByRole('button', { name: 'Blocked longest' })).toHaveTextContent('Waiting on you: permission prompt')
+    expect(screen.getByRole('button', { name: 'Failed one' })).toHaveTextContent('Error: rate_limit')
+  })
+
+  it('opens or marks a tile seen from its hover actions without adding tab stops', () => {
+    const { onOpen, onSeen } = renderOverview()
+    const open = screen.getByRole('button', { name: 'Open newer' })
+    expect(open).toHaveAttribute('tabindex', '-1')
+    fireEvent.click(open)
+    expect(onOpen).toHaveBeenCalledWith('newer')
+    fireEvent.click(screen.getByRole('button', { name: 'Mark newer seen' }))
+    expect(onSeen).toHaveBeenCalledWith(['newer'])
+    expect(screen.queryByRole('button', { name: 'Mark mid seen' })).toBeNull()
+  })
+
+  it('opens a long shelf out into a grid without changing its order', () => {
+    const names = ['deploy-a', 'deploy-b', 'deploy-c', 'deploy-d', 'notes', 'search', 'docs', 'metrics', 'billing', 'mail']
+    renderOverview({ sessions: names.map((n, i) => session(n, { activityEpoch: sec(10 + i) })), insights: new Map(), seenAt: () => sec(0) })
+    const list = screen.getByRole('list', { name: 'deploy 4' })
+    expect(list).toHaveClass('shelf')
+    fireEvent.click(screen.getByRole('button', { name: 'See all 4' }))
+    expect(list).not.toHaveClass('shelf')
+    expect(within(list).getAllByRole('button').filter((b) => b.classList.contains('card')).map((b) => b.dataset.session)).toEqual(names.slice(0, 4))
   })
 
   it('shows only artifacts someone mentioned on a card, the summary-named first', () => {
@@ -228,29 +285,29 @@ describe('Overview selection and seen', () => {
 
   it('leaves a parked tile in place while held with Parked open', () => {
     const view = renderOverview()
-    const parked = screen.getByRole('heading', { name: /Parked/ }).closest('details')!
+    const parked = screen.getByRole('heading', { name: /Idle over a week/ }).closest('details')!
     parked.open = true
     fireEvent(parked, new Event('toggle'))
     const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
     fireEvent.mouseEnter(lanes)
     view.rerender({ insights: insights([agent('old', { state: 'waiting', since: sec(30), title: 'Old one' })]) })
     expect(titles(/Needs you/)).toEqual(['zed', 'alpha', 'newer', 'older'])
-    expect(screen.getByRole('button', { name: 'Old one' }).closest('details')).toBe(parked)
+    expect(screen.getByRole('button', { name: 'old' }).closest('details')).toBe(parked)
   })
 
   it('walks a shelf that appears while held in the order it is drawn', () => {
     const view = renderOverview()
-    const parked = screen.getByRole('heading', { name: /Parked/ }).closest('details')!
+    const parked = screen.getByRole('heading', { name: /Idle over a week/ }).closest('details')!
     parked.open = true
     fireEvent(parked, new Event('toggle'))
-    expect(screen.getByRole('button', { name: /old/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'old' })).toBeVisible()
     const lanes = screen.getByRole('region', { name: /Needs you/ }).parentElement!
     fireEvent.mouseEnter(lanes)
     view.rerender({ sessions: [...SESSIONS, session('deploy-one', { activityEpoch: sec(8) }), session('deploy-two', { activityEpoch: sec(9) })] })
-    expect(within(screen.getByRole('region', { name: /Topics/ })).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+    expect(within(screen.getByRole('region', { name: /Recent/ })).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
       'shell 2',
       'deploy 2',
-      'Other 1',
+      'Ungrouped 1',
     ])
     const drawn = [...document.querySelectorAll<HTMLElement>('.lanes .card')].map((c) => c.dataset.session)
     const walked = drawn.map(() => {
@@ -277,13 +334,45 @@ describe('Overview selection and seen', () => {
     fireEvent.mouseEnter(lanes)
     view.rerender({ sessions: SESSIONS.filter((s) => s.name !== 'shell-early') })
     expect(screen.getByRole('list', { name: 'shell 1' })).toBeInTheDocument()
-    expect(titles(/Topics/)).toEqual(['shell-late', 'mid'])
+    expect(titles(/Recent/)).toEqual(['shell-late', 'mid'])
     fireEvent.mouseLeave(lanes)
     expect(screen.queryByRole('list', { name: /^shell/ })).toBeNull()
-    expect(within(screen.getByRole('list', { name: 'Other 2' })).getAllByRole('button').map((b) => b.dataset.session)).toEqual([
+    expect(within(screen.getByRole('list', { name: 'Ungrouped 2' })).getAllByRole('button').map((b) => b.dataset.session)).toEqual([
       'shell-late',
       'mid',
     ])
+  })
+})
+
+describe('Overview details', () => {
+  it('lists other sessions on the same topic and selects one when picked', () => {
+    renderOverview({
+      sessions: [session('billing-retry'), session('billing-refunds'), session('search')],
+      insights: new Map([agent('billing-retry', { title: 'Retry queue' }), agent('billing-refunds', { title: 'Refund ledger' })].map((a) => [a.session, a])),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry queue' }))
+    const details = within(screen.getByRole('article', { name: 'billing-retry details' }))
+    const related = within(details.getByRole('heading', { name: 'Same topic' }).parentElement!)
+    expect(related.getAllByRole('button').map((b) => b.textContent)).toEqual([expect.stringContaining('billing-refunds')])
+    fireEvent.click(related.getByRole('button'))
+    expect(screen.getByRole('article', { name: 'billing-refunds details' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refund ledger' })).toHaveFocus()
+  })
+
+  it('leaves focus on the page when the picked session has no tile on screen, and reads each row line', () => {
+    renderOverview({
+      sessions: [session('billing-retry'), session('billing-old', { activityEpoch: sec(9 * 86400) }), session('search')],
+      insights: new Map([agent('billing-retry', { title: 'Retry queue' }), agent('billing-old', { title: 'Old ledger' })].map((a) => [a.session, a])),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry queue' }))
+    const details = within(screen.getByRole('article', { name: 'billing-retry details' }))
+    fireEvent.click(within(details.getByText('Same topic').parentElement!).getByRole('button'))
+    expect(document.body).toHaveFocus()
+    expect(screen.getByRole('article', { name: 'billing-old details' })).toBeInTheDocument()
+    const parked = screen.getByRole('heading', { name: /Idle over a week/ }).closest('details')!
+    parked.open = true
+    fireEvent(parked, new Event('toggle'))
+    expect(screen.getByRole('button', { name: 'billing-old' })).toHaveAccessibleDescription(/Old ledger/)
   })
 })
 

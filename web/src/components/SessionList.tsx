@@ -1,7 +1,8 @@
 import { useReducer, useRef } from 'react'
 import type { AgentInsight, Session } from '../shared/types'
-import { displayTitle } from '../insights'
+import { displayTitle, isFresh } from '../insights'
 import { ago } from '../time'
+import { Icon, StateIcon, toneOf } from './Icon'
 
 const SHELLS = ['zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh']
 
@@ -17,24 +18,38 @@ export function sessionSummary(session: Session): { text: string; live: boolean 
   return { text: [session.cmd, session.path].filter(Boolean).join(' · '), live: false }
 }
 
+export function Name({ name }: { name: string }) {
+  const dated = /^(\d{3,4}_)(.+)$/.exec(name)
+  return dated ? (
+    <>
+      <span className="name-prefix">{dated[1]}</span>
+      {dated[2]}
+    </>
+  ) : (
+    <>{name}</>
+  )
+}
+
 function byRecency(sessions: Session[]): string[] {
   return [...sessions]
     .sort((a, b) => b.activityEpoch - a.activityEpoch || a.name.localeCompare(b.name))
     .map((s) => s.name)
 }
 
-const ATTENTION: Partial<Record<AgentInsight['state'], string>> = { waiting: 'waiting', working: 'working', error: 'error' }
+const STATES: Partial<Record<AgentInsight['state'], string>> = { waiting: 'waiting', working: 'working', error: 'error' }
 
 export function SessionList({
   sessions,
   insights = new Map(),
   now,
+  seenAt = () => Infinity,
   active,
   onAttach,
 }: {
   sessions: Session[]
   insights?: Map<string, AgentInsight>
   now: number
+  seenAt?: (name: string) => number
   active: string | null
   onAttach: (name: string) => void
 }) {
@@ -87,31 +102,41 @@ export function SessionList({
           const insight = insights.get(s.name)
           const title = insight ? displayTitle(headline(s), insight) : ''
           const info = title ? { text: title, live: true } : sessionSummary(s)
-          const attention = insight ? ATTENTION[insight.state] : undefined
+          const tone = toneOf(s, insight, isFresh(s, insight, seenAt(s.name)))
+          const state = (insight && STATES[insight.state]) ?? (s.bell ? 'bell' : tone === 'fresh' ? 'new' : '')
           return (
             <li key={s.name}>
               <button
                 type="button"
                 className="session"
+                data-tone={tone}
                 aria-current={s.name === active ? 'true' : undefined}
                 aria-disabled={s.attachable ? undefined : 'true'}
-                title={s.attachable ? s.path : 'this name cannot be used from the web'}
+                title={s.attachable ? `${info.text}\n${s.path}` : 'this name cannot be used from the web'}
                 onClick={() => {
                   if (s.attachable) onAttach(s.name)
                 }}
               >
-                <span className="session-top">
-                  <span className="session-state">
-                    {s.attached ? '●' : '○'}
-                    {s.clients > 1 ? <span className="clients">×{s.clients}</span> : null}
-                  </span>
-                  <span className="session-name">{s.name}</span>
-                  {attention ? <span className={`chip chip-${attention}`}>{attention}</span> : null}
-                  {s.bell ? <span className="bell-badge">bell</span> : null}
-                  <span className="session-idle">{ago(now, s.activityEpoch)}</span>
+                <StateIcon tone={tone} />
+                <span className="session-name">
+                  <Name name={s.name} />
                 </span>
-                <span className={info.live ? 'session-headline' : 'session-headline session-headline-dim'}>
-                  {info.text}
+                {s.bell && tone !== 'waiting' ? (
+                  <span className="session-bell">
+                    <Icon name="bell" size={14} />
+                  </span>
+                ) : null}
+                {s.attached ? (
+                  <span className="clients">
+                    <Icon name="terminal" size={14} />
+                    {s.clients > 1 ? `×${s.clients}` : null}
+                  </span>
+                ) : null}
+                <span className="session-idle">{ago(now, s.activityEpoch)}</span>
+                <span className="visually-hidden">
+                  {state ? `, ${state}` : ''}
+                  {s.bell && tone !== 'waiting' ? ', bell' : ''}
+                  {s.attached ? ', attached' : ''}, {info.text}
                 </span>
               </button>
             </li>

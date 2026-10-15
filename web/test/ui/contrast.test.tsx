@@ -39,7 +39,7 @@ describe('theme contrast (WCAG AA)', () => {
   })
 
   it.each(['text', 'dim', 'accent', 'bell', 'danger'])('--%s text is at least 4.5:1 on every surface', (fg) => {
-    for (const surface of ['bg', 'surface', 'raised', 'selected', 'term-bg']) {
+    for (const surface of ['bg', 'surface', 'tile', 'raised', 'selected', 'term-bg']) {
       expect(worst(fg, surface), `--${fg} on --${surface}`).toBeGreaterThanOrEqual(4.5)
     }
   })
@@ -110,7 +110,7 @@ describe.each(
   const t = uiTokens(palette, more)
   it('keeps every text token at least 4.5:1 on every surface', () => {
     for (const fg of ['--text', '--dim', '--accent', '--bell', '--danger']) {
-      for (const bg of ['--bg', '--surface', '--raised', '--selected']) {
+      for (const bg of ['--bg', '--surface', '--tile', '--raised', '--selected']) {
         expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
       }
     }

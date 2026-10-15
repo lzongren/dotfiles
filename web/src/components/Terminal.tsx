@@ -47,11 +47,13 @@ export function TerminalPane({
   name,
   active,
   focusSignal = 0,
+  lead,
   tools,
 }: {
   name: string
   active: boolean
   focusSignal?: number
+  lead?: ReactNode
   tools?: ReactNode
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -333,7 +335,7 @@ export function TerminalPane({
     <div className="terminal" data-active={active}>
       <div className="terminal-bar">
         <span className="terminal-name" title={name}>
-          {name}
+          {lead ?? name}
         </span>
         <span className={`terminal-status terminal-status-${status}`}>
           {status === 'rejected' ? 'attach rejected' : status}

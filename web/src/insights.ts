@@ -101,10 +101,16 @@ export function openableCount(insight: AgentInsight): number {
 }
 
 export function displayTitle(paneHeadline: string, insight: AgentInsight | undefined): string {
-  if (insight?.title) return insight.title
-  if (paneHeadline) return paneHeadline
+  const hosts = (text: string) =>
+    text.replace(/https?:\/\/([^/\s,;)]+)([^\s,;)]*)/g, (_, host: string, path: string) => {
+      const parts = path.split(/[?#]/)[0].split('/').filter(Boolean)
+      const last = parts.at(-1) ?? ''
+      return last && last.length <= 16 ? `${host}/${parts.length > 1 ? '…/' : ''}${last}` : host
+    })
+  if (insight?.title) return hosts(insight.title)
+  if (paneHeadline) return hosts(paneHeadline)
   const ask = [insight?.firstAsk, insight?.ask]
-    .map((text) => (text ?? '').replace(/^\/[\w:-]+\s*/, '').trim())
+    .map((text) => hosts((text ?? '').replace(/^\/[\w:-]+\s*/, '')).trim())
     .find((text) => text !== '') ?? ''
   return ask.length > 80 ? `${ask.slice(0, 79)}…` : ask
 }
@@ -124,6 +130,18 @@ export function ledger(
     )
     .sort((a, b) => b.first - a.first)
     .slice(0, limit)
+}
+
+export function plain(text: string): string {
+  const bare = /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+$/gm
+  const table = /\|\s*:?-{3,}:?\s*\|/.test(text) || /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+$/m.test(text)
+  const flat = table ? text.replace(bare, ' ').replace(/(\|\s*:?-{3,}:?\s*)+\|?/g, ' ').replace(/\s*\|\s*/g, ' ') : text
+  return flat
+    .split(/(`[^`]+`)/)
+    .map((part, i) => (i % 2 ? part.slice(1, -1) : part.replace(/\*\*(.+?)\*\*/g, '$1')))
+    .join('')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
 }
 
 export function modelName(model: string): string {

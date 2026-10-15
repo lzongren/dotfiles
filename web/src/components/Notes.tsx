@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getNote, getNoteDays, putNote, type ApiResult } from '../api'
+import { Icon } from './Icon'
 import { ignoredTarget } from './Overview'
 
 const SAVE_MS = 600
@@ -416,16 +417,17 @@ export function Notes() {
     <section className="notes" aria-label="notes">
       <header className="notes-head">
         <button ref={toggleRef} type="button" className="notes-toggle" aria-expanded={open} onClick={toggle}>
+          <Icon name="next" size={14} />
           Notes · {label}
           {remaining > 0 ? <span className="notes-count"> · {remaining} open</span> : null}
         </button>
         {open ? (
           <span className="notes-nav">
             <button type="button" aria-label="older notes" disabled={!older} onClick={() => void go(older)}>
-              ‹
+              <Icon name="previous" size={14} />
             </button>
             <button type="button" aria-label="newer notes" disabled={!newer} onClick={() => void go(newer)}>
-              ›
+              <Icon name="next" size={14} />
             </button>
           </span>
         ) : null}

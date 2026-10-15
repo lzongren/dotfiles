@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getTheme } from '../api'
+import { Icon } from './Icon'
 import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, type Look } from '../theme'
 
 export function ThemePicker() {
@@ -65,7 +66,8 @@ export function ThemePicker() {
 
   const looks = ghostty ? [ghostty, ...PRESETS] : PRESETS
   return (
-    <label className="theme-picker">
+    <label className="theme-picker" title={`Theme: ${selected.label}`}>
+      <Icon name="theme" />
       <span className="visually-hidden">Theme</span>
       <select
         value={selected.id}

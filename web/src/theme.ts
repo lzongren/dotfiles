@@ -70,7 +70,7 @@ type TerminalLook = Pick<
 const STORE = 'devbox.look'
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const TOKENS = [
-  '--bg', '--surface', '--raised', '--selected', '--text', '--dim', '--accent', '--bell', '--border', '--control',
+  '--bg', '--surface', '--tile', '--raised', '--selected', '--text', '--dim', '--accent', '--bell', '--border', '--control',
   '--term-bg', '--bell-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono', '--term-pad',
   '--hl-keyword', '--hl-string', '--hl-number', '--hl-title', '--hl-type', '--hl-comment', '--hl-add', '--hl-del',
 ]
@@ -177,18 +177,20 @@ export function uiTokens(p: Palette, more = false): Record<string, string> {
   const bg = readable(p.background, [edge], 7, away)
   const fg = p.foreground
   const surface = mix(bg, fg, 0.04)
+  const tile = dark ? mix(bg, fg, 0.07) : mix(bg, '#ffffff', 0.7)
   const raised = mix(bg, fg, 0.1)
-  const selected = mix(bg, p.ansi[4], 0.2)
+  const selected = mix(bg, p.ansi[4], dark ? 0.2 : 0.12)
   const bellBg = mix(bg, p.ansi[3], 0.2)
-  const surfaces = [bg, surface, raised, selected]
+  const surfaces = [bg, surface, tile, raised, selected]
   const text = (color: string, extra: string[] = []) => readable(color, [...surfaces, ...extra], 4.6, edge)
   const code = (i: number) => readable(p.ansi[i], [p.background], 4.6, edge)
   return {
     '--bg': bg,
     '--surface': surface,
+    '--tile': tile,
     '--raised': raised,
     '--selected': selected,
-    '--text': text(fg),
+    '--text': dark ? text(fg) : readable(fg, surfaces, 9, edge),
     '--dim': text(mix(fg, bg, more ? 0.15 : 0.3)),
     '--accent': text(p.ansi[dark ? 12 : 4]),
     '--bell': text(p.ansi[dark ? 11 : 3], [bellBg]),
