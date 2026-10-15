@@ -4,13 +4,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { onTerminalLook, TERMINAL_OPTIONS, terminalLook } from '../theme'
+import { EXPIRED, SERVER_DOWN } from '../api'
 import { getToken } from '../token'
 
 type Status = 'connecting' | 'connected' | 'closed' | 'rejected'
 
 const REJECT_CODES = [4401, 4403, 4404, 1011]
 const REJECTED: Record<number, string> = {
-  4401: "this tab's link expired · run devbox web",
+  4401: EXPIRED,
   4404: 'no such session · it may have ended',
   1011: "couldn't start ssh on this laptop",
 }
@@ -73,6 +74,7 @@ export function TerminalPane({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const reconnectRef = useRef<() => void>(() => undefined)
   const gaveUpRef = useRef(false)
+  const revivableRef = useRef(false)
   const focusRef = useRef<() => void>(() => undefined)
   const activeRef = useRef(active)
   activeRef.current = active
@@ -242,6 +244,7 @@ export function TerminalPane({
       ready = false
       lastExit = null
       gaveUpRef.current = false
+      revivableRef.current = false
       setAttempt(retry)
       setStatus('connecting')
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -298,13 +301,14 @@ export function TerminalPane({
         if (healthyTimer !== null) window.clearTimeout(healthyTimer)
         healthyTimer = null
         if (disposed) return
+        revivableRef.current = event.code === 4401 || event.code === 1001
         if (REJECT_CODES.includes(event.code)) {
           setWhy(REJECTED[event.code] ?? 'attach rejected')
           setStatus('rejected')
           return
         }
         if (event.code === 1001 || (event.code === 1000 && lastExit !== SSH_FAILED)) {
-          setWhy(event.code === 1001 ? 'the dashboard server stopped · run devbox web' : 'session ended')
+          setWhy(event.code === 1001 ? SERVER_DOWN : 'session ended')
           setStatus('closed')
           return
         }
@@ -358,7 +362,7 @@ export function TerminalPane({
   }, [active, focusSignal])
 
   useEffect(() => {
-    if (reconnectSignal > 0 && gaveUpRef.current) reconnectRef.current()
+    if (reconnectSignal > 0 && (gaveUpRef.current || revivableRef.current)) reconnectRef.current()
   }, [reconnectSignal])
 
   const label =

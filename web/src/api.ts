@@ -41,8 +41,8 @@ export async function fetchJson<T>(path: string, init: { method?: string; body?:
   return { kind: 'ok', data: body }
 }
 
-const EXPIRED = "this tab's link expired — run devbox web for a fresh one"
-const SERVER_DOWN = "the dashboard server isn't answering — run devbox web"
+export const EXPIRED = "this tab's link expired — run devbox web for a fresh one"
+export const SERVER_DOWN = "the dashboard server isn't answering — run devbox web"
 
 export function explain(result: ApiResult<unknown>): string {
   if (result.kind === 'ok') return ''

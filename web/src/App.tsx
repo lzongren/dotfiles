@@ -234,6 +234,7 @@ export function App() {
     <ConnectionStatus
       sessions={{ ...sessionsHealth, pendingSince: sessionsPoll.pendingSince, nextAt: sessionsPoll.nextAt }}
       insights={{ ...insightsHealth, pendingSince: insightsPoll.pendingSince, nextAt: insightsPoll.nextAt }}
+      agentStates={insights.size > 0}
       host={host}
       now={now}
       recoveredAt={recoveredAt}

@@ -325,7 +325,20 @@ describe('TerminalPane', () => {
     expect(screen.getByText('no such session · it may have ended')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'reconnect' }))
     act(() => sockets[1].serverClose(4401))
-    expect(screen.getByText("this tab's link expired · run devbox web")).toBeInTheDocument()
+    expect(screen.getByText("this tab's link expired — run devbox web for a fresh one")).toBeInTheDocument()
+  })
+
+  it('reconnects a tab closed by an expired link or a stopped server once the dashboard is back, but not one that was refused', () => {
+    const { rerender } = render(<TerminalPane name="api" active />)
+    act(() => sockets[0].serverClose(4401))
+    rerender(<TerminalPane name="api" active reconnectSignal={1} />)
+    expect(sockets).toHaveLength(2)
+    act(() => sockets[1].serverClose(1001))
+    rerender(<TerminalPane name="api" active reconnectSignal={2} />)
+    expect(sockets).toHaveLength(3)
+    act(() => sockets[2].serverClose(4404))
+    rerender(<TerminalPane name="api" active reconnectSignal={3} />)
+    expect(sockets).toHaveLength(3)
   })
 
   it('says ssh lost the connection, not that the session ended, when ssh fails', () => {

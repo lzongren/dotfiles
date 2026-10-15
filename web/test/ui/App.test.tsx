@@ -436,6 +436,23 @@ describe('App', () => {
     expect(within(screen.getByRole('region', { name: /Needs you/ })).getByRole('button', { name: 'Fix it' })).toBeInTheDocument()
   })
 
+  it('says the agent details it still shows are old, not missing, while they refresh after the host is back', async () => {
+    const waiting: AgentInsight = { session: 'cc-demo', agent: 'claude', state: 'waiting', title: 'Fix it', artifacts: [], commits: 0 }
+    fetchMock.mockImplementationOnce(async () => response(okBody(ROWS)))
+    fetchMock.mockImplementation(async () => response({ error: 'remote_unreachable', message: 'x' }, 502))
+    insightsMock.mockImplementationOnce(async () => response({ fetchedAt: Date.now(), agents: [waiting] }))
+    insightsMock.mockImplementation(async () => response({ error: 'remote_unreachable', message: 'x' }, 502))
+    render(<App />)
+    await flush()
+    await advance(90000)
+    fetchMock.mockImplementation(async () => response(okBody(ROWS)))
+    insightsMock.mockImplementation(() => new Promise(() => {}))
+    await advance(10000)
+    expect(status()).toHaveTextContent('Agent details as of')
+    expect(status()).not.toHaveTextContent('unavailable')
+    expect(within(screen.getByRole('region', { name: /Needs you/ })).getByRole('button', { name: 'Fix it' })).toBeInTheDocument()
+  })
+
   it('refreshes agent details as soon as the host is back', async () => {
     fetchMock.mockImplementationOnce(async () => response(okBody(ROWS)))
     fetchMock.mockImplementationOnce(async () => response({ error: 'remote_unreachable', message: 'x' }, 502))

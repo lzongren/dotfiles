@@ -76,7 +76,7 @@ interface Notice {
   live: string
 }
 
-function noticeOf(sessions: Feed, insights: Feed, host: string, now: number, recoveredAt: number | null): Notice | null {
+function noticeOf(sessions: Feed, insights: Feed, agentStates: boolean, host: string, now: number, recoveredAt: number | null): Notice | null {
   const failure = sessions.failure
   if (failure) {
     const title = titleOf(failure.cause, host)
@@ -110,7 +110,7 @@ function noticeOf(sessions: Feed, insights: Feed, host: string, now: number, rec
   }
   if (sessions.okAt === null) return { tone: 'info', title: 'Loading sessions…', live: '' }
   if (insights.failure) {
-    const shown = insights.okAt !== null && now - insights.okAt <= INSIGHTS_STALE_MS
+    const shown = agentStates && insights.okAt !== null
     const title = shown ? `Agent details as of ${age(now, insights.okAt ?? now)} ago` : 'Agent details unavailable'
     return {
       tone: 'warn',
@@ -136,6 +136,7 @@ function noticeOf(sessions: Feed, insights: Feed, host: string, now: number, rec
 export function ConnectionStatus({
   sessions,
   insights,
+  agentStates,
   host,
   now,
   recoveredAt,
@@ -144,13 +145,14 @@ export function ConnectionStatus({
 }: {
   sessions: Feed
   insights: Feed
+  agentStates: boolean
   host: string
   now: number
   recoveredAt: number | null
   page?: boolean
   onRetry: () => void
 }) {
-  const notice = noticeOf(sessions, insights, host, now, recoveredAt)
+  const notice = noticeOf(sessions, insights, agentStates, host, now, recoveredAt)
   const Title = page ? 'h2' : 'strong'
   return (
     <div className={page ? 'conn-slot conn-slot-page' : 'conn-slot'}>
