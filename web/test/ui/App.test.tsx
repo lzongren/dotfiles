@@ -405,6 +405,8 @@ describe('App', () => {
     await advance(1000)
     expect(status()).toHaveTextContent('Waiting on stub-host')
     expect(status()).toHaveTextContent('Showing sessions as of 15s ago; the refresh has had no answer for 10s.')
+    expect(status().closest('.sidebar')).not.toBeNull()
+    expect(status().closest('.workspace')).toBeNull()
     await advance(30000)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
