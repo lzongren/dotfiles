@@ -13,6 +13,7 @@ import {
   projectOf,
   rankArtifacts,
   shownArtifacts,
+  sinceOf,
   type Lane,
 } from '../insights'
 import { mmr, rarity, sharedRarest, similarity, topicsOf, words } from '../topics'
@@ -70,10 +71,6 @@ function statusOf(row: Row, now: number): { tone: Tone; label: string; line: str
 function headlineOf(row: Row): string {
   const title = displayTitle(headline(row.session), row.insight)
   return title.length < 4 || title === row.session.name ? '' : title
-}
-
-function ageOf(row: Row): number {
-  return row.lane === 'recent' || row.lane === 'parked' ? row.session.activityEpoch : changeMark(row.session, row.insight)
 }
 
 function layout(rows: Row[]): { shelves: Shelf[]; related: Map<string, string[]> } {
@@ -172,7 +169,7 @@ function Card({
       </span>
     </>
   )
-  const age = <span className="card-age">{ago(now, ageOf(row))}</span>
+  const age = <span className="card-age">{ago(now, sinceOf(row.session, row.insight, row.lane))}</span>
   const hidden = <span id={`${id}-state`} className="visually-hidden">{status.label}</span>
   if (dense) {
     return (

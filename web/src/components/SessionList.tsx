@@ -1,6 +1,6 @@
 import { useId, useReducer, useRef, useState } from 'react'
 import type { AgentInsight, Session } from '../shared/types'
-import { changeMark, displayTitle, heardAt, isFresh, laneOf, type Lane } from '../insights'
+import { changeMark, displayTitle, heardAt, isFresh, laneOf, sinceOf, type Lane } from '../insights'
 import { ago } from '../time'
 import { Icon, StateIcon, toneOf, type Tone } from './Icon'
 
@@ -67,7 +67,7 @@ export function SessionList({
   const [parkedOpen, setParkedOpen] = useState(false)
   const navRef = useRef<HTMLElement | null>(null)
   const pointerInside = useRef(false)
-  const held = useRef<string[]>([])
+  const held = useRef<Array<{ name: string; lane: Lane }>>([])
 
   if (sessions.length === 0) {
     pointerInside.current = false
@@ -78,7 +78,6 @@ export function SessionList({
   const byName = new Map(sessions.map((s) => [s.name, s]))
   const lanes = new Map(sessions.map((s) => [s.name, laneOf(s, insights.get(s.name), seenAt(s.name), now)]))
   const mark = (s: Session) => changeMark(s, insights.get(s.name))
-  const since = (s: Session) => (['recent', 'parked'].includes(lanes.get(s.name) ?? '') ? s.activityEpoch : mark(s))
   const order: Record<Lane, (a: Session, b: Session) => number> = {
     blocked: (a, b) => mark(a) - mark(b),
     working: (a, b) => mark(a) - mark(b),
@@ -95,16 +94,17 @@ export function SessionList({
         .map((s) => s.name),
     ]),
   )
-  const focusInside = navRef.current?.contains(document.activeElement) ?? false
-  const holding = pointerInside.current || focusInside
-  if (!holding) held.current = [...live.values()].flat()
-  const rank = new Map(held.current.map((n, i) => [n, i]))
-  const placed = (lane: Lane) => {
-    const names = live.get(lane) ?? []
-    if (!holding) return names
-    const kept = names.filter((n) => rank.has(n)).sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0))
-    return [...kept, ...names.filter((n) => !rank.has(n))]
-  }
+  const focused = document.activeElement?.closest('.session') ?? null
+  const holding = pointerInside.current || (focused !== null && (navRef.current?.contains(focused) ?? false))
+  if (!holding) held.current = [...live].flatMap(([lane, names]) => names.map((name) => ({ name, lane })))
+  const placedNames = new Set(held.current.map((p) => p.name))
+  const placed = (lane: Lane) =>
+    holding
+      ? [
+          ...held.current.filter((p) => p.lane === lane && byName.has(p.name)).map((p) => p.name),
+          ...(live.get(lane) ?? []).filter((n) => !placedNames.has(n)),
+        ]
+      : (live.get(lane) ?? [])
   const ringing = sessions
     .filter((s) => s.bell)
     .map((s) => s.name)
@@ -127,7 +127,7 @@ export function SessionList({
           data-tone={tone}
           aria-current={s.name === active ? 'true' : undefined}
           aria-disabled={s.attachable ? undefined : 'true'}
-          title={s.attachable ? [s.name, info.text, s.path, s.attached ? 'attached in a terminal' : ''].filter(Boolean).join('\n') : 'this name cannot be used from the web'}
+          title={s.attachable ? [s.name, info.text, s.path, s.attached ? `attached in ${s.clients > 1 ? `${s.clients} terminals` : 'a terminal'}` : ''].filter(Boolean).join('\n') : 'this name cannot be used from the web'}
           onClick={() => {
             if (s.attachable) onAttach(s.name)
           }}
@@ -141,7 +141,7 @@ export function SessionList({
               <Icon name="bell" size={14} />
             </span>
           ) : null}
-          <span className="session-idle">{tone === 'quiet' ? `quiet ${ago(now, heardAt(s, insight))}` : ago(now, since(s))}</span>
+          <span className="session-idle">{tone === 'quiet' ? `quiet ${ago(now, heardAt(s, insight))}` : ago(now, sinceOf(s, insight, lanes.get(s.name) ?? 'recent'))}</span>
           {why ? <span className="session-why">{why}</span> : null}
           <span className="visually-hidden">
             {STATES[tone] && !why ? `, ${STATES[tone]}` : ''}
@@ -194,7 +194,9 @@ export function SessionList({
                 label
               )}
             </h2>
-            {open && names.length ? <ul className="session-list">{names.map(row)}</ul> : null}
+            {names.some((n) => open || n === active) ? (
+              <ul className="session-list">{(open ? names : names.filter((n) => n === active)).map(row)}</ul>
+            ) : null}
           </div>
         )
       })}

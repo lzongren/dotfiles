@@ -12,6 +12,10 @@ export function changeMark(session: Session, insight: AgentInsight | undefined):
   return insight.turnAt ?? insight.since ?? session.activityEpoch
 }
 
+export function sinceOf(session: Session, insight: AgentInsight | undefined, lane: Lane): number {
+  return lane === 'recent' || lane === 'parked' ? session.activityEpoch : changeMark(session, insight)
+}
+
 export function heardAt(session: Session, insight: AgentInsight | undefined): number {
   return Math.max(session.activityEpoch, changeMark(session, insight))
 }

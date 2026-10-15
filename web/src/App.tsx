@@ -25,9 +25,15 @@ function storedWidth(): number {
 }
 
 function SidebarHandle({ width, onWidth }: { width: number; onWidth: (n: number) => void }) {
+  const dragged = useRef<number | null>(null)
   const max = Math.max(SIDEBAR.min, Math.min(SIDEBAR.max, Math.floor(window.innerWidth / 2)))
   const shown = Math.min(width, max)
-  const set = (n: number) => onWidth(Math.round(Math.min(max, Math.max(SIDEBAR.min, n))))
+  const clamp = (n: number) => Math.round(Math.min(max, Math.max(SIDEBAR.min, n)))
+  const set = (n: number) => onWidth(clamp(n))
+  const drop = () => {
+    if (dragged.current !== null) onWidth(dragged.current)
+    dragged.current = null
+  }
   return (
     <div
       className="sidebar-resize"
@@ -45,8 +51,12 @@ function SidebarHandle({ width, onWidth }: { width: number; onWidth: (n: number)
       }}
       onPointerMove={(event) => {
         const aside = event.currentTarget.parentElement
-        if (aside && event.currentTarget.hasPointerCapture(event.pointerId)) set(event.clientX - aside.getBoundingClientRect().left)
+        if (!aside || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+        dragged.current = clamp(event.clientX - aside.getBoundingClientRect().left)
+        event.currentTarget.closest<HTMLElement>('.app')?.style.setProperty('--sidebar-w', `${dragged.current}px`)
       }}
+      onPointerUp={drop}
+      onLostPointerCapture={drop}
       onDoubleClick={() => set(SIDEBAR.initial)}
       onKeyDown={(event) => {
         const step = event.key === 'ArrowLeft' ? -16 : event.key === 'ArrowRight' ? 16 : 0
