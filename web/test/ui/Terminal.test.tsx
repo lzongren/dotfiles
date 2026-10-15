@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clipboardText, TerminalPane } from '../../src/components/Terminal'
+import { clipboardText, TerminalPane, type TerminalHandle } from '../../src/components/Terminal'
 import { TerminalTabs } from '../../src/components/TerminalTabs'
 import { applyLook, DEVBOX, PRESETS } from '../../src/theme'
 
@@ -9,7 +10,13 @@ const hoisted = vi.hoisted(() => {
     static instances: FakeXTerm[] = []
     cols = 80
     rows = 24
-    modes = { mouseTrackingMode: 'none' }
+    modes = { mouseTrackingMode: 'none', bracketedPasteMode: false }
+    keyCb: ((event: KeyboardEvent) => boolean) | null = null
+    attachCustomKeyEventHandler = vi.fn((cb: (event: KeyboardEvent) => boolean) => {
+      this.keyCb = cb
+    })
+    paste = vi.fn()
+    input = vi.fn()
     write = vi.fn()
     writeln = vi.fn()
     loadAddon = vi.fn()
@@ -52,18 +59,21 @@ const hoisted = vi.hoisted(() => {
       return { dispose: vi.fn() }
     }
   }
-  return { FakeXTerm, FakeWebgl }
+  class FakeFit {
+    static instances: FakeFit[] = []
+    fit = vi.fn()
+    constructor() {
+      FakeFit.instances.push(this)
+    }
+  }
+  return { FakeXTerm, FakeWebgl, FakeFit }
 })
 
 const xterms = hoisted.FakeXTerm.instances
 const webgls = hoisted.FakeWebgl.instances
 
 vi.mock('@xterm/xterm', () => ({ Terminal: hoisted.FakeXTerm }))
-vi.mock('@xterm/addon-fit', () => ({
-  FitAddon: class {
-    fit = vi.fn()
-  },
-}))
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: hoisted.FakeFit }))
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: hoisted.FakeWebgl }))
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
 
@@ -124,6 +134,7 @@ beforeEach(() => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility })
   xterms.length = 0
   webgls.length = 0
+  hoisted.FakeFit.instances.length = 0
   sockets.length = 0
 })
 
@@ -694,6 +705,68 @@ describe('TerminalPane', () => {
     expect(webgls).toHaveLength(1)
     act(() => webgls[0].lossCb?.())
     expect(webgls[0].dispose).toHaveBeenCalled()
+  })
+
+  it('puts a side panel beside the screen, and fits once, after a drag of the divider ends', () => {
+    let resized = () => undefined
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => undefined) {
+          resized = cb
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    const { container } = render(
+      <div data-resizing="">
+        <TerminalPane name="api" active side={<aside>notes</aside>} />
+      </div>,
+    )
+    expect(container.querySelector('.terminal-body > .terminal-screen + aside')).toHaveTextContent('notes')
+    const { fit } = hoisted.FakeFit.instances[0]
+    fit.mockClear()
+    resized()
+    vi.advanceTimersByTime(1000)
+    expect(fit).not.toHaveBeenCalled()
+    container.firstElementChild!.removeAttribute('data-resizing')
+    vi.advanceTimersByTime(150)
+    expect(fit).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an Escape that follows a hand-back from the panel, and gives F6 to the panel only while one is open', () => {
+    const ref = createRef<TerminalHandle>()
+    const onSide = vi.fn()
+    const { rerender } = render(<TerminalPane name="api" active ref={ref} onSide={onSide} />)
+    const keys = xterms[0].keyCb!
+    const press = (key: string, type = 'keydown') => keys(new KeyboardEvent(type, { key, cancelable: true }))
+    expect(press('Escape')).toBe(true)
+    xterms[0].focus.mockClear()
+    act(() => ref.current!.focus(true))
+    expect(xterms[0].focus).toHaveBeenCalledTimes(1)
+    expect(press('Escape')).toBe(false)
+    vi.advanceTimersByTime(400)
+    expect(press('Escape')).toBe(true)
+    const f6 = new KeyboardEvent('keydown', { key: 'F6', cancelable: true })
+    expect(keys(f6)).toBe(false)
+    expect(f6.defaultPrevented).toBe(true)
+    expect(press('F6', 'keyup')).toBe(false)
+    expect(onSide).toHaveBeenCalledTimes(1)
+    rerender(<TerminalPane name="api" active ref={ref} />)
+    expect(press('F6')).toBe(true)
+  })
+
+  it('pastes only into an app that takes bracketed paste, strips control characters, and types for the panel', () => {
+    const ref = createRef<TerminalHandle>()
+    render(<TerminalPane name="api" active ref={ref} />)
+    expect(ref.current!.paste('> hi\n')).toBe(false)
+    expect(xterms[0].paste).not.toHaveBeenCalled()
+    xterms[0].modes.bracketedPasteMode = true
+    expect(ref.current!.paste('> a\x1b[201~b\r\n\tc\x9b\n')).toBe(true)
+    expect(xterms[0].paste).toHaveBeenCalledWith('> a[201~b\n\tc\n')
+    ref.current!.input('x')
+    expect(xterms[0].input).toHaveBeenCalledWith('x')
   })
 
   it('closes the socket and disposes the terminal on unmount without reconnecting', () => {

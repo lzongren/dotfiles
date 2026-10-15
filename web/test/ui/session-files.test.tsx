@@ -1,11 +1,22 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useImperativeHandle, type ReactNode, type Ref } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { TerminalHandle } from '../../src/components/Terminal'
 import { TerminalTabs } from '../../src/components/TerminalTabs'
 import type { AgentInsight, Session } from '../../src/shared/types'
 
+const term = vi.hoisted(() => ({ focus: vi.fn(), paste: vi.fn(() => true), input: vi.fn() }))
+
 vi.mock('../../src/components/Terminal', () => ({
-  TerminalPane: ({ name, tools }: { name: string; tools?: ReactNode }) => <div data-testid={`pane-${name}`}>{tools}</div>,
+  TerminalPane: ({ name, tools, side, ref }: { name: string; tools?: ReactNode; side?: ReactNode; ref?: Ref<TerminalHandle> }) => {
+    useImperativeHandle(ref, () => term)
+    return (
+      <div data-testid={`pane-${name}`}>
+        {tools}
+        <div className="terminal-body">{side}</div>
+      </div>
+    )
+  },
 }))
 
 const NOW = 1_800_000_000_000
@@ -46,6 +57,10 @@ const INSIGHTS = new Map<string, AgentInsight>([
 ])
 
 beforeEach(() => {
+  localStorage.clear()
+  term.focus.mockClear()
+  term.paste.mockClear().mockReturnValue(true)
+  term.input.mockClear()
   vi.stubGlobal(
     'fetch',
     vi.fn(async () =>
@@ -72,7 +87,7 @@ const tabs = (active: string, insights = INSIGHTS) => (
 const setup = (active = 'api') => render(tabs(active))
 
 describe('artifacts in a session tab', () => {
-  it('counts the links and files it lists, and previews a file', async () => {
+  it('counts the links and files it lists, and opens a file beside the terminal', async () => {
     setup()
     const toggle = within(screen.getByTestId('pane-api')).getByRole('button', { name: 'Artifacts 3' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -87,13 +102,12 @@ describe('artifacts in a session tab', () => {
     await act(async () => {
       fireEvent.click(panel.getByRole('button', { name: 'plan.md' }))
     })
-    const dialog = screen.getByRole('dialog')
-    expect(screen.getByRole('heading', { name: 'plan.md' })).toBeInTheDocument()
-    fireEvent.keyDown(within(dialog).getByRole('button', { name: 'Close' }), { key: 'Escape' })
-    expect(screen.getByRole('region', { name: 'api artifacts' })).toBeInTheDocument()
-    fireEvent.blur(screen.getByRole('button', { name: 'plan.md' }), { relatedTarget: within(dialog).getByRole('button', { name: 'Close' }) })
-    fireEvent.pointerDown(dialog)
-    expect(screen.getByRole('region', { name: 'api artifacts' })).toBeInTheDocument()
+    const pane = within(screen.getByTestId('pane-api')).getByRole('complementary', { name: 'plan.md' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'api artifacts' })).toBeNull()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(await within(pane).findByRole('heading', { name: 'The plan' })).toBeInTheDocument()
+    await waitFor(() => expect(within(pane).getByRole('region', { name: 'plan.md' })).toHaveFocus())
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/file?session=api&path=%2Fhome%2Fme%2Fwork%2Fapi%2Fdocs%2Fplan.md')
   })
 
@@ -158,5 +172,228 @@ describe('artifacts in a session tab', () => {
     rerender(tabs('api', new Map()))
     rerender(tabs('api'))
     expect(region()).toBeNull()
+  })
+})
+
+const TWO_TABS = (open: string[], active: string, insights = INSIGHTS, dock: { session: string; path: string } | null = null, api = session('api')) => (
+  <TerminalTabs
+    tabs={open}
+    active={active}
+    sessions={[api, session('web')]}
+    insights={insights}
+    now={NOW}
+    dock={dock}
+    onSelect={vi.fn()}
+    onClose={vi.fn()}
+  />
+)
+
+async function docked(text = '# The plan') {
+  vi.mocked(fetch).mockImplementation(async () =>
+    Response.json({ path: '/home/me/work/api/docs/plan.md', size: 10, mtime: sec(30), kind: 'text', text, truncated: false }),
+  )
+  const view = render(TWO_TABS(['api', 'web'], 'api'))
+  fireEvent.click(within(screen.getByTestId('pane-api')).getByRole('button', { name: /Artifacts/ }))
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'plan.md' }))
+  })
+  const pane = screen.getByRole('complementary', { name: 'plan.md' })
+  await within(pane).findByRole('heading', { name: 'The plan' })
+  return { ...view, pane, body: within(pane).getByRole('region', { name: 'plan.md' }) }
+}
+
+describe('a file open beside the terminal', () => {
+  it('stays with its tab, and goes when the tab closes', async () => {
+    const { rerender } = await docked()
+    rerender(TWO_TABS(['api', 'web'], 'web'))
+    expect(within(screen.getByTestId('pane-api')).getByRole('complementary', { name: 'plan.md', hidden: true })).toBeInTheDocument()
+    expect(within(screen.getByTestId('pane-web')).queryByRole('complementary', { hidden: true })).toBeNull()
+    rerender(TWO_TABS(['web'], 'web'))
+    rerender(TWO_TABS(['api', 'web'], 'api'))
+    expect(screen.queryByRole('complementary', { hidden: true })).toBeNull()
+  })
+
+  it('opens beside the terminal when asked from the Overview, leaving the keys with the terminal', async () => {
+    const { rerender } = render(TWO_TABS(['web'], 'web'))
+    await act(async () => {
+      rerender(TWO_TABS(['web', 'api'], 'api', INSIGHTS, { session: 'api', path: '/home/me/work/api/docs/plan.md' }))
+    })
+    const pane = within(screen.getByTestId('pane-api')).getByRole('complementary', { name: 'plan.md' })
+    expect(within(pane).getByRole('region', { name: 'plan.md' })).not.toHaveFocus()
+  })
+
+  it('hands the keys back: Escape returns to the terminal and printable keys type into it', async () => {
+    const { body } = await docked()
+    fireEvent.keyDown(body, { key: 'Escape' })
+    expect(term.focus).toHaveBeenLastCalledWith(true)
+    for (const key of [' ', 'Enter', 'ArrowDown']) fireEvent.keyDown(body, { key })
+    fireEvent.keyDown(body, { key: 'c', metaKey: true })
+    fireEvent.keyDown(body, { key: 'a', isComposing: true })
+    expect(term.input).not.toHaveBeenCalled()
+    const palette = vi.fn()
+    document.addEventListener('keydown', palette)
+    fireEvent.keyDown(body, { key: '/' })
+    document.removeEventListener('keydown', palette)
+    expect(term.input).toHaveBeenCalledWith('/')
+    expect(palette).not.toHaveBeenCalled()
+    term.focus.mockClear()
+    fireEvent.keyDown(body, { key: 'F6' })
+    expect(term.focus).toHaveBeenCalledWith(false)
+  })
+
+  it('quotes the selected text into the reply without sending it', async () => {
+    const { pane, body, rerender } = await docked('# The plan\n\nStep one\nStep two')
+    const quote = within(pane).getByRole('button', { name: 'Quote into reply' })
+    const status = within(pane).getByRole('status')
+    expect(quote).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(quote)
+    expect(status).toHaveTextContent('Select text in the file first')
+    expect(term.paste).not.toHaveBeenCalled()
+
+    const select = (node: Node) => {
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      document.getSelection()!.removeAllRanges()
+      document.getSelection()!.addRange(range)
+      act(() => {
+        document.dispatchEvent(new Event('selectionchange'))
+      })
+    }
+    select(within(body).getByRole('article'))
+    expect(quote).toHaveAttribute('aria-disabled', 'false')
+    fireEvent.click(quote)
+    expect(term.paste).toHaveBeenCalledWith('> The plan\n> Step one\n> Step two\n\n')
+    expect(term.focus).toHaveBeenCalled()
+    expect(status).toHaveTextContent('Quoted into your reply, not sent')
+
+    term.paste.mockReturnValueOnce(false)
+    fireEvent.click(quote)
+    expect(status).toHaveTextContent("The agent isn't in front in this terminal, so nothing was sent")
+    rerender(TWO_TABS(['api', 'web'], 'api', INSIGHTS, null, { ...session('api'), cmd: 'zsh' }))
+    expect(quote).toHaveAttribute('aria-disabled', 'true')
+    term.paste.mockClear()
+    fireEvent.click(quote)
+    expect(term.paste).not.toHaveBeenCalled()
+    expect(status).toHaveTextContent("The agent isn't in front in this terminal, so nothing was sent")
+    rerender(TWO_TABS(['api', 'web'], 'api'))
+
+    select(within(pane).getByRole('heading', { name: 'plan.md' }))
+    expect(quote).toHaveAttribute('aria-disabled', 'true')
+    document.getSelection()!.removeAllRanges()
+  })
+
+  it('says a long quote shows as pasted text in Claude Code', async () => {
+    const { pane, body } = await docked(`# The plan\n\n${'word '.repeat(200)}`)
+    const range = document.createRange()
+    range.selectNodeContents(within(body).getByRole('article'))
+    document.getSelection()!.removeAllRanges()
+    document.getSelection()!.addRange(range)
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    fireEvent.click(within(pane).getByRole('button', { name: 'Quote into reply' }))
+    expect(within(pane).getByRole('status')).toHaveTextContent('Claude Code shows a long quote as [Pasted text]')
+    document.getSelection()!.removeAllRanges()
+  })
+
+  it('waits to read an edit while its tab is hidden or text in it is selected', async () => {
+    const { rerender, body } = await docked()
+    const edited = new Map(INSIGHTS)
+    const api = INSIGHTS.get('api')!
+    edited.set('api', { ...api, files: [{ ...api.files![0], at: sec(1), count: 3 }, api.files![1]] })
+    const reads = () => vi.mocked(fetch).mock.calls.length
+    rerender(TWO_TABS(['api', 'web'], 'web', edited))
+    rerender(TWO_TABS(['api', 'web'], 'web', edited))
+    expect(reads()).toBe(1)
+    rerender(TWO_TABS(['api', 'web'], 'api', edited))
+    await waitFor(() => expect(reads()).toBe(2))
+
+    const range = document.createRange()
+    range.selectNodeContents(within(body).getByRole('article'))
+    document.getSelection()!.removeAllRanges()
+    document.getSelection()!.addRange(range)
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    const again = new Map(INSIGHTS)
+    again.set('api', { ...api, files: [{ ...api.files![0], at: sec(0), count: 4 }, api.files![1]] })
+    rerender(TWO_TABS(['api', 'web'], 'api', again))
+    expect(reads()).toBe(2)
+    document.getSelection()!.removeAllRanges()
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await waitFor(() => expect(reads()).toBe(3))
+  })
+
+  it('closes back to the terminal', async () => {
+    const { pane } = await docked()
+    fireEvent.click(within(pane).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(term.focus).toHaveBeenCalled()
+  })
+
+  describe('the divider', () => {
+    beforeEach(() => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ x: 0, y: 0, left: 0, top: 0, right: 1400, bottom: 800, width: 1400, height: 800, toJSON: () => ({}) })
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('resizes from the keyboard within what keeps 80 columns, remembers it, and resets on double-click', async () => {
+      await docked()
+      const divider = screen.getByRole('separator')
+      expect(divider).toHaveAttribute('aria-valuenow', '60')
+      fireEvent.focus(divider)
+      expect(divider).toHaveAttribute('aria-valuemin', '49')
+      expect(divider).toHaveAttribute('aria-valuemax', '74')
+      fireEvent.keyDown(divider, { key: 'ArrowLeft' })
+      expect(divider).toHaveAttribute('aria-valuenow', '58')
+      fireEvent.keyDown(divider, { key: 'Home' })
+      expect(divider).toHaveAttribute('aria-valuenow', '49')
+      fireEvent.keyDown(divider, { key: 'End' })
+      expect(divider).toHaveAttribute('aria-valuenow', '74')
+      expect(Number(localStorage.getItem('devbox.preview'))).toBeCloseTo(360 / 1400)
+      fireEvent.doubleClick(divider)
+      expect(divider).toHaveAttribute('aria-valuenow', '60')
+    })
+
+    it('holds the width while dragging, commits it on release, and closes when dragged off the edge', async () => {
+      const { container } = await docked()
+      const divider = screen.getByRole('separator')
+      const terminals = container.querySelector<HTMLElement>('.terminals')!
+      divider.setPointerCapture = vi.fn()
+      divider.hasPointerCapture = () => true
+      fireEvent.pointerDown(divider, { pointerId: 1 })
+      expect(terminals).toHaveAttribute('data-resizing')
+      const move = (clientX: number) => fireEvent(divider, Object.assign(new MouseEvent('pointermove', { bubbles: true, clientX }), { pointerId: 1 }))
+      move(800)
+      expect(terminals.style.getPropertyValue('--preview-f')).toBe(String(600 / 1400))
+      expect(divider).toHaveAttribute('aria-valuenow', '60')
+      fireEvent.pointerUp(divider, { pointerId: 1 })
+      expect(terminals).not.toHaveAttribute('data-resizing')
+      expect(divider).toHaveAttribute('aria-valuenow', '57')
+
+      fireEvent.pointerDown(divider, { pointerId: 1 })
+      move(1300)
+      expect(terminals).toHaveAttribute('data-collapse')
+      fireEvent.pointerUp(divider, { pointerId: 1 })
+      expect(screen.queryByRole('complementary')).toBeNull()
+      expect(terminals).not.toHaveAttribute('data-collapse')
+      expect(terminals.style.getPropertyValue('--preview-f')).toBe(String(600 / 1400))
+      expect(term.focus).toHaveBeenCalled()
+    })
+
+    it('lets the terminals fit again when the pane goes away mid-drag', async () => {
+      const { container, rerender } = await docked()
+      const divider = screen.getByRole('separator')
+      divider.setPointerCapture = vi.fn()
+      fireEvent.pointerDown(divider, { pointerId: 1 })
+      const terminals = container.querySelector<HTMLElement>('.terminals')!
+      expect(terminals).toHaveAttribute('data-resizing')
+      rerender(TWO_TABS(['web'], 'web'))
+      expect(terminals).not.toHaveAttribute('data-resizing')
+    })
   })
 })

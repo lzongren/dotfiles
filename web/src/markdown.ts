@@ -6,6 +6,7 @@ interface Env {
   dir: string
   ids: Set<string>
   tables: number
+  prefix: string
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, highlight: (code, lang) => highlight(code, lang.trim().split(/\s+/)[0] || null) ?? '' })
@@ -72,7 +73,7 @@ md.renderer.rules.heading_open = (tokens, i, options, env: Env, self) => {
   const text = (tokens[i + 1]?.children ?? [])
     .map((t) => (t.type === 'text' || t.type === 'code_inline' ? t.content : t.type.endsWith('break') ? ' ' : ''))
     .join('')
-  const base = `md-${slug(text)}`
+  const base = `${env.prefix}md-${slug(text)}`
   let id = base
   for (let n = 1; env.ids.has(id); n++) id = `${base}-${n}`
   env.ids.add(id)
@@ -93,7 +94,7 @@ md.renderer.rules.link_open = (tokens, i, options, env: Env, self) => {
   const hash = href.indexOf('#')
   const anchor = path === env.file && hash >= 0 ? slug(decode(href.slice(hash + 1))) : ''
   token.attrs = (token.attrs ?? []).filter(([name]) => name !== 'href')
-  if (anchor) token.attrs.push(...internal('data-anchor', `md-${anchor}`))
+  if (anchor) token.attrs.push(...internal('data-anchor', `${env.prefix}md-${anchor}`))
   else if (path && path !== env.file) token.attrs.push(...internal('data-path', path))
   else {
     token.tag = 'span'
@@ -122,8 +123,8 @@ md.renderer.rules.image = (tokens: Token[], i, options, env: Env, self) => {
   return `<a href="${md.utils.escapeHtml(src)}" class="md-image" target="_blank" rel="noopener noreferrer">image: ${alt}</a>`
 }
 
-export function renderMarkdown(text: string, file: string): string {
+export function renderMarkdown(text: string, file: string, prefix = ''): string {
   const at = resolvePath('/', file)
-  const env: Env = { file: at, dir: at.slice(0, at.lastIndexOf('/')) || '/', ids: new Set(), tables: 0 }
+  const env: Env = { file: at, dir: at.slice(0, at.lastIndexOf('/')) || '/', ids: new Set(), tables: 0, prefix }
   return md.render(text, env).replace(/<pre>/g, '<pre tabindex="0">')
 }

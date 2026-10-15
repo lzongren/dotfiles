@@ -8,6 +8,7 @@ import { ConnectionStatus, INSIGHTS_STALE_MS, type Cause, type Failure } from '.
 import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
+import type { FileRef } from './components/FilePreview'
 import { Notes } from './components/Notes'
 import { ThemePicker } from './components/ThemePicker'
 import { WorkspacePalette } from './components/WorkspacePalette'
@@ -102,6 +103,7 @@ export function App() {
   const [insights, setInsights] = useState<Map<string, AgentInsight>>(() => new Map())
   const [seenVersion, setSeenVersion] = useState(0)
   const [sidebarWidth, setSidebarWidth] = useState(storedWidth)
+  const [dock, setDock] = useState<FileRef | null>(null)
   const insightsAt = useRef(0)
   const failing = useRef(false)
 
@@ -133,6 +135,13 @@ export function App() {
     setActiveTab(name)
     setOpenCount((n) => n + 1)
   }, [seen])
+  const openBeside = useCallback(
+    (file: FileRef) => {
+      openTerminal(file.session)
+      setDock(file)
+    },
+    [openTerminal],
+  )
   const closeTerminal = useCallback(
     (name: string) => {
       const index = tabs.indexOf(name)
@@ -297,6 +306,7 @@ export function App() {
           now={now}
           counts={{ needs: lane('blocked'), working: lane('working'), fresh: lane('ready') }}
           seenAt={seenAt}
+          dock={dock}
           onSelect={setActiveTab}
           onClose={closeTerminal}
         />
@@ -309,6 +319,7 @@ export function App() {
             visible={activeTab === null}
             onOpen={openTerminal}
             onSeen={seen}
+            onDock={openBeside}
           />
         </div>
       </main>
