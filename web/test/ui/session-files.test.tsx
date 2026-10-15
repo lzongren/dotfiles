@@ -199,7 +199,9 @@ async function docked(text = '# The plan') {
   })
   const pane = screen.getByRole('complementary', { name: 'plan.md' })
   await within(pane).findByRole('heading', { name: 'The plan' })
-  return { ...view, pane, body: within(pane).getByRole('region', { name: 'plan.md' }) }
+  const body = within(pane).getByRole('region', { name: 'plan.md' })
+  await waitFor(() => expect(body).toHaveFocus())
+  return { ...view, pane, body }
 }
 
 describe('a file open beside the terminal', () => {

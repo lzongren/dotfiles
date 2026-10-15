@@ -280,7 +280,6 @@ export function App() {
         />
         <ThemePicker />
       </header>
-      {status}
       <aside className="sidebar">
         <div className="sidebar-sessions">
           <SessionList
@@ -292,6 +291,7 @@ export function App() {
             onAttach={openTerminal}
           />
         </div>
+        {status}
         <Notes />
         <SidebarHandle width={sidebarWidth} onWidth={setSidebarWidth} />
       </aside>

@@ -17,6 +17,7 @@ export interface Feed {
 }
 
 export const SLOW_MS = 3000
+export const WAIT_MS = 10_000
 export const RECOVERED_MS = 6000
 export const INSIGHTS_STALE_MS = 60_000
 
@@ -92,21 +93,22 @@ function noticeOf(sessions: Feed, insights: Feed, agentStates: boolean, host: st
       live: `${title}.`,
     }
   }
-  if (sessions.pendingSince !== null && now - sessions.pendingSince >= SLOW_MS) {
-    const waited = secs(now - sessions.pendingSince)
-    return sessions.okAt === null
-      ? {
-          tone: 'info',
-          title: `Waiting on ${host || 'your dev host'}`,
-          state: `No answer yet (${waited}). ssh through a VPN or proxy can be slow; the dashboard keeps trying.`,
-          live: '',
-        }
-      : {
-          tone: 'info',
-          title: `Waiting on ${host || 'your dev host'}`,
-          state: `Showing sessions as of ${age(now, sessions.okAt)} ago; the refresh has had no answer for ${waited}.`,
-          live: '',
-        }
+  const waited = sessions.pendingSince === null ? 0 : now - sessions.pendingSince
+  if (sessions.okAt === null && waited >= SLOW_MS) {
+    return {
+      tone: 'info',
+      title: `Waiting on ${host || 'your dev host'}`,
+      state: `No answer yet (${secs(waited)}). ssh through a VPN or proxy can be slow; the dashboard keeps trying.`,
+      live: '',
+    }
+  }
+  if (sessions.okAt !== null && waited >= WAIT_MS) {
+    return {
+      tone: 'info',
+      title: `Waiting on ${host || 'your dev host'}`,
+      state: `Showing sessions as of ${age(now, sessions.okAt)} ago; the refresh has had no answer for ${secs(waited)}.`,
+      live: '',
+    }
   }
   if (sessions.okAt === null) return { tone: 'info', title: 'Loading sessions…', live: '' }
   if (insights.failure) {
@@ -157,7 +159,7 @@ export function ConnectionStatus({
   return (
     <div className={page ? 'conn-slot conn-slot-page' : 'conn-slot'}>
       {notice ? (
-        <section className={`conn conn-${notice.tone}`} aria-label="connection status">
+        <section className={`conn conn-${notice.tone}`} aria-label="connection status" tabIndex={0}>
           <div className="conn-main">
             <Title className="conn-title">{notice.title}</Title>
             {notice.state ? <span className="conn-state">{notice.state}</span> : null}
