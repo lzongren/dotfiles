@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getNote, getNoteDays, putNote, type ApiResult } from '../api'
+import { explain, getNote, getNoteDays, putNote, retriable } from '../api'
 import { Icon } from './Icon'
 import { ignoredTarget } from './Overview'
 
@@ -76,10 +76,6 @@ function dayLabel(day: string, today: string): string {
 
 function openItems(text: string): string[] {
   return text.match(OPEN_ITEM) ?? []
-}
-
-function retriable(result: ApiResult<unknown>): boolean {
-  return result.kind === 'network' || result.kind === 'unreachable' || (result.kind === 'error' && (result.status ?? 500) >= 500)
 }
 
 export function Notes() {
@@ -193,7 +189,7 @@ export function Notes() {
       else if (retriable(result)) {
         setPhase({ kind: 'offline' })
         retry.current = window.setTimeout(() => void save(), RETRY_MS)
-      } else setPhase({ kind: 'rejected', text: job.text, problem: result.kind === 'error' ? result.message : 'reload the dashboard' })
+      } else setPhase({ kind: 'rejected', text: job.text, problem: explain(result) })
     }
     chain.current = chain.current.then(step).catch(() => undefined)
     return chain.current

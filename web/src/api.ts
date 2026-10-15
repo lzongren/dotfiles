@@ -41,6 +41,20 @@ export async function fetchJson<T>(path: string, init: { method?: string; body?:
   return { kind: 'ok', data: body }
 }
 
+const EXPIRED = "this tab's link expired — run devbox web for a fresh one"
+const SERVER_DOWN = "the dashboard server isn't answering — run devbox web"
+
+export function explain(result: ApiResult<unknown>): string {
+  if (result.kind === 'ok') return ''
+  if (result.kind === 'unauthorized') return EXPIRED
+  if (result.kind === 'network') return SERVER_DOWN
+  return result.message
+}
+
+export function retriable(result: ApiResult<unknown>): boolean {
+  return result.kind === 'network' || result.kind === 'unreachable' || (result.kind === 'error' && (result.status ?? 500) >= 500)
+}
+
 export function getSessions(): Promise<ApiResult<SessionsResponse>> {
   return fetchJson<SessionsResponse>('/api/sessions')
 }

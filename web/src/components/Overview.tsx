@@ -443,7 +443,6 @@ export function Overview({
   now,
   seenAt,
   visible = true,
-  notice,
   onOpen,
   onSeen,
 }: {
@@ -452,7 +451,6 @@ export function Overview({
   now: number
   seenAt: (name: string) => number
   visible?: boolean
-  notice?: string | null
   onOpen: (name: string) => void
   onSeen: (names: string[]) => void
 }) {
@@ -630,9 +628,6 @@ export function Overview({
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) rerender()
         }}
       >
-        <p className="overview-notice" role="status" hidden={!notice}>
-          {notice}
-        </p>
         {SECTIONS.map(({ kind, title, empty }) =>
           (kind === 'recent' || kind === 'new') && count(kind) === 0 ? null : (
             <section key={kind} className={`lane lane-${kind}`} aria-labelledby={`lane-${kind}`}>

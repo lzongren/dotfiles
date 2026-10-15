@@ -168,7 +168,7 @@ kbd {
 .app {
   display: grid;
   grid-template-columns: min(var(--sidebar-w, 320px), 50vw) 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   height: 100vh;
   background: var(--s-frame);
 }
@@ -1251,16 +1251,6 @@ kbd {
   white-space: nowrap;
 }
 
-.overview-notice {
-  background: var(--bell-bg);
-  border: 1px solid var(--bell);
-  border-radius: 8px;
-  color: var(--bell);
-  font-size: 13px;
-  margin: 0 0 16px;
-  padding: 8px 12px;
-}
-
 .group {
   margin-top: 24px;
 }
@@ -2302,7 +2292,7 @@ details.fact[open] > summary {
 @media (max-width: 760px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 40vh 1fr;
+    grid-template-rows: auto auto 40vh 1fr;
   }
 
   .sidebar {
@@ -2398,4 +2388,118 @@ details.fact[open] > summary {
 
 .hljs-emphasis {
   font-style: italic;
+}
+
+.conn-slot {
+  grid-column: 1 / -1;
+}
+
+.conn {
+  margin: 0 8px 8px 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.conn-warn {
+  background: var(--bell-bg);
+  border-color: var(--bell);
+  color: var(--bell);
+}
+
+.conn-info {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.conn-ok {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.conn p {
+  color: inherit;
+}
+
+.conn-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.conn-title {
+  font-weight: 600;
+}
+
+.conn-hint {
+  margin: 2px 0 0;
+}
+
+.conn-detail {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.conn code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  font-weight: 600;
+}
+
+.conn-retry {
+  height: 26px;
+  background: var(--tile);
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: 8px;
+  padding: 0 10px;
+}
+
+.conn-retry:hover {
+  background: var(--raised);
+}
+
+.conn-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.conn-slot-page .conn {
+  margin: 0;
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+
+.conn-slot-page .conn-warn {
+  border-color: var(--bell);
+}
+
+.conn-slot-page .conn-main {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.conn-slot-page .conn-title {
+  font-size: 16px;
+  margin: 0;
+}
+
+.conn-slot-page .conn-retry {
+  height: 32px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  padding: 0 12px;
+}
+
+.conn-slot-page .conn-hint {
+  margin-top: 10px;
 }

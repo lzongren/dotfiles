@@ -210,6 +210,22 @@ describe('agent files', () => {
     renderOverview()
     fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'shot.png' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('No such file or directory')
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('says when the host cannot be reached for a file, and reads it again on request', async () => {
+    let down = true
+    vi.mocked(fetch).mockImplementation(async () =>
+      down ? Response.json({ error: 'remote_unreachable', message: 'host unreachable' }, { status: 502 }) : Response.json(views['/tmp/shot.png']),
+    )
+    renderOverview()
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'shot.png' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'shot.png' }))
+    expect(await dialog.findByRole('alert')).toHaveTextContent("Can't reach the host to read this file. Check your VPN or proxy sign-in, then try again.")
+    down = false
+    fireEvent.click(dialog.getByRole('button', { name: 'Try again' }))
+    expect(await dialog.findByRole('img', { name: 'shot.png' })).toBeInTheDocument()
+    expect(dialog.queryByRole('alert')).toBeNull()
   })
 
   it('keeps overview keys from acting behind the open preview', async () => {

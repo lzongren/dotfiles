@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
-import { getFile, openFile, type ApiResult } from '../api'
+import { explain, getFile, openFile, retriable, type ApiResult } from '../api'
 import type { FileTouch, FileView } from '../shared/types'
 import { highlight, languageOf } from '../highlight'
 import { renderMarkdown } from '../markdown'
@@ -17,7 +17,7 @@ function size(bytes: number): string {
 }
 
 function failure(r: ApiResult<unknown>): string {
-  return r.kind === 'unauthorized' ? 'server restarted — run devbox web' : r.kind === 'ok' ? '' : r.message
+  return r.kind === 'unreachable' ? "Can't reach the host to read this file. Check your VPN or proxy sign-in, then try again." : explain(r)
 }
 
 function baseName(file: string): string {
@@ -263,6 +263,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
   const [note, setNote] = useState('')
   const [source, setSource] = useState(false)
   const [wrap, setWrap] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   const path = trail[trail.length - 1]
   const latestNote = () => {
     const at = ++noteSeq.current
@@ -297,7 +298,7 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
     return () => {
       live = false
     }
-  }, [file.session, path])
+  }, [file.session, path, attempt])
 
   useEffect(() => {
     if (moved.current) title.current?.focus()
@@ -407,6 +408,11 @@ export function FilePreview({ file, known, onClose }: { file: FileRef; known: st
         {result && result.kind !== 'ok' ? (
           <p role="alert" className="banner">
             {failure(result)}
+            {retriable(result) ? (
+              <button type="button" className="conn-retry" onClick={() => setAttempt((n) => n + 1)}>
+                Try again
+              </button>
+            ) : null}
           </p>
         ) : null}
         {view?.kind === 'text' && view.text !== undefined ? (

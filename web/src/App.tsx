@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { getInsights, getSessions } from './api'
+import { getInsights, getSessions, type ApiResult } from './api'
 import type { AgentInsight, SessionsResponse } from './shared/types'
 import { changeMark, laneOf, loadSeen, markSeen, type Lane } from './insights'
+import { usePoll } from './poll'
+import { initToken } from './token'
+import { ConnectionStatus, INSIGHTS_STALE_MS, type Cause, type Failure } from './components/ConnectionStatus'
 import { Overview } from './components/Overview'
 import { SessionList } from './components/SessionList'
 import { TerminalTabs } from './components/TerminalTabs'
@@ -9,9 +12,9 @@ import { Notes } from './components/Notes'
 import { ThemePicker } from './components/ThemePicker'
 import { WorkspacePalette } from './components/WorkspacePalette'
 
-type Cause = 'remote' | 'local' | 'probe'
+const SESSIONS_POLL_MS = 5000
+const INSIGHTS_POLL_MS = 15000
 
-const INSIGHTS_STALE_MS = 60_000
 const SIDEBAR_KEY = 'devbox.sidebar'
 const SIDEBAR = { min: 200, initial: 320, max: 640 }
 
@@ -68,24 +71,39 @@ function SidebarHandle({ width, onWidth }: { width: number; onWidth: (n: number)
   )
 }
 
-type View =
-  | { phase: 'loading' }
-  | { phase: 'unauthorized' }
-  | { phase: 'down'; cause: Cause; message: string }
-  | { phase: 'ready'; data: SessionsResponse; staleSince: number | null; staleCause: Cause | null }
+interface Health {
+  okAt: number | null
+  failure: Failure | null
+}
+
+const UNKNOWN: Health = { okAt: null, failure: null }
+
+function causeOf(result: Exclude<ApiResult<unknown>, { kind: 'ok' }>): Cause {
+  if (result.kind === 'unauthorized') return 'auth'
+  if (result.kind === 'unreachable') return 'remote'
+  return result.kind === 'network' ? 'local' : 'probe'
+}
+
+function failed(prev: Health, result: Exclude<ApiResult<unknown>, { kind: 'ok' }>, at: number): Health {
+  const message = result.kind === 'unauthorized' ? '' : result.message
+  return { okAt: prev.okAt, failure: { cause: causeOf(result), message, since: prev.failure?.since ?? at } }
+}
 
 export function App() {
-  const [view, setView] = useState<View>({ phase: 'loading' })
+  const [data, setData] = useState<SessionsResponse | null>(null)
+  const [sessionsHealth, setSessionsHealth] = useState<Health>(UNKNOWN)
+  const [insightsHealth, setInsightsHealth] = useState<Health>(UNKNOWN)
+  const [recoveredAt, setRecoveredAt] = useState<number | null>(null)
+  const [recoveries, setRecoveries] = useState(0)
   const [now, setNow] = useState(() => Date.now())
   const [tabs, setTabs] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const [openCount, setOpenCount] = useState(0)
   const [insights, setInsights] = useState<Map<string, AgentInsight>>(() => new Map())
-  const [insightsNotice, setInsightsNotice] = useState<string | null>(null)
   const [seenVersion, setSeenVersion] = useState(0)
   const [sidebarWidth, setSidebarWidth] = useState(storedWidth)
   const insightsAt = useRef(0)
-  const lastGood = useRef<SessionsResponse | null>(null)
+  const failing = useRef(false)
 
   const latest = useRef<{ sessions: SessionsResponse['sessions']; insights: Map<string, AgentInsight> }>({
     sessions: [],
@@ -127,66 +145,73 @@ export function App() {
 
   const refresh = useCallback(async () => {
     const result = await getSessions()
+    const at = Date.now()
     if (result.kind === 'ok') {
-      lastGood.current = result.data
-      setView({ phase: 'ready', data: result.data, staleSince: null, staleCause: null })
-      return
-    }
-    if (result.kind === 'unauthorized') {
-      setView({ phase: 'unauthorized' })
-      return
-    }
-    const cause: Cause = result.kind === 'unreachable' ? 'remote' : result.kind === 'network' ? 'local' : 'probe'
-    const message = result.message
-    setView((prev) => {
-      if (lastGood.current) {
-        const since = prev.phase === 'ready' && prev.staleSince !== null ? prev.staleSince : Date.now()
-        return { phase: 'ready', data: lastGood.current, staleSince: since, staleCause: cause }
+      setData(result.data)
+      setSessionsHealth({ okAt: at, failure: null })
+      if (failing.current) {
+        setRecoveredAt(at)
+        setRecoveries((n) => n + 1)
       }
-      return { phase: 'down', cause, message }
-    })
+      failing.current = false
+      return true
+    }
+    failing.current = true
+    setSessionsHealth((prev) => failed(prev, result, at))
+    return result.kind !== 'unauthorized'
   }, [])
 
   const refreshInsights = useCallback(async () => {
     const result = await getInsights()
+    const at = Date.now()
     if (result.kind === 'ok' && Array.isArray(result.data.agents)) {
-      insightsAt.current = Date.now()
+      insightsAt.current = at
       setInsights(new Map(result.data.agents.map((a) => [a.session, a])))
-      setInsightsNotice(null)
+      setInsightsHealth({ okAt: at, failure: null })
     } else if (result.kind !== 'ok') {
-      if (Date.now() - insightsAt.current > INSIGHTS_STALE_MS) setInsights(new Map())
-      setInsightsNotice(result.kind === 'unauthorized' ? null : `agent details unavailable: ${result.message}`)
+      if (at - insightsAt.current > INSIGHTS_STALE_MS && !failing.current) setInsights(new Map())
+      setInsightsHealth((prev) => failed(prev, result, at))
     }
+    return result.kind !== 'unauthorized'
   }, [])
 
+  const sessionsPoll = usePoll(refresh, SESSIONS_POLL_MS)
+  const insightsPoll = usePoll(refreshInsights, INSIGHTS_POLL_MS)
+  const pollSessions = sessionsPoll.run
+  const pollInsights = insightsPoll.run
+  const retry = useCallback(() => {
+    pollSessions()
+    pollInsights()
+  }, [pollSessions, pollInsights])
+
   useEffect(() => {
-    void refresh()
-    void refreshInsights()
-    const poll = setInterval(() => {
-      void refresh()
-    }, 5000)
-    const insightsPoll = setInterval(() => {
-      void refreshInsights()
-    }, 15000)
+    if (recoveries > 0) pollInsights()
+  }, [recoveries, pollInsights])
+
+  useEffect(() => {
+    setNow(Date.now())
+  }, [sessionsPoll.pendingSince, sessionsPoll.nextAt, insightsPoll.pendingSince, insightsPoll.nextAt])
+
+  useEffect(() => {
     const tick = setInterval(() => {
       setNow(Date.now())
     }, 1000)
-    const onFocus = () => {
-      void refresh()
-      void refreshInsights()
+    const onHash = () => {
+      initToken()
+      retry()
     }
-    window.addEventListener('focus', onFocus)
+    window.addEventListener('focus', retry)
+    window.addEventListener('hashchange', onHash)
     return () => {
-      clearInterval(poll)
-      clearInterval(insightsPoll)
       clearInterval(tick)
-      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('focus', retry)
+      window.removeEventListener('hashchange', onHash)
     }
-  }, [refresh, refreshInsights])
+  }, [retry])
 
-  const host = view.phase === 'ready' ? view.data.host : ''
+  const host = data?.host ?? ''
   const lanes = new Map<Lane, number>()
-  for (const s of view.phase === 'ready' ? view.data.sessions : []) {
+  for (const s of data?.sessions ?? []) {
     const lane = laneOf(s, insights.get(s.name), seenAt(s.name), now)
     lanes.set(lane, (lanes.get(lane) ?? 0) + 1)
   }
@@ -205,38 +230,26 @@ export function App() {
     document.querySelector('link[rel="icon"]')?.setAttribute('href', waiting > 0 ? '/favicon-alert.svg' : '/favicon.svg')
   }, [waiting, activeTab, host])
 
-  if (view.phase === 'unauthorized') {
+  const status = (
+    <ConnectionStatus
+      sessions={{ ...sessionsHealth, pendingSince: sessionsPoll.pendingSince, nextAt: sessionsPoll.nextAt }}
+      insights={{ ...insightsHealth, pendingSince: insightsPoll.pendingSince, nextAt: insightsPoll.nextAt }}
+      host={host}
+      now={now}
+      recoveredAt={recoveredAt}
+      page={data === null}
+      onRetry={retry}
+    />
+  )
+  if (data === null) {
     return (
       <main className="notice">
         <h1>devbox</h1>
-        <p>server restarted — run devbox web</p>
-      </main>
-    )
-  }
-  if (view.phase === 'loading') {
-    return (
-      <main className="notice">
-        <h1>devbox</h1>
-        <p>loading sessions…</p>
-      </main>
-    )
-  }
-  if (view.phase === 'down') {
-    return (
-      <main className="notice">
-        <h1>devbox</h1>
-        <p role="alert" className="banner">
-          {view.cause === 'remote'
-            ? `host unreachable: ${view.message}`
-            : view.cause === 'local'
-              ? 'dashboard server unreachable — run devbox web'
-              : `probe failed: ${view.message}`}
-        </p>
+        {status}
       </main>
     )
   }
 
-  const { data, staleSince, staleCause } = view
   latest.current = { sessions: data.sessions, insights }
   return (
     <div className="app" style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}>
@@ -253,22 +266,11 @@ export function App() {
           sessions={data.sessions}
           now={now}
           onOpen={openTerminal}
-          onSessionsChanged={() => {
-            void refresh()
-          }}
+          onSessionsChanged={pollSessions}
         />
         <ThemePicker />
-        {staleSince !== null ? (
-          <p role="alert" className="banner">
-            {staleCause === 'local'
-              ? 'dashboard server stopped — run devbox web'
-              : staleCause === 'probe'
-                ? 'probe failed'
-                : 'host unreachable'}{' '}
-            — showing sessions as of {Math.max(0, Math.round((now - staleSince) / 1000))}s ago
-          </p>
-        ) : null}
       </header>
+      {status}
       <aside className="sidebar">
         <div className="sidebar-sessions">
           <SessionList
@@ -288,6 +290,7 @@ export function App() {
           tabs={tabs}
           active={activeTab}
           focusSignal={openCount}
+          reconnectSignal={recoveries}
           sessions={data.sessions}
           insights={insights}
           now={now}
@@ -303,7 +306,6 @@ export function App() {
             now={now}
             seenAt={seenAt}
             visible={activeTab === null}
-            notice={insightsNotice}
             onOpen={openTerminal}
             onSeen={seen}
           />

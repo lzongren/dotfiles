@@ -248,6 +248,28 @@ gets a suffix, as in `shot (1).png`, so nothing is overwritten, and new
 files are readable only by you. The tab says where each file landed. Files
 up to 50 MB; folders are skipped.
 
+When something goes wrong, a status line under the top bar says what failed,
+how old the data on screen is, when the next try is, and what to do; Retry
+now skips the wait. Before anything has loaded, the same message fills the
+page instead.
+
+```
+Can't reach HOST               ssh failed or timed out; the last sessions and
+                               agent states stay on screen "as of N ago", and
+                               it retries every 5 seconds
+The dashboard server isn't     the local server stopped; run devbox web
+  answering
+This tab's link has expired    the server restarted with a new token; run
+                               devbox web, or paste its new link into this tab
+Agent details unavailable      only the agent probe failed; tiles show the
+                               sessions without agent states until it recovers
+Waiting on HOST                a refresh has had no answer for 3 seconds
+```
+
+When the host answers again the line says so for a few seconds, and terminal
+tabs that had given up reconnect by themselves. A terminal tab's bar says why
+it is reconnecting, why it gave up, or why an attach was refused.
+
 ### Managing synced folders with `devbox sync`
 
 Add or remove Mutagen syncs without hand-editing the config:
