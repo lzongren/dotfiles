@@ -124,26 +124,52 @@ browser ──HTTP + WebSocket──► node server on 127.0.0.1:7733 (per-run t
                                  └─ terminal tab  ◄── ssh -t HOST tmux attach
 ```
 
-The home view is an overview that sorts sessions by whose move it is:
+The home view is an overview of tiles, laid out like a recommendations page:
 
 ```
-Blocked on you   an agent waiting on a permission prompt or question, or an
-                 error you haven't seen
-Ready to review  a finished turn you haven't seen, or a ringing shell
-Working          agents mid-turn
-Recent           everything else active this week, grouped by project folder
-Parked           idle over a week (collapsed)
+Needs you             agents waiting on a prompt or question, errors until
+                      they are resolved, and a shell bell you haven't seen
+Working               agents mid-turn
+New since you looked  finished turns you haven't seen
+Recent                everything else active this week, one scrolling shelf per topic
+Idle over a week      collapsed, one line per session
 ```
 
-Each card shows the agent's title, where it stands (Claude Code's away
-summary or its last reply), task progress, and the pull requests or reviews
-someone mentioned. Select one for the goal, the latest ask, and every
-artifact; `j`/`k` move, Enter opens the terminal, `e` marks it seen. "Seen"
+The sidebar, the Overview tab's counts and the overview all use these same
+sections. Needs you comes oldest wait first. New since you looked comes
+newest first but with lookalikes spread apart (maximal marginal relevance): a
+turn that shares an uncommon word in its name or folder, or much of its title,
+with a finished turn already above it gives way to a different piece of work,
+so one busy project can't fill the top; the rarer the shared word, the further
+it gives way. A topic is a word that several session names share, such as
+`Billing` in `0912_Billing_Retry` and `0915_Billing_Invoices`; words in over
+half of all names (and at least three) don't count. Shelves come freshest
+first, and sessions that share nothing are listed one per line under Ungrouped.
+
+Each tile carries its state as a mark, in a different shape for each state:
+
+| Mark | State |
+|---|---|
+| ! in a circle | waiting on you |
+| × in a circle | error |
+| bell | bell rang |
+| spinning arc | working (still under reduced motion) |
+| dotted ring | quiet: working, but no output for ten minutes |
+| dot | unseen turn |
+| none | seen or idle |
+
+Blocked and failed tiles also get a colored edge. A tile shows the reason when it is blocked or
+failed, the agent's title, where it stands (Claude Code's away summary or its
+last reply), task progress, and the pull requests or reviews someone
+mentioned; a quiet agent says how long it has been quiet. The model is named only when it differs from most sessions'.
+Hovering a tile offers Open and Mark seen. Select one for the goal, the latest
+ask, every artifact, and the other sessions on its topic; `j`/`k` or ←/→ move,
+Enter opens the terminal, `e` marks it seen. "Seen"
 lives in the browser and records how far the host had got, so a turn that
 ends later comes back. A selected card counts as seen after two seconds,
 opening its terminal or leaving its tab marks it too, and "Mark all seen"
-clears Ready to review. The lanes hold still while the pointer or focus is
-in them. With nothing selected, the side panel lists the latest artifacts
+clears New since you looked. The tiles hold still while the pointer
+or focus is on them. With nothing selected, the side panel lists the latest artifacts
 across sessions.
 
 Agent details come from a script streamed to the host's `python3` (3.7+, no
@@ -184,9 +210,19 @@ days. An empty day offers to carry over the previous day's unchecked
 `- [ ]` items. The tab title counts the sessions blocked on you or ready to
 review, and the tab icon gets a dot while there are any.
 
-The sidebar lists every session, most recent first, with a headline: the
-title the agent gives its terminal (Claude Code and Codex keep it current).
-Click one to open it in a terminal tab beside the list; each tab is an
+The sidebar lists every session under the same sections with their counts,
+one line each, with the same mark as its tile and how long it has been in
+that state. Needs-you rows are tinted and add the reason ("Permission
+prompt", "Error: rate_limit", "Bell rang"), and a quiet agent shows "quiet
+23m". Hover a row for its full name, headline (the title the agent gives its
+terminal, which Claude Code and Codex keep current), folder, and whether a
+terminal is attached. Drag the sidebar's edge to resize it, or focus the edge
+and use ←/→; double-click resets it. Open tabs carry the mark and a word for
+what needs you ("needs you", "error", "new", "quiet 23m"), and the Overview
+tab counts what needs you, what is working, and what is new. Tabs shrink to
+fit like browser tabs, cutting the middle of the name and keeping its last
+word, and Delete closes the focused tab. The terminal bar shows where the
+agent stands. Click a row to open it in a terminal tab beside the list; each tab is an
 ordinary tmux client, so closing the tab detaches without touching the
 session. Dragging over text copies it to the laptop clipboard: tmux sends
 the selection back and the tab flashes "copied". As with `clipboard-write`

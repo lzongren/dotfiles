@@ -10,6 +10,7 @@ import {
   loadSeen,
   markSeen,
   modelName,
+  plain,
   projectOf,
   rankArtifacts,
 } from '../../src/insights'
@@ -55,10 +56,10 @@ describe('laneOf', () => {
     expect(laneOf(session({ activityEpoch: sec(30 * 86400) }), agent({ state: 'waiting' }), sec(0), NOW)).toBe('blocked')
   })
 
-  it('blocks on a new error until you have seen it', () => {
+  it('blocks on an error until it is resolved, seen or not', () => {
     const failed = agent({ state: 'error', since: sec(100) })
     expect(laneOf(session(), failed, sec(500), NOW)).toBe('blocked')
-    expect(laneOf(session(), failed, sec(50), NOW)).toBe('recent')
+    expect(laneOf(session(), failed, sec(50), NOW)).toBe('blocked')
   })
 
   it('offers a finished turn for review until you have seen it', () => {
@@ -78,7 +79,7 @@ describe('laneOf', () => {
 
   it('falls back to the bell when the probe could not tell what the agent is doing', () => {
     const rang = session({ bell: true, activityEpoch: sec(30) })
-    expect(laneOf(rang, agent({ state: 'unknown', error: 'probe: boom' }), sec(60), NOW)).toBe('ready')
+    expect(laneOf(rang, agent({ state: 'unknown', error: 'probe: boom' }), sec(60), NOW)).toBe('blocked')
   })
 
   it('parks a week of inactivity, errors included', () => {
@@ -87,8 +88,8 @@ describe('laneOf', () => {
     expect(laneOf(old, agent({ state: 'error', since: sec(8 * 86400) }), 0, NOW)).toBe('parked')
   })
 
-  it('lets a ringing shell ask for review until you have seen it', () => {
-    expect(laneOf(session({ cmd: 'zsh', bell: true, activityEpoch: sec(30) }), undefined, sec(60), NOW)).toBe('ready')
+  it('lets a ringing shell ask for you until you have seen it', () => {
+    expect(laneOf(session({ cmd: 'zsh', bell: true, activityEpoch: sec(30) }), undefined, sec(60), NOW)).toBe('blocked')
     expect(laneOf(session({ cmd: 'zsh', bell: true, activityEpoch: sec(30) }), undefined, sec(10), NOW)).toBe('recent')
     expect(laneOf(session({ cmd: 'zsh' }), undefined, 0, NOW)).toBe('recent')
   })
@@ -189,6 +190,18 @@ describe('labels', () => {
     expect(displayTitle('', agent({ firstAsk: '/effort', ask: 'Fix the login' }))).toBe('Fix the login')
     expect(displayTitle('', agent({ ask: 'x'.repeat(100) }))).toHaveLength(80)
     expect(displayTitle('', undefined)).toBe('')
+    expect(displayTitle('', agent({ firstAsk: '/goal per https://chat.example/archives/C0123/p99, upgrade the eval' }))).toBe('per chat.example/…/p99, upgrade the eval')
+    expect(displayTitle('review https://code.example/pkg/x#L4', undefined)).toBe('review code.example/…/x')
+    expect(displayTitle('/review https://git.example/org/repo/pull/101', undefined)).toBe('/review git.example/…/101')
+    expect(displayTitle('see https://docs.example/intro', undefined)).toBe('see docs.example/intro')
+    expect(displayTitle('see https://docs.example/guide?tab=1', undefined)).toBe('see docs.example/guide')
+  })
+
+  it('flattens markdown tables, bold and code in a summary to one line of text', () => {
+    expect(plain('Runs: | Stage | Run |\n|---|---|\n| Gamma | **3/3** |, see `CR-9`')).toBe('Runs: Stage Run Gamma 3/3 , see CR-9')
+    expect(plain('edited `__init__.py`; guard with a || b')).toBe('edited __init__.py; guard with a || b')
+    expect(plain('use `x**2` and `y**3`')).toBe('use x**2 and y**3')
+    expect(plain('a | b\n--- | ---\n1 | 2')).toBe('a b 1 2')
   })
 
   it('shortens model ids', () => {

@@ -4,11 +4,20 @@ export type Lane = 'blocked' | 'ready' | 'working' | 'recent' | 'parked'
 
 const KEY = 'devbox.seen'
 const PARK_AFTER = 7 * 86400
+export const QUIET_AFTER = 600
 const FIRST_VISIT_LOOKBACK = 12 * 3600
 
 export function changeMark(session: Session, insight: AgentInsight | undefined): number {
   if (!insight) return session.activityEpoch
   return insight.turnAt ?? insight.since ?? session.activityEpoch
+}
+
+export function sinceOf(session: Session, insight: AgentInsight | undefined, lane: Lane): number {
+  return lane === 'recent' || lane === 'parked' ? session.activityEpoch : changeMark(session, insight)
+}
+
+export function heardAt(session: Session, insight: AgentInsight | undefined): number {
+  return Math.max(session.activityEpoch, changeMark(session, insight))
 }
 
 export function isFresh(session: Session, insight: AgentInsight | undefined, seenAt: number): boolean {
@@ -21,8 +30,9 @@ export function laneOf(session: Session, insight: AgentInsight | undefined, seen
   if (insight?.state === 'waiting') return 'blocked'
   if (insight?.state === 'working') return 'working'
   if (Math.floor(nowMs / 1000) - session.activityEpoch >= PARK_AFTER) return 'parked'
+  if (insight?.state === 'error') return 'blocked'
   if (!isFresh(session, insight, seenAt)) return 'recent'
-  return insight?.state === 'error' ? 'blocked' : 'ready'
+  return insight?.state === 'ready' ? 'ready' : 'blocked'
 }
 
 interface Stored {
@@ -101,10 +111,16 @@ export function openableCount(insight: AgentInsight): number {
 }
 
 export function displayTitle(paneHeadline: string, insight: AgentInsight | undefined): string {
-  if (insight?.title) return insight.title
-  if (paneHeadline) return paneHeadline
+  const hosts = (text: string) =>
+    text.replace(/https?:\/\/([^/\s,;)]+)([^\s,;)]*)/g, (_, host: string, path: string) => {
+      const parts = path.split(/[?#]/)[0].split('/').filter(Boolean)
+      const last = parts.at(-1) ?? ''
+      return last && last.length <= 16 ? `${host}/${parts.length > 1 ? '…/' : ''}${last}` : host
+    })
+  if (insight?.title) return hosts(insight.title)
+  if (paneHeadline) return hosts(paneHeadline)
   const ask = [insight?.firstAsk, insight?.ask]
-    .map((text) => (text ?? '').replace(/^\/[\w:-]+\s*/, '').trim())
+    .map((text) => hosts((text ?? '').replace(/^\/[\w:-]+\s*/, '')).trim())
     .find((text) => text !== '') ?? ''
   return ask.length > 80 ? `${ask.slice(0, 79)}…` : ask
 }
@@ -124,6 +140,18 @@ export function ledger(
     )
     .sort((a, b) => b.first - a.first)
     .slice(0, limit)
+}
+
+export function plain(text: string): string {
+  const bare = /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+$/gm
+  const table = /\|\s*:?-{3,}:?\s*\|/.test(text) || /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+$/m.test(text)
+  const flat = table ? text.replace(bare, ' ').replace(/(\|\s*:?-{3,}:?\s*)+\|?/g, ' ').replace(/\s*\|\s*/g, ' ') : text
+  return flat
+    .split(/(`[^`]+`)/)
+    .map((part, i) => (i % 2 ? part.slice(1, -1) : part.replace(/\*\*(.+?)\*\*/g, '$1')))
+    .join('')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
 }
 
 export function modelName(model: string): string {

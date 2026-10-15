@@ -1,13 +1,52 @@
 import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { uploadFile } from '../api'
-import { openableCount, shownArtifacts } from '../insights'
+import { heardAt, isFresh, openableCount, plain, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
+import { ago } from '../time'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
+import { Icon, StateIcon, toneOf, type Tone } from './Icon'
 import { ArtifactList } from './Overview'
+import { headline, sessionSummary } from './SessionList'
 import { TerminalPane } from './Terminal'
 
 const NOTE_MS = 8000
+const TONES: Record<Tone, string> = {
+  waiting: 'waiting on you',
+  bell: 'bell rang',
+  error: 'error',
+  working: 'working',
+  quiet: 'working, quiet',
+  fresh: 'new turn',
+  idle: '',
+}
+const WORDS: Partial<Record<Tone, string>> = { waiting: 'needs you', bell: 'bell', error: 'error', fresh: 'new' }
+
+export interface TabCounts {
+  needs: number
+  working: number
+  fresh: number
+}
+
+const undated = (name: string) => name.replace(/^\d{3,4}_(?=.)/, '')
+
+function TabName({ name, keepDate }: { name: string; keepDate: boolean }) {
+  const rest = keepDate ? name : undated(name)
+  let cut = 0
+  for (let i = rest.length - 1; i > 0 && !cut; i--) {
+    if (/[_\-\s.]/.test(rest[i - 1]) || (/[A-Z]/.test(rest[i]) && /[a-z\d]/.test(rest[i - 1]))) cut = rest.length - i <= 12 ? i : -1
+  }
+  const tail = cut > 0 ? rest.slice(cut) : ''
+  return (
+    <>
+      <span className="visually-hidden">{name}</span>
+      <span className="tab-name" aria-hidden="true" style={tail ? { minWidth: `max(64px, ${tail.length + 3}ch)` } : undefined}>
+        <span className="tab-head">{tail ? rest.slice(0, cut) : rest}</span>
+        {tail ? <span className="tab-tail">{tail}</span> : null}
+      </span>
+    </>
+  )
+}
 
 type UploadJob = { current: string; files: File[]; placed: Array<{ name: string; path: string }>; problems: string[] }
 
@@ -20,6 +59,8 @@ export function TerminalTabs({
   sessions,
   insights,
   now,
+  counts = { needs: 0, working: 0, fresh: 0 },
+  seenAt = () => Infinity,
   onSelect,
   onClose,
 }: {
@@ -29,6 +70,8 @@ export function TerminalTabs({
   sessions: Session[]
   insights: Map<string, AgentInsight>
   now: number
+  counts?: TabCounts
+  seenAt?: (name: string) => number
   onSelect: (name: string | null) => void
   onClose: (name: string) => void
 }) {
@@ -147,31 +190,87 @@ export function TerminalTabs({
   })
 
   if (tabs.length === 0) return null
+  const sums = [
+    { tone: 'waiting' as const, n: counts.needs, say: `${counts.needs} need${counts.needs === 1 ? 's' : ''} you` },
+    { tone: 'working' as const, n: counts.working, say: `${counts.working} working` },
+    { tone: 'fresh' as const, n: counts.fresh, say: `${counts.fresh} new` },
+  ].filter((c) => c.n > 0)
   return (
     <section className="terminals" data-overview={active === null}>
       <div className="tabstrip" role="tablist">
         <span className="tab" data-active={active === null}>
-          <button type="button" role="tab" aria-selected={active === null} onClick={() => onSelect(null)}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={active === null}
+            aria-describedby={sums.length ? `${id}-needs` : undefined}
+            onClick={() => onSelect(null)}
+          >
+            <Icon name="overview" />
             Overview
+            {sums.map((c) => (
+              <span key={c.tone} className="tab-sum" data-tone={c.tone} aria-hidden="true">
+                <StateIcon tone={c.tone} />
+                {c.n}
+              </span>
+            ))}
           </button>
-        </span>
-        {tabs.map((tab) => (
-          <span key={tab} className="tab" data-active={tab === active} data-drop={over === tab} {...zone(tab)}>
-            <button type="button" role="tab" aria-selected={tab === active} onClick={() => onSelect(tab)}>
-              {tab}
-            </button>
-            <button type="button" aria-label={`close ${tab}`} className="tab-close" onClick={() => onClose(tab)}>
-              ×
-            </button>
+          <span id={`${id}-needs`} hidden>
+            {sums.map((c) => c.say).join(', ')}
           </span>
-        ))}
+        </span>
+        {tabs.map((tab, index) => {
+          const row = sessions.find((s) => s.name === tab)
+          const insight = insights.get(tab)
+          const tone = row ? toneOf(row, insight, isFresh(row, insight, seenAt(tab)), now) : 'idle'
+          const label = TONES[tone]
+          const word = tone === 'quiet' && row ? `quiet ${ago(now, heardAt(row, insight))}` : WORDS[tone]
+          return (
+            <span key={tab} className="tab" data-active={tab === active} data-drop={over === tab} {...zone(tab)}>
+              <span id={`${id}-tone-${index}`} hidden>
+                {label}
+              </span>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === active}
+                aria-describedby={label ? `${id}-tone-${index}` : undefined}
+                aria-keyshortcuts="Delete Backspace"
+                title={`${tab}\nDelete or Backspace closes this tab`}
+                onClick={() => onSelect(tab)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Delete' && event.key !== 'Backspace') return
+                  event.preventDefault()
+                  const all = [...(event.currentTarget.closest('[role=tablist]')?.querySelectorAll<HTMLElement>('[role=tab]') ?? [])]
+                  const at = all.indexOf(event.currentTarget)
+                  const next = all[at + 1] ?? all[at - 1]
+                  onClose(tab)
+                  requestAnimationFrame(() => next?.focus())
+                }}
+              >
+                <StateIcon tone={tone} />
+                <TabName name={tab} keepDate={tabs.some((t) => t !== tab && undated(t) === undated(tab))} />
+                {word ? (
+                  <span className="tab-word" data-tone={tone} aria-hidden="true">
+                    {word}
+                  </span>
+                ) : null}
+              </button>
+              <button type="button" tabIndex={-1} aria-label={`close ${tab}`} title={`Close ${tab}`} className="tab-close" onClick={() => onClose(tab)}>
+                <Icon name="x" size={14} />
+              </button>
+            </span>
+          )
+        })}
       </div>
       {tabs.map((tab, index) => {
         const insight = insights.get(tab)
         const open = filesOpen === tab && insight !== undefined
         const panel = `${id}-files-${index}`
         const artifacts = open ? shownArtifacts(insight) : []
-        const cwd = open ? (sessions.find((s) => s.name === tab)?.path ?? '') : ''
+        const row = sessions.find((s) => s.name === tab)
+        const cwd = open ? (row?.path ?? '') : ''
+        const lead = insight?.summary ? plain(insight.summary) : row ? headline(row) || sessionSummary(row).text : ''
         const files = open ? (insight.files ?? []).map((f) => ({ ...f, session: tab, cwd })) : []
         return (
           <div key={tab} className="termpane" style={{ display: tab === active ? 'flex' : 'none' }} data-drop={over === tab} {...zone(tab)}>
@@ -179,6 +278,7 @@ export function TerminalTabs({
               name={tab}
               active={tab === active}
               focusSignal={tab === active ? focusSignal : 0}
+              lead={lead ? <span className="terminal-lead">{lead}</span> : undefined}
               tools={
                 insight ? (
                   <div
@@ -201,8 +301,8 @@ export function TerminalTabs({
                       aria-controls={open ? panel : undefined}
                       onClick={() => setFilesOpen(open ? null : tab)}
                     >
-                      Artifacts{' '}
-                      <span className="files-count">{openableCount(insight)}</span>
+                      <Icon name="file" size={14} />
+                      Artifacts <span className="files-count">{openableCount(insight)}</span>
                     </button>
                     {open ? (
                       <section id={panel} className="files-panel" aria-label={`${tab} artifacts`}>

@@ -74,11 +74,12 @@ function renderOverview() {
 }
 
 describe('agent files', () => {
-  it('counts files on the card and lists recent live ones across sessions', () => {
+  it('lists recent live files across sessions, and counts the files of a session in its details', () => {
     renderOverview()
-    expect(screen.getByRole('button', { name: 'Ship the API' })).toHaveTextContent('3 files')
     const panel = within(screen.getByRole('complementary', { name: 'session details' }))
     expect(panel.getAllByRole('button').map((b) => b.textContent)).toEqual(['shot.png', 'plan.md', 'x.ts'])
+    fireEvent.click(screen.getByRole('button', { name: 'Ship the API' }))
+    expect(within(screen.getByRole('article', { name: 'api details' })).getByRole('heading', { name: 'Files 3' })).toBeInTheDocument()
   })
 
   it('lists the selected session files relative to its folder and leaves gone ones unclickable', () => {

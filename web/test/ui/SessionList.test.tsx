@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { headline, SessionList, sessionSummary } from '../../src/components/SessionList'
-import type { Session } from '../../src/shared/types'
+import type { AgentInsight, Session } from '../../src/shared/types'
 import { ago } from '../../src/time'
 
 const NOW = 1800000000
@@ -71,16 +71,102 @@ describe('SessionList', () => {
     expect(screen.getByRole('button', { name: /old/ })).toHaveTextContent('zsh · /home/me')
   })
 
-  it('shows client count, idle time, and a bell badge with one polite announcement', () => {
+  it('shows idle time and a ringing bell with one polite announcement, and leaves attached clients to the tooltip', () => {
     const { container } = { container: document.body }
     renderList()
     const row = screen.getByRole('button', { name: /cc-demo/ })
-    expect(row).toHaveTextContent('×2')
     expect(row).toHaveTextContent('2m')
-    expect(row.querySelector('.bell-badge')).toHaveTextContent('bell')
+    expect(row).toHaveAccessibleName(/cc-demo.*bell.*attached/)
+    expect(row.querySelector('.session-bell')).not.toBeNull()
+    expect(row).toHaveAttribute('title', expect.stringContaining('attached in 2 terminals'))
     const regions = container.querySelectorAll('[aria-live="polite"]')
     expect(regions).toHaveLength(1)
     expect(regions[0]).toHaveTextContent('cc-demo needs attention')
+  })
+
+  it('keeps a bell and an attached client visible even when the agent state wins the mark', () => {
+    const ringing = session({ name: 'ring', bell: true, attached: true, clients: 1, cmd: 'claude' })
+    const insights = new Map([['ring', { session: 'ring', agent: 'claude' as const, state: 'ready' as const, artifacts: [], commits: 0 }]])
+    render(<SessionList sessions={[ringing]} insights={insights} now={NOW * 1000} active={null} onAttach={vi.fn()} />)
+    const row = screen.getByRole('button', { name: /ring/ })
+    expect(row.querySelector('.session-bell')).not.toBeNull()
+    expect(row).toHaveAccessibleName(/bell.*attached/)
+  })
+
+  it('groups sessions under Needs you, Working, New, Recent and a collapsed Idle, each with a count', () => {
+    const agent = (name: string, over: Partial<AgentInsight>): [string, AgentInsight] => [
+      name,
+      { session: name, agent: 'claude', artifacts: [], commits: 0, state: 'ready', ...over },
+    ]
+    const insights = new Map<string, AgentInsight>([
+      agent('wait', { state: 'waiting', since: NOW - 500, waitingFor: 'permission prompt' }),
+      agent('boom', { state: 'error', since: NOW - 2000, error: 'rate_limit' }),
+      agent('build', { state: 'working', since: NOW - 60 }),
+      agent('stuck', { state: 'working', since: NOW - 1600 }),
+      agent('done', { turnAt: NOW - 100 }),
+    ])
+    const sessions = [
+      session({ name: 'wait', cmd: 'claude' }),
+      session({ name: 'boom', cmd: 'claude', activityEpoch: NOW - 2000 }),
+      session({ name: 'build', cmd: 'claude' }),
+      session({ name: 'stuck', cmd: 'claude', activityEpoch: NOW - 1500 }),
+      session({ name: 'done', cmd: 'claude' }),
+      session({ name: 'ring', bell: true }),
+      session({ name: 'shell' }),
+      session({ name: 'ancient', activityEpoch: NOW - 8 * 86400 }),
+    ]
+    render(<SessionList sessions={sessions} insights={insights} now={NOW * 1000} seenAt={() => NOW - 1000} active={null} onAttach={vi.fn()} />)
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual([
+      'Needs you 3',
+      'Working 2',
+      'New since you looked 1',
+      'Recent 1',
+      'Idle over a week 1',
+    ])
+    const needs = within(screen.getByRole('group', { name: 'Needs you 3' })).getAllByRole('button')
+    expect(needs.map((r) => r.querySelector('.session-why')?.textContent)).toEqual(['Error: rate_limit', 'Permission prompt', 'Bell rang'])
+    expect(screen.getByRole('button', { name: /stuck/ })).toHaveTextContent('quiet 25m')
+    expect(screen.queryByRole('button', { name: /ancient/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Idle over a week 1' }))
+    expect(screen.getByRole('button', { name: /ancient/ })).toBeInTheDocument()
+  })
+
+  it('keeps a row in its section while held so nothing moves under the pointer, then moves it', () => {
+    const working = new Map<string, AgentInsight>([['b', { session: 'b', agent: 'claude', artifacts: [], commits: 0, state: 'working', since: NOW - 60 }]])
+    const sessions = [session({ name: 'a', activityEpoch: NOW - 10 }), session({ name: 'b', cmd: 'claude' }), session({ name: 'c', activityEpoch: NOW - 50 })]
+    const props = { now: NOW * 1000, seenAt: () => NOW, active: null, onAttach: vi.fn() }
+    const view = render(<SessionList sessions={sessions} insights={working} {...props} />)
+    fireEvent.mouseEnter(screen.getByRole('navigation'))
+    const waiting = new Map([['b', { ...working.get('b')!, state: 'waiting' as const }]])
+    const reordered = [session({ name: 'a', activityEpoch: NOW - 90 }), sessions[1], sessions[2]]
+    view.rerender(<SessionList sessions={reordered} insights={waiting} {...props} />)
+    const headings = () => screen.getAllByRole('heading').map((h) => h.textContent)
+    expect(headings()).toEqual(['Nothing needs you', 'Working 1', 'Recent 2'])
+    expect(within(screen.getByRole('group', { name: 'Recent 2' })).getAllByRole('button').map((r) => r.querySelector('.session-name')?.textContent)).toEqual(['a', 'c'])
+    fireEvent.mouseLeave(screen.getByRole('navigation'))
+    expect(headings()).toEqual(['Needs you 1', 'Recent 2'])
+  })
+
+  it('does not hold while focus is on a section toggle, only on a row', () => {
+    const sessions = [session({ name: 'a' }), session({ name: 'old', activityEpoch: NOW - 8 * 86400 })]
+    const props = { now: NOW * 1000, seenAt: () => NOW, active: null, onAttach: vi.fn() }
+    const view = render(<SessionList sessions={sessions} {...props} />)
+    screen.getByRole('button', { name: /Idle over a week/ }).focus()
+    view.rerender(<SessionList sessions={[...sessions, session({ name: 'ring', bell: true, activityEpoch: NOW + 5 })]} {...props} />)
+    expect(screen.getAllByRole('heading')[0]).toHaveTextContent('Needs you 1')
+  })
+
+  it('keeps the open session visible inside a collapsed section, and counts attached terminals in the tooltip', () => {
+    const old = session({ name: 'old', activityEpoch: NOW - 8 * 86400, attached: true, clients: 2 })
+    render(<SessionList sessions={[session({ name: 'a' }), old, session({ name: 'older', activityEpoch: NOW - 9 * 86400 })]} now={NOW * 1000} active="old" onAttach={vi.fn()} />)
+    const idle = within(screen.getByRole('group', { name: /Idle over a week/ }))
+    expect(idle.getAllByRole('button').map((b) => b.querySelector('.session-name')?.textContent ?? b.getAttribute('aria-expanded'))).toEqual(['false', 'old'])
+    expect(idle.getByRole('button', { name: /^old/ })).toHaveAttribute('title', expect.stringContaining('attached in 2 terminals'))
+  })
+
+  it('says so when nothing needs you', () => {
+    renderList()
+    expect(screen.getAllByRole('heading')[0]).toHaveTextContent('Nothing needs you')
   })
 
   it('attaches on click, but not for a name the web cannot use', () => {
@@ -96,7 +182,7 @@ describe('SessionList', () => {
 
   it('keeps the full path in the tooltip of attachable rows', () => {
     renderList()
-    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('title', '/home/me/work/demo')
+    expect(screen.getByRole('button', { name: /cc-demo/ })).toHaveAttribute('title', expect.stringMatching(/^cc-demo\n.*\n\/home\/me\/work\/demo(\n|$)/))
   })
 
   it('marks the session whose tab is active', () => {

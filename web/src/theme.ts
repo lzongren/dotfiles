@@ -70,8 +70,8 @@ type TerminalLook = Pick<
 const STORE = 'devbox.look'
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 const TOKENS = [
-  '--bg', '--surface', '--raised', '--selected', '--text', '--dim', '--accent', '--bell', '--border', '--control',
-  '--term-bg', '--bell-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono', '--term-pad',
+  '--bg', '--surface', '--tile', '--raised', '--selected', '--text', '--dim', '--accent', '--bell', '--border', '--control',
+  '--term-bg', '--bell-bg', '--danger-bg', '--danger', '--on-accent', '--on-bell', '--on-danger', '--mono', '--term-pad',
   '--hl-keyword', '--hl-string', '--hl-number', '--hl-title', '--hl-type', '--hl-comment', '--hl-add', '--hl-del',
 ]
 const ANSI = [
@@ -177,26 +177,31 @@ export function uiTokens(p: Palette, more = false): Record<string, string> {
   const bg = readable(p.background, [edge], 7, away)
   const fg = p.foreground
   const surface = mix(bg, fg, 0.04)
+  const tile = dark ? mix(bg, fg, 0.07) : mix(bg, '#ffffff', 0.7)
   const raised = mix(bg, fg, 0.1)
-  const selected = mix(bg, p.ansi[4], 0.2)
+  const selected = mix(bg, p.ansi[4], dark ? 0.2 : 0.12)
   const bellBg = mix(bg, p.ansi[3], 0.2)
-  const surfaces = [bg, surface, raised, selected]
+  const dangerBg = mix(bg, p.ansi[1], 0.16)
+  const tints = [bellBg, dangerBg]
+  const surfaces = [bg, surface, tile, raised, selected]
   const text = (color: string, extra: string[] = []) => readable(color, [...surfaces, ...extra], 4.6, edge)
   const code = (i: number) => readable(p.ansi[i], [p.background], 4.6, edge)
   return {
     '--bg': bg,
     '--surface': surface,
+    '--tile': tile,
     '--raised': raised,
     '--selected': selected,
-    '--text': text(fg),
-    '--dim': text(mix(fg, bg, more ? 0.15 : 0.3)),
+    '--text': dark ? text(fg, tints) : readable(fg, [...surfaces, ...tints], 9, edge),
+    '--dim': text(mix(fg, bg, more ? 0.15 : 0.3), tints),
     '--accent': text(p.ansi[dark ? 12 : 4]),
-    '--bell': text(p.ansi[dark ? 11 : 3], [bellBg]),
-    '--danger': text(p.ansi[dark ? 9 : 1]),
+    '--bell': text(p.ansi[dark ? 11 : 3], tints),
+    '--danger': text(p.ansi[dark ? 9 : 1], tints),
     '--border': mix(bg, fg, more ? 0.35 : 0.16),
     '--control': readable(mix(bg, fg, more ? 0.6 : 0.4), [bg, surface], more ? 4.5 : 3.1, edge),
     '--term-bg': p.background,
     '--bell-bg': bellBg,
+    '--danger-bg': dangerBg,
     '--on-accent': bg,
     '--on-bell': bg,
     '--on-danger': bg,
