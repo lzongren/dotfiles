@@ -26,6 +26,10 @@ export function readLimit(file: string): number {
   return IMAGES[path.posix.extname(file).toLowerCase()] ? IMAGE_MAX : FILE_MAX
 }
 
+export function readOutputMax(file: string): number {
+  return Math.ceil(readLimit(file) / 3) * 4 + 64 * 1024
+}
+
 export function openable(file: string): boolean {
   return OPENABLE.has(path.extname(file).toLowerCase())
 }

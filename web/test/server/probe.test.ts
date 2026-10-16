@@ -60,19 +60,20 @@ beforeAll(() => {
     ['%11', 'fork', '1', '1', 'codex', '1', '/work/fork'],
     ['%12', 'poster', '1', '1', 'claude', '1', path.join(home, 'work/poster')],
     ['%13', 'cdxshot', '1', '1', 'codex', '1', path.join(home, 'work/cdxshot')],
+    ['%14', 'stale', '1', '1', 'claude', '1', path.join(home, 'work/stale')],
   ]
   write('work/fix/plan.md', '# plan\n')
   const work = (rel: string) => path.join(home, 'work/poster', rel)
-  const before = new Date('2026-10-12T09:00:00Z')
   write('work/poster/out/poster.png', 'png')
+  write('work/poster/out/chart.png', 'png')
   write('work/poster/poster.html', '<h1>poster</h1>')
   write('work/poster/reply-only.png', 'png')
-  write('work/poster/old-logo.png', 'png')
-  utimesSync(work('old-logo.png'), before, before)
+  write('work/poster/.playwright-mcp/shot.png', 'png')
+  write('work/poster/local.html', '<p>local</p>')
   write('work/poster/asked.png', 'png')
   write('work/poster/dir.png/keep', '')
   write('work/poster/build/reports/problems-report.html', '<p>report</p>')
-  write('work/cdxshot/shot.png', 'png')
+  write('work/cdxshot/sub/shot.png', 'png')
   write(
     `.claude/projects/${work('').replace(/[^a-zA-Z0-9]/g, '-')}/p1.jsonl`,
     [
@@ -83,7 +84,8 @@ beforeAll(() => {
         cwd: work(''),
         message: {
           content: [
-            { type: 'tool_use', name: 'Bash', input: { command: `cat > poster.html <<'EOF'\n<img src="old-logo.png">\nEOF\nnode -e "page.screenshot({ path: '${work('out/poster.png')}' })"` } },
+            { type: 'tool_use', name: 'Bash', input: { command: `cat > poster.html <<'EOF'\n<img src="*.png">\nEOF\nnode -e "page.screenshot({ path: '${work('out/poster.png')}' })"` } },
+            { type: 'tool_use', name: 'Bash', input: { command: 'cd out && python3 plot.py -o chart.png' } },
           ],
         },
       }),
@@ -92,8 +94,11 @@ beforeAll(() => {
         timestamp: at(2),
         cwd: work(''),
         message: { content: [{ type: 'tool_result' }] },
-        toolUseResult: { stdout: `see https://example.com/banner.png and dir.png\nreport: file://${work('build/reports/problems-report.html')}` },
+        toolUseResult: {
+          stdout: `see https://example.com/banner.png and dir.png\nreport: file://${work('build/reports/problems-report.html')}\nopen file://localhost${work('local.html')}`,
+        },
       }),
+      line({ type: 'user', timestamp: at(3), isSidechain: true, cwd: work(''), message: { role: 'user', content: 'Subagent: check .playwright-mcp/shot.png' } }),
       line({ type: 'assistant', timestamp: at(3), cwd: work(''), message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'python3 render.py --out later.png' } }] } }),
       line({ type: 'assistant', timestamp: at(4), cwd: work(''), message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'The poster is in ./reply-only.png and poster.html.' }] } }),
     ].join(''),
@@ -103,9 +108,27 @@ beforeAll(() => {
     [
       line({ type: 'session_meta', timestamp: at(30), payload: { cwd: path.join(home, 'work/cdxshot'), thread_source: 'user', source: 'cli' } }),
       line({ type: 'event_msg', timestamp: at(31), payload: { type: 'user_message', message: 'Screenshot the page' } }),
-      line({ type: 'response_item', timestamp: at(32), payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd: 'npx playwright screenshot http://localhost shot.png' }) } }),
+      line({
+        type: 'response_item',
+        timestamp: at(32),
+        payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd: 'npx playwright screenshot http://localhost shot.png', workdir: path.join(home, 'work/cdxshot/sub') }) },
+      }),
+      line({ type: 'event_msg', timestamp: at(33), payload: { type: 'user_message', message: 'Make it wider and run it again' } }),
     ].join(''),
   )
+  write('work/stale/old.png', 'png')
+  const later = new Date(Date.now() + 3_600_000).toISOString()
+  const stale = write(
+    `.claude/projects/${path.join(home, 'work/stale').replace(/[^a-zA-Z0-9]/g, '-')}/st.jsonl`,
+    [
+      line({ type: 'user', timestamp: later, cwd: path.join(home, 'work/stale'), message: { role: 'user', content: 'Show me old.png' } }),
+      line({ type: 'assistant', timestamp: later, cwd: path.join(home, 'work/stale'), message: { content: [{ type: 'text', text: 'It is at old.png.' }] } }),
+      line({ type: 'user', timestamp: at(0), cwd: path.join(home, 'work/stale'), message: { role: 'user', content: 'Render the idea' } }),
+      line({ type: 'assistant', timestamp: at(1), cwd: path.join(home, 'work/stale'), message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'python3 r2.py -o idea.png' } }] } }),
+    ].join(''),
+  )
+  const yesterday = new Date(Date.now() - 86_400_000)
+  utimesSync(stale, yesterday, yesterday)
   write('bin/tmux', `#!/bin/sh\nprintf '%s\\n' ${panes.map((p) => `'${p.join('\t')}'`).join(' ')}\n`)
   chmodSync(path.join(home, 'bin/tmux'), 0o755)
 
@@ -386,7 +409,7 @@ describe('agent probe', () => {
   it('skips shells and keeps the active pane when a session has several agents', () => {
     const agents = run()
     expect(agents.notes).toBeUndefined()
-    expect(Object.keys(agents).sort()).toEqual(['broken', 'busyerr', 'cdx', 'cdxshot', 'eval', 'fix-retry', 'fork', 'longrun', 'messy', 'poster', 'stopped'])
+    expect(Object.keys(agents).sort()).toEqual(['broken', 'busyerr', 'cdx', 'cdxshot', 'eval', 'fix-retry', 'fork', 'longrun', 'messy', 'poster', 'stale', 'stopped'])
   })
 
   it('lists the files each agent wrote, newest first, resolving codex paths against the turn folder', () => {
@@ -414,10 +437,13 @@ describe('agent probe', () => {
     expect((agents.fork.files as Array<{ path: string }>).map((f) => f.path)).toEqual(['/work/fork/via-shell.md', '/work/fork/own.md', '/work/fork/undated.md'])
   })
 
-  it('lists images, HTML and PDFs an agent made with shell commands, once they exist and were written during the turn', () => {
+  it('lists images, HTML and PDFs an agent made with shell commands, once they exist and were written after the turn that named them began', () => {
     const work = (rel: string) => path.join(home, 'work/poster', rel)
     const files = () => (run().poster.files as Array<{ path: string; action: string; count: number }>).map((f) => [f.path, f.action, f.count])
     expect(files().sort()).toEqual([
+      [work('.playwright-mcp/shot.png'), 'created', 1],
+      [work('local.html'), 'created', 1],
+      [work('out/chart.png'), 'created', 1],
       [work('out/poster.png'), 'created', 1],
       [work('poster.html'), 'created', 1],
       [work('reply-only.png'), 'created', 1],
@@ -425,7 +451,12 @@ describe('agent probe', () => {
     write('work/poster/later.png', 'png')
     expect(files().map(([p]) => p)).toContain(work('later.png'))
     const shots = (run().cdxshot.files as Array<{ path: string }>).map((f) => f.path)
-    expect(shots).toEqual([path.join(home, 'work/cdxshot/shot.png')])
+    expect(shots, 'named in one turn, rewritten in a later one').toEqual([path.join(home, 'work/cdxshot/sub/shot.png')])
+  })
+
+  it('leaves out files that existed before the turn, or appeared long after an idle turn named them', () => {
+    write('work/stale/idea.png', 'png')
+    expect(run().stale.files ?? []).toEqual([])
   })
 
   it('keeps a title written long before the tail it reads, and sees a finished turn without a registry', () => {

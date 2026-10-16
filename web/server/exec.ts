@@ -90,15 +90,22 @@ export function openLocal(file: string, reveal: boolean): void {
   spawn(opener, args, { detached: true, stdio: 'ignore' }).on('error', () => undefined).unref()
 }
 
-export function runAgentProbe(host: string, script: string, timeoutMs = 30000): Promise<RunResult> {
-  return runRemote(host, ['python3', '-I', '-'], [script], timeoutMs, 'agent probe')
+export function runAgentProbe(host: string, script: string, timeoutMs = 30000, maxOutput = 4 * 1024 * 1024): Promise<RunResult> {
+  return runRemote(host, ['python3', '-I', '-'], [script], timeoutMs, 'agent probe', maxOutput)
 }
 
 export function runUpload(host: string, input: Buffer[], timeoutMs: number): Promise<RunResult> {
   return runRemote(host, UPLOAD_COMMAND, input, timeoutMs, 'upload')
 }
 
-function runRemote(host: string, command: string[], input: Array<string | Buffer>, timeoutMs: number, label: string): Promise<RunResult> {
+function runRemote(
+  host: string,
+  command: string[],
+  input: Array<string | Buffer>,
+  timeoutMs: number,
+  label: string,
+  maxOutput = 4 * 1024 * 1024,
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, ...command], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -123,7 +130,7 @@ function runRemote(host: string, command: string[], input: Array<string | Buffer
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk
-      if (stdout.length > 4 * 1024 * 1024) stop(`${label} output too large`)
+      if (stdout.length > maxOutput) stop(`${label} output too large`)
     })
     child.stderr.on('data', (chunk: string) => {
       stderr = (stderr + chunk).slice(-8192)

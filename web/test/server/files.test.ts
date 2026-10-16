@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { allowed, describeFile, FILE_MAX, IMAGE_MAX, localMirror, readLimit, remoteReadScript } from '../../server/files.js'
+import { allowed, describeFile, FILE_MAX, IMAGE_MAX, localMirror, parseRemoteRead, readLimit, readOutputMax, remoteReadScript } from '../../server/files.js'
 import { createApp, type App } from '../../server/index.js'
 
 const stubsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../stubs')
@@ -48,6 +48,15 @@ describe('file access rules', () => {
     expect(remoteReadScript('/p/poster.png')).toContain(String(IMAGE_MAX))
     const poster = Buffer.alloc(1_250_000, 1)
     expect(describeFile('/p/poster.png', poster, poster.length, 1)).toMatchObject({ kind: 'image', truncated: false })
+  })
+
+  it('lets the ssh read carry a whole 8 MB image, where the old 4 MB cap cut it off', () => {
+    const full = Buffer.alloc(IMAGE_MAX, 1)
+    const stdout = JSON.stringify({ size: full.length, mtime: 1, b64: full.toString('base64') })
+    expect(stdout.length).toBeGreaterThan(4 * 1024 * 1024)
+    expect(stdout.length).toBeLessThanOrEqual(readOutputMax('/p/poster.png'))
+    expect(parseRemoteRead('/p/poster.png', stdout)).toMatchObject({ kind: 'image', truncated: false })
+    expect(readOutputMax('/p/notes.md')).toBeLessThan(readOutputMax('/p/poster.png'))
   })
 })
 
