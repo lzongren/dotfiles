@@ -11,6 +11,7 @@ import math
 import os
 import re
 import signal
+import stat as stat_mode
 import subprocess
 import time
 
@@ -19,7 +20,7 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 13
+CACHE_VERSION = 14
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
@@ -28,8 +29,19 @@ TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
+KEEP_OUTPUTS = 20
+SHOW_OUTPUTS = 10
 PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
 PATCH_ACTIONS = {"add": "created", "update": "edited", "delete": "deleted"}
+OUTPUT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|svg|html?|pdf)(?![\w/-])", re.I)
+OUTPUT_LINE = re.compile(rb"\.(?:png|jpe?g|gif|webp|svg|htm|pdf)", re.I)
+OUTPUT_SCAN = 32 * 1024
+OUTPUT_GRACE = 600
+PATH_BACK = 1024
+FILE_URL = re.compile(r"file:(?://(?:localhost)?)?(?=/)")
+CD_RE = re.compile(r"^\s*cd\s+(\"[^\"]+\"|'[^']+'|[^\s;&|]+)\s*(?:&&|;|\n)")
+BUILD_DIRS = {"build", "dist", "target", "node_modules", "coverage", "htmlcov", "brazil-documentation", "site-packages", ".venv", "venv", "__pycache__", ".git", ".gradle", ".next", ".cache"}
+KEEP_PENDING = 200
 FORK_REPLAY = 1.0
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
@@ -333,10 +345,11 @@ def compile_patterns():
     return patterns
 
 
-def scan_history(path, size, ino, cache, patterns, cwd=None):
+def scan_history(path, size, ino, cache, patterns, cwd=None, mtime=None):
     entry = cache.get(path)
     if not isinstance(entry, dict) or entry.get("ino") != ino or entry.get("off", 0) > size:
         entry = {"ino": ino, "off": max(0, size - SCAN_MAX), "artifacts": {}, "commits": 0, "tasks": {}, "files": {}}
+    entry["until"] = (mtime if mtime is not None else time.time()) + OUTPUT_GRACE
     offset = entry["off"]
     data = read_range(path, offset, min(size - offset, SCAN_MAX)) if size > offset else b""
     end = data.rfind(b"\n") + 1
@@ -345,10 +358,16 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
     artifacts = entry["artifacts"]
     links = any(link for _, _, link in patterns)
     for line in data[:end].split(b"\n"):
+        outputs = OUTPUT_LINE.search(line) is not None
         if (
             b"http" not in line
             and b"gitOperation" not in line
             and b'"task' not in line.lower()
+            and not outputs
+            and not (b'"type":"user"' in line and b'"tool_result"' not in line)
+            and b'"user_message"' not in line
+            and b"workdir" not in line
+            and b'"command":"cd ' not in line
             and b"-title" not in line
             and b"filePath" not in line
             and b"apply_patch" not in line
@@ -385,7 +404,7 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
         meta = rec.get("payload") if rec.get("type") in ("session_meta", "turn_context") else None
         if isinstance(meta, dict) and isinstance(meta.get("cwd"), str):
             entry["cwd"] = meta["cwd"]
-        track_files(entry, rec, at, entry.get("cwd") or cwd)
+        track_files(entry, rec, at, entry.get("cwd") or cwd, outputs)
         if rec.get("type") == "pr-link" and rec.get("prUrl"):
             found.setdefault(rec["prUrl"], ("PR", None, True))
         for text in strings(rec):
@@ -395,18 +414,23 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
         for url, (label, action, by_someone) in found.items():
             note(artifacts, label, url, at, action, by_someone)
     entry["off"] = offset + end
+    if entry.get("settled") != entry["until"]:
+        settle_outputs(entry, entry["until"])
+        if time.time() > entry["until"]:
+            entry["settled"] = entry["until"]
     if len(artifacts) > KEEP_ARTIFACTS:
         rank = lambda kv: (kv[1].get("said", False), kv[1].get("hits", 1), kv[1]["at"])
         keep = sorted(artifacts.items(), key=rank)[-KEEP_ARTIFACTS:]
         entry["artifacts"] = artifacts = dict(keep)
     if len(entry["files"]) > KEEP_FILES:
-        entry["files"] = dict(sorted(entry["files"].items(), key=lambda kv: kv[1]["at"])[-KEEP_FILES:])
+        newest = lambda shell, keep: sorted((kv for kv in entry["files"].items() if bool(kv[1].get("shell")) == shell), key=lambda kv: kv[1]["at"])[-keep:]
+        entry["files"] = dict(newest(False, KEEP_FILES) + newest(True, KEEP_OUTPUTS))
     cache[path] = entry
     SCANNED.add(path)
     return entry
 
 
-def track_files(entry, rec, at, cwd):
+def track_files(entry, rec, at, cwd, outputs=False):
     files = entry["files"]
     pending = entry.setdefault("pending", {})
     result = rec.get("toolUseResult")
@@ -448,13 +472,116 @@ def track_files(entry, rec, at, cwd):
         pending[call] = found
         while len(pending) > 20:
             pending.pop(next(iter(pending)))
+    track_outputs(entry, rec, at, cwd, outputs)
 
 
-def touch(files, path, action, at):
+def is_prompt(rec):
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    codex = payload.get("type") == "user_message" or (payload.get("type") == "message" and payload.get("role") == "user")
+    return codex or human_prompt(rec) is not None
+
+
+def track_outputs(entry, rec, at, cwd, outputs):
+    if is_prompt(rec):
+        settle_outputs(entry, entry.get("until", at))
+        entry["outputs"], entry["dirs"], entry["turn"] = {}, {}, at
+        return
+    base = rec.get("cwd") if isinstance(rec.get("cwd"), str) else cwd
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    dirs = entry.setdefault("dirs", {})
+    for call, command, workdir in commands(rec, payload):
+        moved = CD_RE.match(command)
+        folder = workdir or (moved.group(1).strip("\"'") if moved else None)
+        if folder:
+            dirs[call] = os.path.normpath(os.path.join(base or "", os.path.expanduser(folder)))
+    while len(dirs) > KEEP_PENDING:
+        dirs.pop(next(iter(dirs)))
+    if not outputs:
+        return
+    since = entry.get("turn", at)
+    pending = entry.setdefault("outputs", {})
+    bases = [dirs[c] for c in call_ids(rec, payload) if c in dirs] + ([base] if base else [])
+    for name in mentioned(rec, bases):
+        pending[name] = pending.pop(name, [since, False])
+    while len(pending) > KEEP_PENDING:
+        pending.pop(next(iter(pending)))
+
+
+def commands(rec, payload):
+    for block in msg(rec).get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "tool_use" and isinstance(block.get("input"), dict):
+            if isinstance(block["input"].get("command"), str) and isinstance(block.get("id"), str):
+                yield block["id"], block["input"]["command"], None
+    if payload.get("type") == "function_call" and isinstance(payload.get("arguments"), str) and isinstance(payload.get("call_id"), str):
+        try:
+            args = json.loads(payload["arguments"])
+        except ValueError:
+            return
+        if isinstance(args, dict):
+            command = args.get("cmd") if isinstance(args.get("cmd"), str) else ""
+            yield payload["call_id"], command, args.get("workdir") if isinstance(args.get("workdir"), str) else None
+
+
+def call_ids(rec, payload):
+    ids = [payload["call_id"]] if isinstance(payload.get("call_id"), str) else []
+    for block in msg(rec).get("content") or []:
+        if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
+            ids.extend(block[k] for k in ("id", "tool_use_id") if isinstance(block.get(k), str))
+    return ids
+
+
+def mentioned(rec, bases):
+    names = []
+    for text in strings(rec):
+        if len(text) > 2 * OUTPUT_SCAN:
+            text = text[:OUTPUT_SCAN] + "\n" + text[-OUTPUT_SCAN:]
+        if "file:" in text:
+            text = FILE_URL.sub(" ", text)
+        for match in OUTPUT_RE.finditer(text):
+            start = match.start()
+            floor = max(0, start - PATH_BACK)
+            while start > floor and (text[start - 1].isalnum() or text[start - 1] in "_.@+~/-"):
+                start -= 1
+            name = text[start : match.end()]
+            if start == match.start() or text[start - 1 : start] == ":" or name.startswith("//"):
+                continue
+            name = os.path.expanduser(name)
+            for full in [name] if os.path.isabs(name) else [os.path.join(b, name) for b in bases]:
+                full = os.path.normpath(full)
+                if BUILD_DIRS.isdisjoint(full.split(os.sep)) and full not in names:
+                    names.append(full)
+            if len(names) >= KEEP_PENDING:
+                return names
+    return names
+
+
+def settle_outputs(entry, until):
+    pending = entry.get("outputs") or {}
+    for name, (since, existed) in list(pending.items()):
+        try:
+            info = os.stat(name)
+        except OSError:
+            continue
+        if not stat_mode.S_ISREG(info.st_mode):
+            pending.pop(name)
+            continue
+        written = max(info.st_mtime, info.st_ctime)
+        if written < since:
+            pending[name] = [since, True]
+        elif written <= until:
+            pending.pop(name)
+            seen = entry["files"].get(name)
+            if seen is None or seen["at"] < int(written):
+                touch(entry["files"], name, "edited" if existed or seen else "created", int(written), shell=True)
+
+
+def touch(files, path, action, at, shell=False):
     path = os.path.normpath(path)
     if not os.path.isabs(path) or "/.claude/" in path or "/.codex/" in path:
         return
-    seen = files.setdefault(path, {"action": action, "at": at, "count": 0})
+    seen = files.setdefault(path, {"action": action, "at": at, "count": 0, "shell": shell})
+    if not shell:
+        seen.pop("shell", None)
     seen["count"] += 1
     seen["at"] = max(seen["at"], at)
     if action != "edited" or seen["action"] == "deleted":
@@ -462,8 +589,9 @@ def touch(files, path, action, at):
 
 
 def files_out(files):
-    ranked = sorted(files.items(), key=lambda kv: -kv[1]["at"])[:SHOW_FILES]
-    return [dict(f, path=p, gone=not os.path.exists(p)) for p, f in ranked]
+    newest = lambda shell, show: sorted((kv for kv in files.items() if bool(kv[1].get("shell")) == shell), key=lambda kv: -kv[1]["at"])[:show]
+    ranked = sorted(newest(False, SHOW_FILES) + newest(True, SHOW_OUTPUTS), key=lambda kv: -kv[1]["at"])
+    return [{"path": p, "action": f["action"], "at": f["at"], "count": f["count"], "gone": not os.path.exists(p)} for p, f in ranked]
 
 
 def track_tasks(tasks, rec):
@@ -515,7 +643,7 @@ def claude_insight(pane, reg, cache, patterns):
     ):
         out["state"] = "error"
         out["error"] = clip(str(info["error"]), 120)
-    entry = scan_history(path, stat.st_size, stat.st_ino, cache, patterns)
+    entry = scan_history(path, stat.st_size, stat.st_ino, cache, patterns, mtime=stat.st_mtime)
     out["title"] = clip(
         info.get("customTitle") or entry.get("customTitle") or info.get("aiTitle") or entry.get("title"), 120
     )
@@ -619,7 +747,7 @@ def codex_insight(pane, rollouts, children, cache, patterns):
             out["tasks"] = task_counts([{"status": p.get("status"), "activeForm": p.get("step")} for p in plan])
     out["since"] = state_at
     out["title"] = clip(codex_title(os.path.basename(rollout)), 120)
-    entry = scan_history(rollout, stat.st_size, stat.st_ino, cache, patterns, real)
+    entry = scan_history(rollout, stat.st_size, stat.st_ino, cache, patterns, real, stat.st_mtime)
     out["artifacts"] = sorted(entry["artifacts"].values(), key=lambda a: -a["at"])
     out["commits"] = entry["commits"]
     out["files"] = files_out(entry["files"])

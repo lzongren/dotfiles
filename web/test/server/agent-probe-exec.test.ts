@@ -38,9 +38,12 @@ describe('runAgentProbe', () => {
     expect(Date.now() - started).toBeLessThan(3000)
   })
 
-  it('stops reading past the output cap', async () => {
+  it('stops reading past the output cap, which a caller can raise', async () => {
     fakeSsh('cat >/dev/null; head -c 5000000 /dev/zero')
     const res = await runAgentProbe('host', '')
     expect(res).toMatchObject({ exitCode: 124, stderr: 'agent probe output too large' })
+    const raised = await runAgentProbe('host', '', 30000, 6 * 1024 * 1024)
+    expect(raised).toMatchObject({ exitCode: 0 })
+    expect(raised.stdout).toHaveLength(5000000)
   })
 })

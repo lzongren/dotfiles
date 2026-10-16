@@ -15,7 +15,7 @@ import {
 import { loadConfig } from './config.js'
 import { BodyError, readBody, readJson } from './body.js'
 import { detach, openLocal, runAgentProbe, runUpload, spawnAttachPty, statusRaw } from './exec.js'
-import { allowed, localMirror, openable, parseRemoteRead, readMirror, remoteReadScript, resolveMirror } from './files.js'
+import { allowed, localMirror, openable, parseRemoteRead, readMirror, readOutputMax, readTimeout, remoteReadScript, resolveMirror } from './files.js'
 import { readGhostty } from './ghostty.js'
 import type { InsightsResponse } from '../src/shared/types.js'
 import { DAY_RE, listDays, readNote, writeNote } from './notes.js'
@@ -144,7 +144,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
             if (!access) return sendJson(res, 403, { error: 'forbidden', message: 'not a file this session wrote' })
             const local = access.mirror ? await readMirror(access.mirror, target) : null
             if (local) return sendJson(res, 200, local)
-            const result = await runAgentProbe(config.host, remoteReadScript(target), 20000)
+            const result = await runAgentProbe(config.host, remoteReadScript(target), readTimeout(target), readOutputMax(target))
             if (result.exitCode === 255) return sendJson(res, 502, { error: 'remote_unreachable', message: 'host unreachable' })
             if (result.exitCode !== 0) return sendJson(res, 500, { error: 'read_failed', message: 'could not read the file' })
             const view = parseRemoteRead(target, result.stdout)
