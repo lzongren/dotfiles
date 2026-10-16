@@ -1,13 +1,20 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
 import { getTheme } from '../api'
+import { useDismiss } from '../dismiss'
+import type { Palette } from '../shared/types'
 import { Icon } from './Icon'
 import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, uiTokens, type Look } from '../theme'
 
-function Mini({ look, mode }: { look: Look; mode: 'dark' | 'light' }) {
-  const p = mode === 'light' ? look.lightPalette : look.palette
-  if (!p) return null
+function previews(look: Look, more: boolean) {
+  return (['dark', 'light'] as const).flatMap((mode) => {
+    const p = mode === 'light' ? look.lightPalette : look.palette
+    return p ? [{ mode, p, tokens: uiTokens(p, more, look.gradient?.[mode], look.accent?.[mode]) }] : []
+  })
+}
+
+function Mini({ p, tokens }: { p: Palette; tokens: Record<string, string> }) {
   return (
-    <span className="theme-mini" style={uiTokens(p, false, look.gradient?.[mode]) as CSSProperties}>
+    <span className="theme-mini" style={tokens as CSSProperties}>
       <span className="theme-mini-side">
         <span className="theme-mini-dot" />
         <span className="theme-mini-line" />
@@ -30,8 +37,9 @@ export function ThemePicker() {
   const [prefs, setPrefs] = useState(mediaPrefs)
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1)
   const [open, setOpen] = useState(false)
+  const [failed, setFailed] = useState(false)
   const gallery = useId()
-  const toggle = useRef<HTMLButtonElement>(null)
+  const dismiss = useDismiss(open, () => setOpen(false), '.theme-picker')
 
   useEffect(() => {
     let live = true
@@ -77,18 +85,11 @@ export function ThemePicker() {
   }, [dpr])
 
   useEffect(() => {
-    if (!open) return
-    const away = (event: PointerEvent) => {
-      if (!(event.target instanceof Element && event.target.closest('.theme-picker'))) setOpen(false)
-    }
-    document.addEventListener('pointerdown', away)
-    return () => document.removeEventListener('pointerdown', away)
-  }, [open])
-
-  useEffect(() => {
     try {
       applyLook(selected, prefs)
+      setFailed(false)
     } catch {
+      setFailed(true)
       try {
         applyLook(DEVBOX, prefs)
       } catch {
@@ -97,25 +98,15 @@ export function ThemePicker() {
     }
   }, [selected, prefs, selected.cellHeight?.unit === 'px' ? dpr : 0])
 
-  const looks = ghostty ? [ghostty, ...PRESETS] : PRESETS
+  const looks = useMemo(() => (ghostty ? [ghostty, ...PRESETS] : PRESETS), [ghostty])
+  const minis = useMemo(() => new Map(looks.map((look) => [look.id, previews(look, prefs.more)])), [looks, prefs.more])
+  const [current] = selected.label.split(' · ')
   return (
-    <div
-      className="theme-picker"
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape' || !open) return
-        setOpen(false)
-        toggle.current?.focus()
-      }}
-      onBlur={(event) => {
-        const next = event.relatedTarget
-        if (next instanceof Element && !event.currentTarget.contains(next)) setOpen(false)
-      }}
-    >
+    <div className="theme-picker" tabIndex={-1} onKeyDown={dismiss.onKeyDown} onBlur={dismiss.onBlur}>
       <button
-        ref={toggle}
         type="button"
         className="theme-toggle"
-        title={`Theme: ${selected.label}`}
+        title={`Theme: ${selected.label}${failed ? " (couldn't apply)" : ''}`}
         aria-expanded={open}
         aria-controls={open ? gallery : undefined}
         onClick={() => setOpen(!open)}
@@ -144,8 +135,7 @@ export function ThemePicker() {
                     }}
                   />
                   <span className="theme-minis" aria-hidden="true">
-                    <Mini look={look} mode="dark" />
-                    <Mini look={look} mode="light" />
+                    {minis.get(look.id)?.map(({ mode, p, tokens }) => <Mini key={mode} p={p} tokens={tokens} />)}
                   </span>
                   <span className="theme-name">
                     {name}
@@ -156,6 +146,11 @@ export function ThemePicker() {
               )
             })}
           </div>
+          {failed ? (
+            <p className="theme-note" role="status">
+              {current} couldn't be applied here, so the default colors are showing.
+            </p>
+          ) : null}
           <p className="theme-note">Light or dark follows your system.</p>
         </fieldset>
       ) : null}

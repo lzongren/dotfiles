@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ignoredTarget } from '../../src/components/Overview'
 import { ThemePicker } from '../../src/components/ThemePicker'
 import type { GhosttyLook } from '../../src/shared/types'
 import { applyLook, DEVBOX, ghosttyLook, onTerminalLook, PRESETS, savedLook, terminalLook } from '../../src/theme'
@@ -237,20 +238,58 @@ describe('ThemePicker', () => {
     })
     serve(null)
     await renderPicker()
-    expect(toggle()).toHaveAttribute('title', 'Theme: Mono')
+    expect(toggle()).toHaveAttribute('title', "Theme: Mono (couldn't apply)")
     expect(savedLook()?.id).toBe('mono')
   })
 
-  it('keeps the picker working when your saved look cannot be painted', async () => {
+  it('says when your saved look cannot be painted, and still lets you pick another', async () => {
     localStorage.setItem('devbox.look', JSON.stringify({ id: 'mono' }))
-    vi.spyOn(document.documentElement.style, 'setProperty').mockImplementation(() => {
+    const set = vi.spyOn(document.documentElement.style, 'setProperty').mockImplementation(() => {
       throw new Error('style locked')
     })
     serve(null)
     await renderPicker()
-    expect(toggle()).toHaveAttribute('title', 'Theme: Mono')
+    expect(toggle()).toHaveAttribute('title', "Theme: Mono (couldn't apply)")
+    fireEvent.click(toggle())
+    expect(screen.getByRole('status')).toHaveTextContent("Mono couldn't be applied here, so the default colors are showing.")
+    set.mockRestore()
     pick(/^Sunset/)
     expect(savedLook()?.id).toBe('sunset')
+    expect(toggle()).toHaveAttribute('title', 'Theme: Sunset')
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('keeps single-key shortcuts away from the picker, and closes when focus moves elsewhere on the page', async () => {
+    serve(null)
+    await renderPicker()
+    expect(ignoredTarget(toggle())).toBe(true)
+    fireEvent.click(toggle())
+    const outside = document.body.appendChild(document.createElement('button'))
+    vi.useFakeTimers()
+    try {
+      fireEvent.blur(screen.getByRole('radio', { name: 'Sunset' }), { relatedTarget: null })
+      act(() => vi.runAllTimers())
+      expect(screen.getByRole('group', { name: 'Theme' })).toBeInTheDocument()
+      outside.focus()
+      fireEvent.blur(screen.getByRole('radio', { name: 'Sunset' }), { relatedTarget: null })
+      act(() => vi.runAllTimers())
+      expect(screen.queryByRole('group', { name: 'Theme' })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+      outside.remove()
+    }
+  })
+
+  it('previews each theme as it paints under the more-contrast setting', async () => {
+    serve(null)
+    await renderPicker()
+    fireEvent.click(toggle())
+    const dim = () => (document.querySelector('.theme-mini') as HTMLElement).style.getPropertyValue('--dim')
+    const before = dim()
+    more = true
+    act(() => listeners.forEach((fn) => fn()))
+    expect(dim()).not.toBe(before)
+    expect(dim()).toBe(document.documentElement.style.getPropertyValue('--dim'))
   })
 
   it('repaints terminals on zoom only when the line height depends on it', async () => {

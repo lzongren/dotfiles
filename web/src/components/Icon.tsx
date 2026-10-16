@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 import type { AgentInsight, Session } from '../shared/types'
 import { heardAt, QUIET_AFTER } from '../insights'
 
@@ -37,14 +37,34 @@ const GLYPHS: Record<Tone, ReactNode> = {
   quiet: (
     <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="0.01 3.45" strokeLinecap="round" />
   ),
-  fresh: <circle cx="8" cy="8" r="4" fill="currentColor" />,
+  fresh: null,
   idle: null,
 }
 
+export function Gradient({ id }: { id: string }) {
+  return (
+    <defs>
+      <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" style={{ stopColor: 'var(--grad-a)' }} />
+        <stop offset="0.5" style={{ stopColor: 'var(--grad-b)' }} />
+        <stop offset="1" style={{ stopColor: 'var(--grad-c)' }} />
+      </linearGradient>
+    </defs>
+  )
+}
+
 export function StateIcon({ tone }: { tone: Tone }) {
+  const grad = useId()
   return (
     <svg className="state-icon" data-tone={tone} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      {GLYPHS[tone]}
+      {tone === 'fresh' ? (
+        <>
+          <Gradient id={grad} />
+          <circle cx="8" cy="8" r="4" fill={`url(#${grad}) currentColor`} />
+        </>
+      ) : (
+        GLYPHS[tone]
+      )}
     </svg>
   )
 }

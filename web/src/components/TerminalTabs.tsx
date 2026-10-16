@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { explain, uploadFile } from '../api'
+import { useDismiss } from '../dismiss'
 import { heardAt, isFresh, openableCount, plain, shownArtifacts } from '../insights'
 import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
@@ -237,14 +238,7 @@ export function TerminalTabs({
       next.delete(tab)
       return next
     })
-  useEffect(() => {
-    if (filesOpen === null) return
-    const away = (event: PointerEvent) => {
-      if (!(event.target instanceof Element && event.target.closest('.term-files'))) setFilesOpen(null)
-    }
-    document.addEventListener('pointerdown', away)
-    return () => document.removeEventListener('pointerdown', away)
-  }, [filesOpen])
+  const dismiss = useDismiss(filesOpen !== null, () => setFilesOpen(null), '.term-files')
 
   const note = (tab: string, text: string, sticky = false) => {
     if (!alive.current) return
@@ -451,15 +445,8 @@ export function TerminalTabs({
                   <div
                     className="term-files"
                     tabIndex={-1}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Escape' || !open) return
-                      setFilesOpen(null)
-                      event.currentTarget.querySelector<HTMLElement>('.files-toggle')?.focus()
-                    }}
-                    onBlur={(event) => {
-                      const next = event.relatedTarget
-                      if (next instanceof Element && !event.currentTarget.contains(next)) setFilesOpen(null)
-                    }}
+                    onKeyDown={dismiss.onKeyDown}
+                    onBlur={dismiss.onBlur}
                   >
                     <button
                       type="button"

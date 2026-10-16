@@ -47,6 +47,7 @@ export interface Look {
   cellHeight?: GhosttyLook['cellHeight']
   padding?: [number, number, number, number]
   gradient?: { dark: Stops; light: Stops }
+  accent?: { dark: string; light: string }
 }
 
 type Stops = [string, string, string]
@@ -90,11 +91,12 @@ function palette(background: string, foreground: string, selectionBackground: st
 const DARK_ANSI = '#3f3f46 #f87171 #4ade80 #facc15 #60a5fa #e879f9 #22d3ee #d4d4d8 #71717a #fca5a5 #86efac #fde047 #93c5fd #f0abfc #67e8f9 #fafafa'
 const LIGHT_ANSI = '#18181b #dc2626 #16a34a #ca8a04 #2563eb #c026d3 #0891b2 #71717a #52525b #ef4444 #22c55e #eab308 #3b82f6 #d946ef #06b6d4 #a1a1aa'
 
-function modern(id: string, label: string, dark: Stops, light: Stops, bg = '#09090b'): Look {
+function modern(id: string, label: string, dark: Stops, light: Stops, bg = '#09090b', accent?: Look['accent']): Look {
   return {
     id,
     label,
     gradient: { dark, light },
+    ...(accent ? { accent } : {}),
     palette: palette(bg, '#ededed', mix(bg, dark[1], 0.3), dark[1], DARK_ANSI),
     lightPalette: palette('#ffffff', '#18181b', mix('#ffffff', light[1], 0.2), light[1], LIGHT_ANSI),
     cursorStyle: 'bar',
@@ -108,7 +110,7 @@ export const PRESETS: Look[] = [
   modern('sunset', 'Sunset', ['#fbbf24', '#f472b6', '#a78bfa'], ['#c2410c', '#db2777', '#7e22ce']),
   modern('aurora', 'Aurora', ['#4ade80', '#2dd4bf', '#38bdf8'], ['#15803d', '#0f766e', '#0369a1']),
   modern('iris', 'Iris', ['#60a5fa', '#818cf8', '#e879f9'], ['#1d4ed8', '#4f46e5', '#a21caf']),
-  modern('mono', 'Mono', ['#e4e4e7', '#fafafa', '#d4d4d8'], ['#27272a', '#09090b', '#3f3f46'], '#000000'),
+  modern('mono', 'Mono', ['#e4e4e7', '#fafafa', '#d4d4d8'], ['#27272a', '#09090b', '#3f3f46'], '#000000', { dark: '#52a8ff', light: '#0068d6' }),
 ]
 
 export function ghosttyLook(g: GhosttyLook): Look {
@@ -169,7 +171,7 @@ export function isDark(p: Palette): boolean {
   return luminance(p.background) < luminance(p.foreground)
 }
 
-export function uiTokens(p: Palette, more = false, stops?: Stops): Record<string, string> {
+export function uiTokens(p: Palette, more = false, stops?: Stops, accent?: string): Record<string, string> {
   const dark = isDark(p)
   const [edge, away] = dark ? ['#ffffff', '#000000'] : ['#000000', '#ffffff']
   const bg = readable(p.background, [edge], 7, away)
@@ -177,7 +179,7 @@ export function uiTokens(p: Palette, more = false, stops?: Stops): Record<string
   const surface = mix(bg, fg, 0.04)
   const tile = dark ? mix(bg, fg, 0.07) : mix(bg, '#ffffff', 0.7)
   const raised = mix(bg, fg, 0.1)
-  const selected = mix(bg, stops?.[1] ?? p.ansi[4], dark ? 0.2 : 0.12)
+  const selected = mix(bg, accent ?? stops?.[1] ?? p.ansi[4], dark ? 0.2 : 0.12)
   const bellBg = mix(bg, p.ansi[3], 0.2)
   const dangerBg = mix(bg, p.ansi[1], 0.16)
   const tints = [bellBg, dangerBg]
@@ -193,7 +195,7 @@ export function uiTokens(p: Palette, more = false, stops?: Stops): Record<string
     '--selected': selected,
     '--text': dark ? text(fg, tints) : readable(fg, [...surfaces, ...tints], 9, edge),
     '--dim': text(mix(fg, bg, more ? 0.15 : 0.3), tints),
-    '--accent': b,
+    '--accent': accent ? text(accent) : b,
     '--grad-a': a,
     '--grad-b': b,
     '--grad-c': c,
@@ -239,7 +241,7 @@ export function onTerminalLook(listener: () => void): () => void {
 export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
   const mode = prefs.light && look.lightPalette ? 'light' : 'dark'
   const p = mode === 'light' ? look.lightPalette : look.palette
-  const tokens: Record<string, string> = p ? uiTokens(p, prefs.more, look.gradient?.[mode]) : {}
+  const tokens: Record<string, string> = p ? uiTokens(p, prefs.more, look.gradient?.[mode], look.accent?.[mode]) : {}
   const font = fontStack(look.fontFamily)
   if (font) tokens['--mono'] = font
   if (look.padding) tokens['--term-pad'] = look.padding.map((n) => `${n}px`).join(' ')
@@ -249,7 +251,7 @@ export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {
     else root.removeProperty(name)
   }
   root.colorScheme = p ? (isDark(p) ? 'dark' : 'light') : ''
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', tokens['--bg'] ?? TERMINAL_OPTIONS.theme.background)
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.setAttribute('content', tokens['--bg'] ?? TERMINAL_OPTIONS.theme.background)
   current = {
     theme: p
       ? {

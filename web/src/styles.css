@@ -46,6 +46,13 @@
   --grad: linear-gradient(120deg, var(--grad-a), var(--grad-b), var(--grad-c));
 }
 
+@media (prefers-color-scheme: light) {
+  html:not([style]),
+  html:not([style]) body {
+    background: #ffffff;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -95,10 +102,6 @@ button {
 
 .state-icon[data-tone='fresh'] {
   color: var(--accent);
-}
-
-.state-icon[data-tone='fresh'] circle {
-  fill: url(#devbox-grad) var(--accent);
 }
 
 .state-icon[data-tone='working'] {
@@ -224,7 +227,7 @@ kbd {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 30;
+  z-index: 40;
   width: min(560px, calc(100vw - 24px));
   max-height: calc(100vh - 80px);
   overflow-y: auto;
@@ -2023,7 +2026,7 @@ kbd {
 }
 
 .detail-actions .primary:hover:not(:disabled) {
-  background: var(--text);
+  background: var(--accent);
 }
 
 .detail-actions .primary kbd {

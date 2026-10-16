@@ -99,6 +99,16 @@ describe('theme contrast (WCAG AA)', () => {
   })
 })
 
+describe.each(PRESETS.flatMap((l) => [[`${l.label} dark`, l, 'dark'] as const, [`${l.label} light`, l, 'light'] as const]))(
+  '%s accent',
+  (_, look, mode) => {
+    it('stands apart from the text, so accent-colored state still shows', () => {
+      const t = uiTokens(mode === 'dark' ? look.palette! : look.lightPalette!, false, look.gradient![mode], look.accent?.[mode])
+      expect(contrast(t['--accent'], t['--text'])).toBeGreaterThanOrEqual(1.5)
+    })
+  },
+)
+
 const LATTE: Palette = {
   background: '#eff1f5',
   foreground: '#4c4f69',
@@ -109,10 +119,10 @@ const MID_LIGHT_TEXT: Palette = { background: '#767676', foreground: '#ffffff', 
 const MID_DARK_TEXT: Palette = { background: '#808080', foreground: '#000000', ansi: Array(16).fill('#606060') }
 
 type Stops = Parameters<typeof uiTokens>[2]
-const CASES: [string, Palette, Stops][] = [
-  ...PRESETS.flatMap((l): [string, Palette, Stops][] => [
-    [`${l.label} dark`, l.palette!, l.gradient!.dark],
-    [`${l.label} light`, l.lightPalette!, l.gradient!.light],
+const CASES: [string, Palette, Stops, string?][] = [
+  ...PRESETS.flatMap((l): [string, Palette, Stops, string?][] => [
+    [`${l.label} dark`, l.palette!, l.gradient!.dark, l.accent?.dark],
+    [`${l.label} light`, l.lightPalette!, l.gradient!.light, l.accent?.light],
   ]),
   ['Catppuccin Latte', LATTE, undefined],
   ['a low-contrast palette', MUDDY, undefined],
@@ -121,9 +131,12 @@ const CASES: [string, Palette, Stops][] = [
 ]
 
 describe.each(
-  CASES.flatMap(([name, palette, stops]) => [[name, palette, stops, false] as const, [`${name}, more contrast`, palette, stops, true] as const]),
-)('theme derived from %s (WCAG AA)', (_, palette, stops, more) => {
-  const t = uiTokens(palette, more, stops)
+  CASES.flatMap(([name, palette, stops, accent]) => [
+    [name, palette, stops, accent, false] as const,
+    [`${name}, more contrast`, palette, stops, accent, true] as const,
+  ]),
+)('theme derived from %s (WCAG AA)', (_, palette, stops, accent, more) => {
+  const t = uiTokens(palette, more, stops, accent)
   it('keeps every text token at least 4.5:1 on every surface', () => {
     for (const fg of ['--text', '--dim', '--accent', '--bell', '--danger', '--grad-a', '--grad-b', '--grad-c']) {
       for (const bg of ['--bg', '--surface', '--tile', '--raised', '--selected']) {

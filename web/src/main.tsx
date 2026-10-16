@@ -8,6 +8,10 @@ initToken()
 try {
   applyLook(savedLook() ?? PRESETS[0])
 } catch {
-  applyLook(DEVBOX)
+  try {
+    applyLook(DEVBOX)
+  } catch {
+    void 0
+  }
 }
 createRoot(document.getElementById('root')!).render(<App />)
