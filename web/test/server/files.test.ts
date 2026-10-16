@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { allowed, describeFile, localMirror } from '../../server/files.js'
+import { allowed, describeFile, FILE_MAX, IMAGE_MAX, localMirror, readLimit, remoteReadScript } from '../../server/files.js'
 import { createApp, type App } from '../../server/index.js'
 
 const stubsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../stubs')
@@ -40,6 +40,14 @@ describe('file access rules', () => {
     expect(describeFile('/a.png', Buffer.from([0, 2]), 9, 1)).toEqual(expect.objectContaining({ kind: 'binary', truncated: true }))
     expect(describeFile('/a.png', Buffer.from([0, 2]), 9, 1).data).toBeUndefined()
     expect(describeFile('/a.bin', Buffer.from([0, 1]), 2, 1)).toMatchObject({ kind: 'binary', data: 'data:application/octet-stream;base64,AAE=' })
+  })
+
+  it('reads whole images up to 8 MB, so a full-page poster still previews, and text up to 1 MB', () => {
+    expect([readLimit('/p/poster.PNG'), readLimit('/p/a.webp'), readLimit('/p/poster.html'), readLimit('/p/notes.md')]).toEqual([IMAGE_MAX, IMAGE_MAX, FILE_MAX, FILE_MAX])
+    expect(IMAGE_MAX).toBe(8 * 1024 * 1024)
+    expect(remoteReadScript('/p/poster.png')).toContain(String(IMAGE_MAX))
+    const poster = Buffer.alloc(1_250_000, 1)
+    expect(describeFile('/p/poster.png', poster, poster.length, 1)).toMatchObject({ kind: 'image', truncated: false })
   })
 })
 

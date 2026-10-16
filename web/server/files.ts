@@ -5,6 +5,7 @@ import type { SyncEntry } from './config.js'
 import { probeScript } from './insights.js'
 
 export const FILE_MAX = 1024 * 1024
+export const IMAGE_MAX = 8 * 1024 * 1024
 
 const IMAGES: Record<string, string> = {
   '.png': 'image/png',
@@ -19,6 +20,10 @@ const OPENABLE = new Set(['.md', '.markdown', '.txt', '.log', '.csv', '.tsv', '.
 
 export function allowed(target: string, touched: string[]): boolean {
   return target.startsWith('/') && !target.includes('\0') && path.posix.normalize(target) === target && touched.includes(target)
+}
+
+export function readLimit(file: string): number {
+  return IMAGES[path.posix.extname(file).toLowerCase()] ? IMAGE_MAX : FILE_MAX
 }
 
 export function openable(file: string): boolean {
@@ -61,7 +66,7 @@ export async function readMirror(mirror: { file: string; root: string }, remote:
     const info = await stat(real)
     const handle = await open(real, 'r')
     try {
-      const buffer = Buffer.alloc(Math.min(info.size, FILE_MAX))
+      const buffer = Buffer.alloc(Math.min(info.size, readLimit(remote)))
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
       return describeFile(remote, buffer.subarray(0, bytesRead), info.size, Math.floor(info.mtimeMs / 1000), real)
     } finally {
@@ -85,7 +90,7 @@ except OSError as err:
 `
 
 export function remoteReadScript(file: string): string {
-  return probeScript(READER, { path: file, limit: FILE_MAX })
+  return probeScript(READER, { path: file, limit: readLimit(file) })
 }
 
 export function parseRemoteRead(remote: string, stdout: string): FileView | { error: string } {

@@ -11,6 +11,7 @@ import math
 import os
 import re
 import signal
+import stat as stat_mode
 import subprocess
 import time
 
@@ -19,7 +20,7 @@ HOME = os.path.expanduser("~")
 CLAUDE = os.path.join(HOME, ".claude")
 CODEX = os.path.join(HOME, ".codex")
 CACHE_DIR = os.path.join(HOME, ".cache", "devbox")
-CACHE_VERSION = 13
+CACHE_VERSION = 14
 DEADLINE = 25
 TAIL = 256 * 1024
 HEAD = 512 * 1024
@@ -30,6 +31,12 @@ KEEP_FILES = 40
 SHOW_FILES = 20
 PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
 PATCH_ACTIONS = {"add": "created", "update": "edited", "delete": "deleted"}
+OUTPUT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|svg|html?|pdf)(?![\w/-])", re.I)
+OUTPUT_LINE = re.compile(rb"\.(?:png|jpe?g|gif|webp|svg|htm|pdf)", re.I)
+OUTPUT_SCAN = 64 * 1024
+PATH_BACK = 1024
+BUILD_DIRS = {"build", "dist", "target", "node_modules", "coverage", "htmlcov", "brazil-documentation", "site-packages", ".venv", "venv", "__pycache__", ".git", ".gradle", ".next", ".cache"}
+KEEP_PENDING = 50
 FORK_REPLAY = 1.0
 PR_RE = r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+"
 SCANNED = set()
@@ -345,10 +352,15 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
     artifacts = entry["artifacts"]
     links = any(link for _, _, link in patterns)
     for line in data[:end].split(b"\n"):
+        outputs = OUTPUT_LINE.search(line) is not None
         if (
             b"http" not in line
             and b"gitOperation" not in line
             and b'"task' not in line.lower()
+            and not outputs
+            and not (b'"type":"user"' in line and b'"tool_result"' not in line)
+            and b'"user_message"' not in line
+            and b'"role":"user"' not in line
             and b"-title" not in line
             and b"filePath" not in line
             and b"apply_patch" not in line
@@ -385,7 +397,7 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
         meta = rec.get("payload") if rec.get("type") in ("session_meta", "turn_context") else None
         if isinstance(meta, dict) and isinstance(meta.get("cwd"), str):
             entry["cwd"] = meta["cwd"]
-        track_files(entry, rec, at, entry.get("cwd") or cwd)
+        track_files(entry, rec, at, entry.get("cwd") or cwd, outputs)
         if rec.get("type") == "pr-link" and rec.get("prUrl"):
             found.setdefault(rec["prUrl"], ("PR", None, True))
         for text in strings(rec):
@@ -395,6 +407,7 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
         for url, (label, action, by_someone) in found.items():
             note(artifacts, label, url, at, action, by_someone)
     entry["off"] = offset + end
+    recheck_outputs(entry)
     if len(artifacts) > KEEP_ARTIFACTS:
         rank = lambda kv: (kv[1].get("said", False), kv[1].get("hits", 1), kv[1]["at"])
         keep = sorted(artifacts.items(), key=rank)[-KEEP_ARTIFACTS:]
@@ -406,7 +419,7 @@ def scan_history(path, size, ino, cache, patterns, cwd=None):
     return entry
 
 
-def track_files(entry, rec, at, cwd):
+def track_files(entry, rec, at, cwd, outputs=False):
     files = entry["files"]
     pending = entry.setdefault("pending", {})
     result = rec.get("toolUseResult")
@@ -448,6 +461,82 @@ def track_files(entry, rec, at, cwd):
         pending[call] = found
         while len(pending) > 20:
             pending.pop(next(iter(pending)))
+    track_outputs(entry, rec, at, cwd, outputs)
+
+
+def is_prompt(rec):
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    if payload.get("type") == "user_message" or payload.get("role") == "user":
+        return True
+    if rec.get("type") != "user" or "toolUseResult" in rec:
+        return False
+    content = msg(rec).get("content")
+    return not (isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content))
+
+
+def track_outputs(entry, rec, at, cwd, outputs):
+    if is_prompt(rec):
+        if not rec.get("isMeta") and not rec.get("isCompactSummary"):
+            recheck_outputs(entry)
+            entry["outputs"] = {}
+            entry["turn"] = at
+        return
+    if not outputs:
+        return
+    since = entry.get("turn", at)
+    pending = entry.setdefault("outputs", {})
+    for name in mentioned(rec, rec.get("cwd") if isinstance(rec.get("cwd"), str) else cwd):
+        if not found_output(entry, name, since) and not os.path.lexists(name):
+            pending.pop(name, None)
+            pending[name] = since
+    while len(pending) > KEEP_PENDING:
+        pending.pop(next(iter(pending)))
+
+
+def mentioned(rec, base):
+    names = []
+    for text in strings(rec):
+        text = text[:OUTPUT_SCAN]
+        for match in OUTPUT_RE.finditer(text):
+            start = match.start()
+            floor = max(0, start - PATH_BACK)
+            while start > floor and (text[start - 1].isalnum() or text[start - 1] in "_.@+~/-"):
+                start -= 1
+            name, before = text[start : match.end()], text[max(0, start - 5) : start]
+            if before == "file:":
+                name = name[2:]
+            elif before.endswith(":") or name.startswith("//") or (name.startswith(".") and not name.startswith(("./", "../"))):
+                continue
+            name = os.path.expanduser(name)
+            if not os.path.isabs(name) and not base:
+                continue
+            name = os.path.normpath(os.path.join(base or "", name))
+            if BUILD_DIRS.isdisjoint(name.split(os.sep)) and name not in names:
+                names.append(name)
+            if len(names) >= KEEP_PENDING:
+                return names
+    return names
+
+
+def found_output(entry, name, since):
+    try:
+        info = os.stat(name)
+    except OSError:
+        return False
+    if not stat_mode.S_ISREG(info.st_mode) or info.st_mtime < since:
+        return False
+    written = int(info.st_mtime)
+    seen = entry["files"].get(name)
+    if seen is None or seen["at"] < written:
+        touch(entry["files"], name, "edited" if seen else "created", written)
+    return True
+
+
+def recheck_outputs(entry):
+    pending = entry.get("outputs") or {}
+    for name, since in list(pending.items()):
+        if found_output(entry, name, since):
+            pending.pop(name)
 
 
 def touch(files, path, action, at):
