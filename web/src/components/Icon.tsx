@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 import type { AgentInsight, Session } from '../shared/types'
 import { heardAt, QUIET_AFTER } from '../insights'
 
@@ -37,14 +37,34 @@ const GLYPHS: Record<Tone, ReactNode> = {
   quiet: (
     <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="0.01 3.45" strokeLinecap="round" />
   ),
-  fresh: <circle cx="8" cy="8" r="4" fill="currentColor" />,
+  fresh: null,
   idle: null,
 }
 
+export function Gradient({ id }: { id: string }) {
+  return (
+    <defs>
+      <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" style={{ stopColor: 'var(--grad-a)' }} />
+        <stop offset="0.5" style={{ stopColor: 'var(--grad-b)' }} />
+        <stop offset="1" style={{ stopColor: 'var(--grad-c)' }} />
+      </linearGradient>
+    </defs>
+  )
+}
+
 export function StateIcon({ tone }: { tone: Tone }) {
+  const grad = useId()
   return (
     <svg className="state-icon" data-tone={tone} viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-      {GLYPHS[tone]}
+      {tone === 'fresh' ? (
+        <>
+          <Gradient id={grad} />
+          <circle cx="8" cy="8" r="4" fill={`url(#${grad}) currentColor`} />
+        </>
+      ) : (
+        GLYPHS[tone]
+      )}
     </svg>
   )
 }
@@ -55,6 +75,7 @@ const PATHS = {
   eye: ['M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z', 'M14.5 12a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z'],
   overview: ['M4 5.5A1.5 1.5 0 0 1 5.5 4h3A1.5 1.5 0 0 1 10 5.5v3A1.5 1.5 0 0 1 8.5 10h-3A1.5 1.5 0 0 1 4 8.5z', 'M14 5.5A1.5 1.5 0 0 1 15.5 4h3A1.5 1.5 0 0 1 20 5.5v3a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 14 8.5z', 'M4 15.5A1.5 1.5 0 0 1 5.5 14h3a1.5 1.5 0 0 1 1.5 1.5v3A1.5 1.5 0 0 1 8.5 20h-3A1.5 1.5 0 0 1 4 18.5z', 'M14 15.5a1.5 1.5 0 0 1 1.5-1.5h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-3a1.5 1.5 0 0 1-1.5-1.5z'],
   x: ['M6.5 6.5l11 11', 'M17.5 6.5l-11 11'],
+  check: ['M5 12.5l4.5 4.5L19 7.5'],
   next: ['M9.5 6l6 6-6 6'],
   previous: ['M14.5 6l-6 6 6 6'],
   theme: ['M20.5 12a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0z', 'M12 3.5v17', 'M12 8h5', 'M12 12h8', 'M12 16h5'],

@@ -1,13 +1,45 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
 import { getTheme } from '../api'
+import { useDismiss } from '../dismiss'
+import type { Palette } from '../shared/types'
 import { Icon } from './Icon'
-import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, type Look } from '../theme'
+import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, uiTokens, type Look } from '../theme'
+
+function previews(look: Look, more: boolean) {
+  return (['dark', 'light'] as const).flatMap((mode) => {
+    const p = mode === 'light' ? look.lightPalette : look.palette
+    return p ? [{ mode, p, tokens: uiTokens(p, more, look.gradient?.[mode], look.accent?.[mode]) }] : []
+  })
+}
+
+function Mini({ p, tokens }: { p: Palette; tokens: Record<string, string> }) {
+  return (
+    <span className="theme-mini" style={tokens as CSSProperties}>
+      <span className="theme-mini-side">
+        <span className="theme-mini-dot" />
+        <span className="theme-mini-line" />
+        <span className="theme-mini-line" data-dim />
+        <span className="theme-mini-pill" />
+      </span>
+      <span className="theme-mini-term">
+        <span className="theme-mini-prompt">❯</span>
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <span key={i} className="theme-mini-ansi" style={{ background: p.ansi[i] }} />
+        ))}
+      </span>
+    </span>
+  )
+}
 
 export function ThemePicker() {
-  const [selected, setSelected] = useState<Look>(() => savedLook() ?? DEVBOX)
+  const [selected, setSelected] = useState<Look>(() => savedLook() ?? PRESETS[0])
   const [ghostty, setGhostty] = useState<Look | null>(() => (selected.id === 'ghostty' ? selected : null))
   const [prefs, setPrefs] = useState(mediaPrefs)
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1)
+  const [open, setOpen] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const gallery = useId()
+  const dismiss = useDismiss(open, () => setOpen(false), '.theme-picker')
 
   useEffect(() => {
     let live = true
@@ -18,7 +50,7 @@ export function ThemePicker() {
         setGhostty(null)
         if (saved?.id === 'ghostty') {
           saveLook(null)
-          setSelected(DEVBOX)
+          setSelected(PRESETS[0])
         }
         return
       }
@@ -55,7 +87,9 @@ export function ThemePicker() {
   useEffect(() => {
     try {
       applyLook(selected, prefs)
+      setFailed(false)
     } catch {
+      setFailed(true)
       try {
         applyLook(DEVBOX, prefs)
       } catch {
@@ -64,25 +98,62 @@ export function ThemePicker() {
     }
   }, [selected, prefs, selected.cellHeight?.unit === 'px' ? dpr : 0])
 
-  const looks = ghostty ? [ghostty, ...PRESETS] : PRESETS
+  const looks = useMemo(() => (ghostty ? [ghostty, ...PRESETS] : PRESETS), [ghostty])
+  const minis = useMemo(() => new Map(looks.map((look) => [look.id, previews(look, prefs.more)])), [looks, prefs.more])
+  const [current] = selected.label.split(' · ')
   return (
-    <label className="theme-picker" title={`Theme: ${selected.label}`}>
-      <Icon name="theme" />
-      <span className="visually-hidden">Theme</span>
-      <select
-        value={selected.id}
-        onChange={(e) => {
-          const look = looks.find((l) => l.id === e.target.value) ?? DEVBOX
-          saveLook(look)
-          setSelected(look)
-        }}
+    <div className="theme-picker" tabIndex={-1} onKeyDown={dismiss.onKeyDown} onBlur={dismiss.onBlur}>
+      <button
+        type="button"
+        className="theme-toggle"
+        title={`Theme: ${selected.label}${failed ? " (couldn't apply)" : ''}`}
+        aria-expanded={open}
+        aria-controls={open ? gallery : undefined}
+        onClick={() => setOpen(!open)}
       >
-        {looks.map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.label}
-          </option>
-        ))}
-      </select>
-    </label>
+        <Icon name="theme" />
+        <span className="visually-hidden">Theme</span>
+      </button>
+      {open ? (
+        <fieldset id={gallery} className="theme-gallery">
+          <legend>Theme</legend>
+          <div className="theme-cards">
+            {looks.map((look) => {
+              const [name, ...scheme] = look.label.split(' · ')
+              const checked = look.id === selected.id
+              return (
+                <label key={look.id} className="theme-card">
+                  <input
+                    type="radio"
+                    className="visually-hidden"
+                    name={gallery}
+                    value={look.id}
+                    checked={checked}
+                    onChange={() => {
+                      saveLook(look)
+                      setSelected(look)
+                    }}
+                  />
+                  <span className="theme-minis" aria-hidden="true">
+                    {minis.get(look.id)?.map(({ mode, p, tokens }) => <Mini key={mode} p={p} tokens={tokens} />)}
+                  </span>
+                  <span className="theme-name">
+                    {name}
+                    {checked ? <Icon name="check" size={14} /> : null}
+                  </span>
+                  {scheme.length ? <span className="theme-scheme"> {scheme.join(' · ')}</span> : null}
+                </label>
+              )
+            })}
+          </div>
+          {failed ? (
+            <p className="theme-note" role="status">
+              {current} couldn't be applied here, so the default colors are showing.
+            </p>
+          ) : null}
+          <p className="theme-note">Light or dark follows your system.</p>
+        </fieldset>
+      ) : null}
+    </div>
   )
 }

@@ -433,7 +433,7 @@ function Detail({
 export function ignoredTarget(target: EventTarget | null): boolean {
   return (
     document.querySelector('dialog[open]') !== null ||
-    (target instanceof Element && target.closest('input, textarea, select, [contenteditable], .terminals, a, summary, .detail-actions') !== null)
+    (target instanceof Element && target.closest('input, textarea, select, [contenteditable], .terminals, a, summary, .detail-actions, .theme-picker') !== null)
   )
 }
 
