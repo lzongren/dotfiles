@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { buildItems, WorkspacePalette } from '../../src/components/WorkspacePalette'
 import type { Session, Workspace, WorkspacesResponse } from '../../src/shared/types'
 
@@ -33,7 +33,7 @@ const LISTING: WorkspacesResponse = {
   workspaces: WORKSPACES,
 }
 
-let fetchMock: ReturnType<typeof vi.fn>
+let fetchMock: Mock<(url: string, init?: RequestInit) => Promise<Response>>
 let postReply: () => Response
 
 beforeEach(() => {
