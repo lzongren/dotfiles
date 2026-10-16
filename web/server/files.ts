@@ -30,6 +30,10 @@ export function readOutputMax(file: string): number {
   return Math.ceil(readLimit(file) / 3) * 4 + 64 * 1024
 }
 
+export function readTimeout(file: string): number {
+  return 20000 + Math.ceil(readOutputMax(file) / (256 * 1024)) * 1000
+}
+
 export function openable(file: string): boolean {
   return OPENABLE.has(path.extname(file).toLowerCase())
 }

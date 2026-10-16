@@ -29,15 +29,17 @@ TEXT_MAX = 600
 KEEP_ARTIFACTS = 40
 KEEP_FILES = 40
 SHOW_FILES = 20
+KEEP_OUTPUTS = 20
+SHOW_OUTPUTS = 10
 PATCH_RE = re.compile(r"^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$", re.M)
 PATCH_ACTIONS = {"add": "created", "update": "edited", "delete": "deleted"}
 OUTPUT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|svg|html?|pdf)(?![\w/-])", re.I)
 OUTPUT_LINE = re.compile(rb"\.(?:png|jpe?g|gif|webp|svg|htm|pdf)", re.I)
-OUTPUT_SCAN = 64 * 1024
+OUTPUT_SCAN = 32 * 1024
 OUTPUT_GRACE = 600
 PATH_BACK = 1024
 FILE_URL = re.compile(r"file:(?://(?:localhost)?)?(?=/)")
-CD_RE = re.compile(r"^\s*cd\s+(\"[^\"]+\"|'[^']+'|[^\s;&|]+)\s*(?:&&|;)")
+CD_RE = re.compile(r"^\s*cd\s+(\"[^\"]+\"|'[^']+'|[^\s;&|]+)\s*(?:&&|;|\n)")
 BUILD_DIRS = {"build", "dist", "target", "node_modules", "coverage", "htmlcov", "brazil-documentation", "site-packages", ".venv", "venv", "__pycache__", ".git", ".gradle", ".next", ".cache"}
 KEEP_PENDING = 200
 FORK_REPLAY = 1.0
@@ -364,7 +366,8 @@ def scan_history(path, size, ino, cache, patterns, cwd=None, mtime=None):
             and not outputs
             and not (b'"type":"user"' in line and b'"tool_result"' not in line)
             and b'"user_message"' not in line
-            and b'"role":"user"' not in line
+            and b"workdir" not in line
+            and b'"command":"cd ' not in line
             and b"-title" not in line
             and b"filePath" not in line
             and b"apply_patch" not in line
@@ -411,15 +414,17 @@ def scan_history(path, size, ino, cache, patterns, cwd=None, mtime=None):
         for url, (label, action, by_someone) in found.items():
             note(artifacts, label, url, at, action, by_someone)
     entry["off"] = offset + end
-    settle_outputs(entry, entry["until"])
-    if time.time() > entry["until"]:
-        entry["outputs"] = {}
+    if entry.get("settled") != entry["until"]:
+        settle_outputs(entry, entry["until"])
+        if time.time() > entry["until"]:
+            entry["settled"] = entry["until"]
     if len(artifacts) > KEEP_ARTIFACTS:
         rank = lambda kv: (kv[1].get("said", False), kv[1].get("hits", 1), kv[1]["at"])
         keep = sorted(artifacts.items(), key=rank)[-KEEP_ARTIFACTS:]
         entry["artifacts"] = artifacts = dict(keep)
     if len(entry["files"]) > KEEP_FILES:
-        entry["files"] = dict(sorted(entry["files"].items(), key=lambda kv: kv[1]["at"])[-KEEP_FILES:])
+        newest = lambda shell, keep: sorted((kv for kv in entry["files"].items() if bool(kv[1].get("shell")) == shell), key=lambda kv: kv[1]["at"])[-keep:]
+        entry["files"] = dict(newest(False, KEEP_FILES) + newest(True, KEEP_OUTPUTS))
     cache[path] = entry
     SCANNED.add(path)
     return entry
@@ -472,26 +477,31 @@ def track_files(entry, rec, at, cwd, outputs=False):
 
 def is_prompt(rec):
     payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
-    return payload.get("type") == "user_message" or human_prompt(rec) is not None
+    codex = payload.get("type") == "user_message" or (payload.get("type") == "message" and payload.get("role") == "user")
+    return codex or human_prompt(rec) is not None
 
 
 def track_outputs(entry, rec, at, cwd, outputs):
     if is_prompt(rec):
         settle_outputs(entry, entry.get("until", at))
-        entry["outputs"], entry["turn"] = {}, at
-        entry.pop("cd", None)
+        entry["outputs"], entry["dirs"], entry["turn"] = {}, {}, at
         return
+    base = rec.get("cwd") if isinstance(rec.get("cwd"), str) else cwd
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    dirs = entry.setdefault("dirs", {})
+    for call, command, workdir in commands(rec, payload):
+        moved = CD_RE.match(command)
+        folder = workdir or (moved.group(1).strip("\"'") if moved else None)
+        if folder:
+            dirs[call] = os.path.normpath(os.path.join(base or "", os.path.expanduser(folder)))
+    while len(dirs) > KEEP_PENDING:
+        dirs.pop(next(iter(dirs)))
     if not outputs:
         return
     since = entry.get("turn", at)
-    base = rec.get("cwd") if isinstance(rec.get("cwd"), str) else cwd
-    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
-    for command, workdir in commands(rec, payload):
-        moved = workdir or (CD_RE.match(command).group(1).strip("\"'") if CD_RE.match(command) else None)
-        if moved:
-            entry["cd"] = os.path.normpath(os.path.join(base or "", os.path.expanduser(moved)))
     pending = entry.setdefault("outputs", {})
-    for name in mentioned(rec, [d for d in (entry.get("cd"), base) if d]):
+    bases = [dirs[c] for c in call_ids(rec, payload) if c in dirs] + ([base] if base else [])
+    for name in mentioned(rec, bases):
         pending[name] = pending.pop(name, [since, False])
     while len(pending) > KEEP_PENDING:
         pending.pop(next(iter(pending)))
@@ -500,22 +510,31 @@ def track_outputs(entry, rec, at, cwd, outputs):
 def commands(rec, payload):
     for block in msg(rec).get("content") or []:
         if isinstance(block, dict) and block.get("type") == "tool_use" and isinstance(block.get("input"), dict):
-            if isinstance(block["input"].get("command"), str):
-                yield block["input"]["command"], None
-    if payload.get("type") == "function_call" and isinstance(payload.get("arguments"), str):
+            if isinstance(block["input"].get("command"), str) and isinstance(block.get("id"), str):
+                yield block["id"], block["input"]["command"], None
+    if payload.get("type") == "function_call" and isinstance(payload.get("arguments"), str) and isinstance(payload.get("call_id"), str):
         try:
             args = json.loads(payload["arguments"])
         except ValueError:
             return
         if isinstance(args, dict):
             command = args.get("cmd") if isinstance(args.get("cmd"), str) else ""
-            yield command, args.get("workdir") if isinstance(args.get("workdir"), str) else None
+            yield payload["call_id"], command, args.get("workdir") if isinstance(args.get("workdir"), str) else None
+
+
+def call_ids(rec, payload):
+    ids = [payload["call_id"]] if isinstance(payload.get("call_id"), str) else []
+    for block in msg(rec).get("content") or []:
+        if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
+            ids.extend(block[k] for k in ("id", "tool_use_id") if isinstance(block.get(k), str))
+    return ids
 
 
 def mentioned(rec, bases):
     names = []
     for text in strings(rec):
-        text = text[:OUTPUT_SCAN]
+        if len(text) > 2 * OUTPUT_SCAN:
+            text = text[:OUTPUT_SCAN] + "\n" + text[-OUTPUT_SCAN:]
         if "file:" in text:
             text = FILE_URL.sub(" ", text)
         for match in OUTPUT_RE.finditer(text):
@@ -553,14 +572,16 @@ def settle_outputs(entry, until):
             pending.pop(name)
             seen = entry["files"].get(name)
             if seen is None or seen["at"] < int(written):
-                touch(entry["files"], name, "edited" if existed or seen else "created", int(written))
+                touch(entry["files"], name, "edited" if existed or seen else "created", int(written), shell=True)
 
 
-def touch(files, path, action, at):
+def touch(files, path, action, at, shell=False):
     path = os.path.normpath(path)
     if not os.path.isabs(path) or "/.claude/" in path or "/.codex/" in path:
         return
-    seen = files.setdefault(path, {"action": action, "at": at, "count": 0})
+    seen = files.setdefault(path, {"action": action, "at": at, "count": 0, "shell": shell})
+    if not shell:
+        seen.pop("shell", None)
     seen["count"] += 1
     seen["at"] = max(seen["at"], at)
     if action != "edited" or seen["action"] == "deleted":
@@ -568,8 +589,9 @@ def touch(files, path, action, at):
 
 
 def files_out(files):
-    ranked = sorted(files.items(), key=lambda kv: -kv[1]["at"])[:SHOW_FILES]
-    return [dict(f, path=p, gone=not os.path.exists(p)) for p, f in ranked]
+    newest = lambda shell, show: sorted((kv for kv in files.items() if bool(kv[1].get("shell")) == shell), key=lambda kv: -kv[1]["at"])[:show]
+    ranked = sorted(newest(False, SHOW_FILES) + newest(True, SHOW_OUTPUTS), key=lambda kv: -kv[1]["at"])
+    return [{"path": p, "action": f["action"], "at": f["at"], "count": f["count"], "gone": not os.path.exists(p)} for p, f in ranked]
 
 
 def track_tasks(tasks, rec):

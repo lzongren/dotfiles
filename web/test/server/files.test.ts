@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { allowed, describeFile, FILE_MAX, IMAGE_MAX, localMirror, parseRemoteRead, readLimit, readOutputMax, remoteReadScript } from '../../server/files.js'
+import { allowed, describeFile, FILE_MAX, IMAGE_MAX, localMirror, parseRemoteRead, readLimit, readOutputMax, readTimeout, remoteReadScript } from '../../server/files.js'
 import { createApp, type App } from '../../server/index.js'
 
 const stubsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../stubs')
@@ -57,6 +57,8 @@ describe('file access rules', () => {
     expect(stdout.length).toBeLessThanOrEqual(readOutputMax('/p/poster.png'))
     expect(parseRemoteRead('/p/poster.png', stdout)).toMatchObject({ kind: 'image', truncated: false })
     expect(readOutputMax('/p/notes.md')).toBeLessThan(readOutputMax('/p/poster.png'))
+    expect(readTimeout('/p/poster.png')).toBeGreaterThanOrEqual(60000)
+    expect(readTimeout('/p/notes.md')).toBeLessThan(30000)
   })
 })
 
