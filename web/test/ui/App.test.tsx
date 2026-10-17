@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 vi.mock('../../src/components/Terminal', () => ({
   TerminalPane: ({ name, side }: { name: string; side?: ReactNode }) => <div data-testid={`term-${name}`}>{side}</div>,
@@ -49,8 +49,10 @@ function okBody(sessions: Session[]): SessionsResponse {
   return { host: 'stub-host', fetchedAt: Date.now(), sessions }
 }
 
-let fetchMock: ReturnType<typeof vi.fn>
-let insightsMock: ReturnType<typeof vi.fn>
+type FetchMock = Mock<(url: string, init: RequestInit) => Promise<Response>>
+
+let fetchMock: FetchMock
+let insightsMock: FetchMock
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false })
