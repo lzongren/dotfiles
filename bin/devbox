@@ -500,7 +500,9 @@ fi
 
 if [[ "$1" == "web" ]]; then
   shift
-  WEB_DIR="$_DEVBOX_BIN_DIR/../web"
+  WEB_SUITE_ROOT="$(cd "$_DEVBOX_BIN_DIR/.." && pwd)"
+  WEB_SOURCE_DIR="$WEB_SUITE_ROOT/web"
+  WEB_DIR="$WEB_SOURCE_DIR"
   WEB_STATE_DIR="${DEVBOX_WEB_STATE:-${XDG_CACHE_HOME:-$HOME/.cache}/devbox/web}"
   WEB_STATE="$WEB_STATE_DIR/state.json"
   WEB_PORT="${DEVBOX_WEB_PORT:-7733}"
@@ -564,6 +566,14 @@ if [[ "$1" == "web" ]]; then
     exit 0
   fi
 
+  if [ "$WEB_ACTION" = start ]; then
+    mkdir -p "$WEB_STATE_DIR"
+  fi
+  if [ -d "$WEB_STATE_DIR" ]; then
+    WEB_STATE_DIR="$(cd -P "$WEB_STATE_DIR" && pwd)"
+    WEB_STATE="$WEB_STATE_DIR/state.json"
+  fi
+
   web_state_field() {
     sed -n 's/.*"'"$1"'":"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' "$WEB_STATE" 2>/dev/null | head -1
   }
@@ -625,8 +635,8 @@ if [[ "$1" == "web" ]]; then
       ;;
   esac
 
-  [ -d "$WEB_DIR" ] || {
-    echo "devbox: devbox web requires the web/ sources (clone the dotfiles repo; releases do not include web yet)" >&2
+  [ -d "$WEB_SOURCE_DIR" ] || {
+    echo "devbox: devbox web requires the web/ sources; reinstall this release or use a complete checkout" >&2
     exit 1
   }
   command -v node >/dev/null 2>&1 || {
@@ -648,7 +658,30 @@ if [[ "$1" == "web" ]]; then
     exit 1
   }
 
-  mkdir -p "$WEB_STATE_DIR"
+  if [ -f "$WEB_SUITE_ROOT/release.env" ]; then
+    web_release_version="$(dotfiles_tools_metadata_value DOTFILES_TOOLS_RELEASE_VERSION "$WEB_SUITE_ROOT/release.env")"
+    web_release_commit="$(dotfiles_tools_metadata_value DOTFILES_TOOLS_RELEASE_COMMIT "$WEB_SUITE_ROOT/release.env")"
+    if ! [[ "$web_release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
+      ! [[ "$web_release_commit" =~ ^[0-9a-f]{40}$ ]]; then
+      echo "devbox: installed release has invalid web runtime metadata" >&2
+      exit 1
+    fi
+    web_runtime_key="$web_release_version-${web_release_commit:0:12}"
+    web_runtime_root="$WEB_STATE_DIR/runtime"
+    WEB_DIR="$web_runtime_root/$web_runtime_key"
+    web_runtime_marker="$WEB_DIR/.release-source"
+    if [ ! -f "$web_runtime_marker" ] || [ "$(cat "$web_runtime_marker" 2>/dev/null)" != "$web_runtime_key" ]; then
+      web_runtime_tmp="$web_runtime_root/.$web_runtime_key.tmp.$$"
+      mkdir -p "$web_runtime_root"
+      rm -rf "$web_runtime_tmp"
+      mkdir -p "$web_runtime_tmp"
+      cp -R "$WEB_SOURCE_DIR/." "$web_runtime_tmp/"
+      rm -rf "$web_runtime_tmp/node_modules" "$web_runtime_tmp/dist" "$web_runtime_tmp/dist-server"
+      printf '%s\n' "$web_runtime_key" >"$web_runtime_tmp/.release-source"
+      rm -rf "$WEB_DIR"
+      mv "$web_runtime_tmp" "$WEB_DIR"
+    fi
+  fi
   web_stamp="$WEB_DIR/dist-server/.stamp"
   web_build="$WEB_REBUILD"
   [ -f "$web_stamp" ] || web_build=1
