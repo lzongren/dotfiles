@@ -125,6 +125,11 @@ pack_payload() {
   [[ "$output" == *"dotfiles-tools-$VERSION/manifest.json"* ]]
   [[ "$output" == *"dotfiles-tools-$VERSION/checksums.txt"* ]]
   [[ "$output" == *"dotfiles-tools-$VERSION/remote-dev/lib.sh"* ]]
+  [[ "$output" == *"dotfiles-tools-$VERSION/web/package.json"* ]]
+  [[ "$output" == *"dotfiles-tools-$VERSION/web/package-lock.json"* ]]
+  [[ "$output" == *"dotfiles-tools-$VERSION/web/server/index.ts"* ]]
+  [[ "$output" == *"dotfiles-tools-$VERSION/web/src/main.tsx"* ]]
+  [[ "$output" == *"dotfiles-tools-$VERSION/web/probe/agent-probe.py"* ]]
 }
 
 @test "release builder rejects a tag that does not match VERSION" {

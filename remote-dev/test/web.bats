@@ -7,8 +7,9 @@ setup() {
   REPO="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 
   TREE="$BATS_TEST_TMPDIR/tree"
-  mkdir -p "$TREE/bin" "$TREE/remote-dev" "$TREE/web/src" "$TREE/web/server" "$TREE/web/dist-server"
+  mkdir -p "$TREE/bin" "$TREE/lib" "$TREE/remote-dev" "$TREE/web/src" "$TREE/web/server" "$TREE/web/dist-server"
   cp "$REPO/bin/devbox" "$TREE/bin/"
+  cp "$REPO/lib/dotfiles-tools-version.sh" "$TREE/lib/"
   cp "$REPO/remote-dev/lib.sh" "$TREE/remote-dev/"
   touch "$TREE/web/index.html" "$TREE/web/package.json" "$TREE/web/package-lock.json" \
     "$TREE/web/vite.config.ts" "$TREE/web/tsconfig.json" "$TREE/web/tsconfig.server.json"
@@ -29,9 +30,9 @@ fi
 env | grep -E '^DEVBOX_(BIN|WEB_STATE|WEB_PORT)=' >>"$CALLS"
 echo "node $*" >>"$CALLS"
 printf '{"pid":%s,"port":%s,"token":"tok123","version":"0.0.0"}' "$$" "${DEVBOX_WEB_PORT:-7733}" >"$DEVBOX_WEB_STATE/state.json"
-sleep 60
+sleep "${NODE_STUB_SLEEP:-60}"
 SH
-  printf '#!/bin/bash\necho "npm $*" >>"$CALLS"\n' >"$STUBS/npm"
+  printf '#!/bin/bash\necho "npm $*" >>"$CALLS"\necho "npm-cwd $PWD" >>"$CALLS"\n' >"$STUBS/npm"
   printf '#!/bin/bash\necho "curl $*" >>"$CALLS"\nexit "${CURL_EXIT:-0}"\n' >"$STUBS/curl"
   printf '#!/bin/bash\necho "open $*" >>"$CALLS"\n' >"$STUBS/open"
   chmod +x "$STUBS"/*
@@ -70,10 +71,42 @@ teardown() {
   grep -q '^npm run build$' "$CALLS"
   [ -f "$TREE/web/dist-server/.stamp" ]
   grep -q "^DEVBOX_BIN=$(cd -P "$TREE/bin" && pwd)$" "$CALLS"
-  grep -q "^DEVBOX_WEB_STATE=$DEVBOX_WEB_STATE$" "$CALLS"
+  grep -q "^DEVBOX_WEB_STATE=$(cd -P "$DEVBOX_WEB_STATE" && pwd)$" "$CALLS"
   grep -q '^DEVBOX_WEB_PORT=7733$' "$CALLS"
   grep -q 'dist-server/server/index.js' "$CALLS"
   grep -q '^open http://127.0.0.1:7733/#t=tok123$' "$CALLS"
+}
+
+@test "web: an installed release builds from a writable versioned runtime copy" {
+  rm -rf "$TREE/web/dist-server"
+  touch "$TREE/web/server/index.ts"
+  cat >"$TREE/release.env" <<'EOF'
+DOTFILES_TOOLS_RELEASE_VERSION=0.2.1
+DOTFILES_TOOLS_RELEASE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+DOTFILES_TOOLS_RELEASE_TAG=tools-v0.2.1
+EOF
+
+  NODE_STUB_SLEEP=1 run "$DEVBOX" web --no-open
+  [ "$status" -eq 0 ]
+  runtime="$(cd -P "$DEVBOX_WEB_STATE" && pwd)/runtime/0.2.1-aaaaaaaaaaaa"
+  [ -f "$runtime/package.json" ]
+  [ -f "$runtime/server/index.ts" ]
+  [ -f "$runtime/dist-server/.stamp" ]
+  [ ! -e "$TREE/web/dist-server" ]
+  grep -Fxq "npm-cwd $runtime" "$CALLS"
+}
+
+@test "web: canonicalizes a symlinked state directory before starting node" {
+  real_state="$BATS_TEST_TMPDIR/real-webstate"
+  linked_state="$BATS_TEST_TMPDIR/linked-webstate"
+  mkdir -p "$real_state"
+  ln -s "$real_state" "$linked_state"
+  DEVBOX_WEB_STATE="$linked_state"
+  real_state="$(cd -P "$real_state" && pwd)"
+
+  NODE_STUB_SLEEP=1 run "$DEVBOX" web --no-open
+  [ "$status" -eq 0 ]
+  grep -Fxq "DEVBOX_WEB_STATE=$real_state" "$CALLS"
 }
 
 @test "web: --no-open suppresses the browser" {

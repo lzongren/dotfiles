@@ -108,7 +108,7 @@ explicit path (`devbox --cc <name> <path>`) is used as given.
 ### Web dashboard: `devbox web`
 
 A local dashboard of the remote tmux sessions, with in-browser terminals
-(needs node >=22 and a checkout of this repo; releases don't ship it yet):
+(needs node >=22; available from a versioned release or a source checkout):
 
 ```bash
 devbox web           # build if sources changed, start or reuse, open the URL
@@ -116,6 +116,11 @@ devbox web url       # print the URL again (the token rotates per server start)
 devbox web status    # running?
 devbox web stop
 ```
+
+Release installs keep their verified files immutable. On first launch, the
+packaged Web sources are copied to a version-and-commit-specific directory
+under `${XDG_CACHE_HOME:-~/.cache}/devbox/web/runtime/`, where `npm ci` and the
+build run. Source checkouts continue to build in their own `web/` directory.
 
 ```
 browser ──HTTP + WebSocket──► node server on 127.0.0.1:7733 (per-run token)

@@ -70,7 +70,7 @@ trap 'rm -rf "$BUILD_TMP"' EXIT
 PAYLOAD_NAME="dotfiles-tools-$VERSION"
 PAYLOAD="$BUILD_TMP/$PAYLOAD_NAME"
 ARCHIVE_NAME="$PAYLOAD_NAME.tar.gz"
-mkdir -p "$PAYLOAD/bin" "$PAYLOAD/lib" "$PAYLOAD/remote-dev" "$OUTPUT_DIR"
+mkdir -p "$PAYLOAD/bin" "$PAYLOAD/lib" "$PAYLOAD/remote-dev" "$PAYLOAD/web" "$OUTPUT_DIR"
 
 cp "$REPO_ROOT/VERSION" "$PAYLOAD/VERSION"
 cp "$REPO_ROOT/bin/dev" "$PAYLOAD/bin/dev"
@@ -85,6 +85,14 @@ cp "$REPO_ROOT/remote-dev/lib.sh" "$PAYLOAD/remote-dev/lib.sh"
 cp "$REPO_ROOT/remote-dev/setup-remote.sh" "$PAYLOAD/remote-dev/setup-remote.sh"
 cp "$REPO_ROOT/remote-dev/setup-sync.sh" "$PAYLOAD/remote-dev/setup-sync.sh"
 cp "$REPO_ROOT/remote-dev/tmux.conf" "$PAYLOAD/remote-dev/tmux.conf"
+
+# Ship only tracked web sources. Copying the directory wholesale would make a
+# local node_modules/ or build output part of the immutable release archive.
+while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  mkdir -p "$PAYLOAD/$(dirname "$file")"
+  cp "$REPO_ROOT/$file" "$PAYLOAD/$file"
+done < <(git -C "$REPO_ROOT" ls-files web)
 
 {
   printf 'DOTFILES_TOOLS_RELEASE_VERSION=%s\n' "$VERSION"
