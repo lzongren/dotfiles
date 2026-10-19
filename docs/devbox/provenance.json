@@ -1,0 +1,10 @@
+{
+  "prfaq_version": "0.8",
+  "prototype_version": "0.7",
+  "source_language": "zh-CN",
+  "edition_language": "en",
+  "source_filename": "prfaq-content-v0.8.json",
+  "source_sha256": "cbb4e1e2895f2fb78e1c53e23f71173fa870ed9dafec3a9d6feed3f99a932816",
+  "translation": "All 27 questions and material appendix rules retained; repeated material consolidated. Extension effort terms clarified from the final review.",
+  "evidence": "Original Chinese simulated-review reports are retained. They do not constitute human-user research."
+}
