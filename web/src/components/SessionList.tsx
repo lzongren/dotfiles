@@ -54,7 +54,11 @@ export function SessionList({
   seenAt = () => Infinity,
   active,
   onAttach,
+  needs = new Map(),
+  others = false,
 }: {
+  needs?: Map<string, string>
+  others?: boolean
   sessions: Session[]
   insights?: Map<string, AgentInsight>
   now: number
@@ -76,7 +80,7 @@ export function SessionList({
   }
 
   const byName = new Map(sessions.map((s) => [s.name, s]))
-  const lanes = new Map(sessions.map((s) => [s.name, laneOf(s, insights.get(s.name), seenAt(s.name), now)]))
+  const lanes = new Map(sessions.map((s) => [s.name, needs.has(s.name) ? 'blocked' : laneOf(s, insights.get(s.name), seenAt(s.name), now)]))
   const mark = (s: Session) => changeMark(s, insights.get(s.name))
   const order: Record<Lane, (a: Session, b: Session) => number> = {
     blocked: (a, b) => mark(a) - mark(b),
@@ -116,8 +120,9 @@ export function SessionList({
     const insight = insights.get(s.name)
     const title = insight ? displayTitle(headline(s), insight) : ''
     const info = title ? { text: title, live: true } : sessionSummary(s)
-    const tone = toneOf(s, insight, isFresh(s, insight, seenAt(s.name)), now)
-    const why = whyOf(tone, insight)
+    const own = toneOf(s, insight, isFresh(s, insight, seenAt(s.name)), now)
+    const tone = needs.has(s.name) && own !== 'waiting' && own !== 'error' ? 'bell' : own
+    const why = needs.get(s.name) ?? whyOf(tone, insight)
     const bell = s.bell && tone !== 'bell'
     return (
       <li key={s.name}>
@@ -173,7 +178,7 @@ export function SessionList({
       </div>
       {GROUPS.map(({ lane, title }) => {
         const names = placed(lane)
-        if (names.length === 0 && lane !== 'blocked') return null
+        if (names.length === 0 && (lane !== 'blocked' || others)) return null
         const open = lane !== 'parked' || parkedOpen
         const label = names.length ? (
           <>

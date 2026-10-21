@@ -22,7 +22,7 @@ function failure(r: ApiResult<unknown>): string {
   return r.kind === 'unreachable' ? "Can't reach the host to read this file. Check your VPN or proxy sign-in, then try again." : explain(r)
 }
 
-function baseName(file: string): string {
+export function baseName(file: string): string {
   return file.slice(file.lastIndexOf('/') + 1)
 }
 
@@ -50,10 +50,13 @@ export function FileList({
                 {baseName(f.path)}
               </button>
             )}
-            {dir ? <span className="file-dir">{dir}</span> : null}
-            <span className="artifact-note">{f.gone ? 'gone' : f.action}</span>
+            {dir ? <span className="file-dir">in {dir}/</span> : null}
+            <span className="artifact-note">
+              {f.gone ? 'gone' : f.action}
+              {f.label ? ' by' : ''}
+            </span>
             {f.label ? <span className="artifact-session">{f.label}</span> : null}
-            <span className="artifact-note">{ago(now, f.at)}</span>
+            <span className="artifact-note">{ago(now, f.at)} ago</span>
           </li>
         )
       })}

@@ -52,18 +52,18 @@ afterEach(() => {
   sessionStorage.clear()
 })
 
-async function renderPalette(onOpen = vi.fn(), onSessionsChanged = vi.fn()) {
+async function renderPalette(onOpen = vi.fn(), onSessionsChanged = vi.fn(), onNew = vi.fn()) {
   const view = render(
-    <WorkspacePalette sessions={SESSIONS} now={NOW * 1000} onOpen={onOpen} onSessionsChanged={onSessionsChanged} />,
+    <WorkspacePalette sessions={SESSIONS} now={NOW * 1000} onOpen={onOpen} onNew={onNew} onSessionsChanged={onSessionsChanged} />,
   )
   await act(async () => {
     await Promise.resolve()
   })
-  fireEvent.focus(screen.getByRole('combobox', { name: 'search or create a workspace' }))
-  return Object.assign(onOpen, { view, onSessionsChanged })
+  fireEvent.focus(screen.getByRole('combobox', { name: 'search sessions or start one' }))
+  return Object.assign(onOpen, { view, onSessionsChanged, onNew })
 }
 
-const input = () => screen.getByRole('combobox', { name: 'search or create a workspace' })
+const input = () => screen.getByRole('combobox', { name: 'search sessions or start one' })
 const options = () => within(screen.getByRole('listbox', { hidden: true })).queryAllByRole('option')
 const names = () => options().map((o) => o.querySelector('.palette-name')?.textContent)
 
@@ -88,6 +88,11 @@ describe('buildItems', () => {
     const items = buildItems('EVAL', SESSIONS, WORKSPACES, 'work')
     expect(items.filter((i) => i.kind !== 'create').map((i) => i.name)).toEqual(['eval-latency', 'eval-harness'])
     expect(items.at(-1)?.kind).toBe('create')
+  })
+
+  it("matches a live session by its title, and shows the title", () => {
+    const items = buildItems('latency budget', SESSIONS, WORKSPACES, 'work', { 'eval-latency': 'Latency budget review' })
+    expect(items.filter((i) => i.kind !== 'create').map((i) => [i.name, i.title])).toEqual([['eval-latency', 'Latency budget review']])
   })
 
   it('offers create only for a new valid name', () => {
@@ -145,26 +150,32 @@ describe('WorkspacePalette', () => {
     expect(posts()).toHaveLength(0)
   })
 
-  it('Enter on a folder starts the selected agent in its own root, then attaches', async () => {
+  it('names claude on the row it starts, and leaves the other choices to the New session page', async () => {
+    const palette = await renderPalette()
+    fireEvent.change(input(), { target: { value: 'harness' } })
+    expect(screen.getByRole('option', { name: /eval-harness/ })).toHaveTextContent('start claude')
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    expect(palette.onNew).toHaveBeenCalled()
+  })
+
+  it('Enter on a folder starts claude in its own root, then attaches', async () => {
     const onOpen = await renderPalette()
-    fireEvent.click(screen.getByRole('radio', { name: 'codex' }))
     fireEvent.change(input(), { target: { value: 'harness' } })
     await act(async () => {
       fireEvent.keyDown(input(), { key: 'Enter' })
     })
-    expect(posts()).toEqual([{ name: 'eval-harness', root: 'lab', agent: 'codex' }])
+    expect(posts()).toEqual([{ name: 'eval-harness', root: 'lab', agent: 'cc' }])
     expect(onOpen).toHaveBeenCalledWith('eval-harness')
   })
 
-  it('creates a new workspace in the chosen root with claude by default', async () => {
+  it('creates a new workspace in the first root with claude', async () => {
     const onOpen = await renderPalette()
-    fireEvent.change(screen.getByRole('combobox', { name: 'sync root' }), { target: { value: 'lab' } })
     fireEvent.change(input(), { target: { value: 'fresh-idea' } })
     expect(names()).toEqual(['create fresh-idea'])
     await act(async () => {
       fireEvent.keyDown(input(), { key: 'Enter' })
     })
-    expect(posts()).toEqual([{ name: 'fresh-idea', root: 'lab', agent: 'cc' }])
+    expect(posts()).toEqual([{ name: 'fresh-idea', root: 'work', agent: 'cc' }])
     expect(onOpen).toHaveBeenCalledWith('fresh-idea')
     expect(input()).toHaveValue('')
   })
@@ -175,7 +186,7 @@ describe('WorkspacePalette', () => {
     expect(options()[1]).toHaveTextContent('eval-harness')
     const resorted = [session('eval-latency', NOW - 30), session('scratch', NOW - 1), session('api - ~/work/api', NOW - 5, false)]
     onOpen.view.rerender(
-      <WorkspacePalette sessions={resorted} now={NOW * 1000} onOpen={onOpen} onSessionsChanged={onOpen.onSessionsChanged} />,
+      <WorkspacePalette sessions={resorted} now={NOW * 1000} onOpen={onOpen} onNew={onOpen.onNew} onSessionsChanged={onOpen.onSessionsChanged} />,
     )
     expect(names()[0]).toBe('scratch')
     const selected = options().find((o) => o.getAttribute('aria-selected') === 'true')
@@ -222,20 +233,6 @@ describe('WorkspacePalette', () => {
     expect(screen.getByRole('listbox', { hidden: true })).not.toBeVisible()
     fireEvent.focus(input())
     expect(options()).toHaveLength(4)
-  })
-
-  it('stays open while choosing an agent with the mouse, and closes when focus leaves the palette', async () => {
-    await renderPalette()
-    const codexLabel = screen.getByText('codex').closest('label') as HTMLElement
-    expect(fireEvent.mouseDown(codexLabel)).toBe(false)
-    fireEvent.click(codexLabel)
-    expect(screen.getByRole('radio', { name: 'codex' })).toBeChecked()
-    expect(screen.getByRole('listbox', { hidden: true })).toBeVisible()
-    const rootPicker = screen.getByRole('combobox', { name: 'sync root' })
-    fireEvent.blur(input(), { relatedTarget: rootPicker })
-    expect(screen.getByRole('listbox', { hidden: true })).toBeVisible()
-    fireEvent.blur(rootPicker, { relatedTarget: document.body })
-    expect(screen.getByRole('listbox', { hidden: true })).not.toBeVisible()
   })
 
   it('does not point aria-activedescendant into a closed list', async () => {
@@ -309,13 +306,5 @@ describe('WorkspacePalette', () => {
     fireEvent.keyDown(other, { key: '/' })
     expect(document.activeElement).toBe(other)
     other.remove()
-  })
-
-  it('hides the root picker when there is only one sync root', async () => {
-    fetchMock.mockImplementation(async (url: string) =>
-      url === '/api/workspaces' ? json({ ...LISTING, roots: [LISTING.roots[0]] }) : json({}, 404),
-    )
-    await renderPalette()
-    expect(screen.queryByRole('combobox', { name: 'sync root' })).not.toBeInTheDocument()
   })
 })
