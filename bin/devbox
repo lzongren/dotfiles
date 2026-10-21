@@ -9,10 +9,11 @@
 # root, `devbox [--cc|--codex] <name>` starts the new session in <root>/<name>,
 # creating that folder on both sides.
 #
-# Usage: devbox [session-name]            (remote shell; default session: main)
+# Usage: devbox [session-name] [path]     (remote shell; default session: main)
 #        devbox --cc [session-name] [path]  (Claude Code on remote)
 #        devbox --codex [session-name] [path]  (Codex on remote)
-#        devbox --detach [--cc|--codex] [name]  (start it remotely, don't attach)
+#        devbox --detach [--cc|--codex] [name] [path]  (start it remotely, don't attach)
+#        devbox --detach --fresh --cc|--codex [name]  (a new conversation, not --continue)
 #        devbox list                     (show running sessions, don't connect)
 #        devbox status                   (session table: state, idle, cmd, path)
 #        devbox doctor [--require-agent cc|codex]  (readiness checks)
@@ -82,10 +83,14 @@ devbox_agent_command() {
   case "$1" in
     cc | claude)
       # claude --continue exits 1 in a folder that has no conversation yet.
-      printf '%s' 'if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then claude --continue || exec claude; exit; fi; printf "devbox: Claude Code is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix claude on the remote, then run devbox --cc again.\n"; exec "${SHELL:-/bin/sh}" -l'
+      local start='claude --continue || exec claude; exit'
+      [ "${2:-}" = 1 ] && start='exec claude'
+      printf '%s' 'if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then '"$start"'; fi; printf "devbox: Claude Code is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix claude on the remote, then run devbox --cc again.\n"; exec "${SHELL:-/bin/sh}" -l'
       ;;
     codex)
-      printf '%s' 'if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then exec codex resume --last; fi; printf "devbox: Codex is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix codex on the remote, then run devbox --codex again.\n"; exec "${SHELL:-/bin/sh}" -l'
+      local start='exec codex resume --last'
+      [ "${2:-}" = 1 ] && start='exec codex'
+      printf '%s' 'if command -v codex >/dev/null 2>&1 && codex --version >/dev/null 2>&1; then '"$start"'; fi; printf "devbox: Codex is not installed or failed to start on this remote host.\n"; printf "devbox: install/fix codex on the remote, then run devbox --codex again.\n"; exec "${SHELL:-/bin/sh}" -l'
       ;;
   esac
 }
@@ -847,6 +852,11 @@ if [[ "${1:-}" == "--detach" ]]; then
   DETACH=1
   shift
 fi
+FRESH=0
+if [[ "$DETACH" = 1 && "${1:-}" == "--fresh" ]]; then
+  FRESH=1
+  shift
+fi
 
 AGENT_MODE=""
 LOCAL_DIR="$PWD"
@@ -886,6 +896,15 @@ case "${1:-}" in
   *)
     SESSION="${1:-main}"
     WORKSPACE_NAME="${1:-}"
+    if [ "$#" -ge 2 ]; then
+      LOCAL_DIR="${2/#\~/$HOME}"
+      WORKSPACE_NAME=""
+      [ -d "$LOCAL_DIR" ] || {
+        echo "devbox: path is not a directory: $LOCAL_DIR" >&2
+        exit 1
+      }
+      LOCAL_DIR="$(CDPATH='' cd -- "$LOCAL_DIR" && pwd)" || exit 1
+    fi
     ;;
 esac
 
@@ -937,7 +956,7 @@ fi
 # tmux args as an array so both transports run the identical remote command.
 TMUX_ARGS=(-s "$SESSION")
 [ -n "$CDIR" ] && TMUX_ARGS+=(-c "$CDIR")
-[ -n "$AGENT_MODE" ] && TMUX_ARGS+=("$(devbox_agent_command "$AGENT_MODE")")
+[ -n "$AGENT_MODE" ] && TMUX_ARGS+=("$(devbox_agent_command "$AGENT_MODE" "$FRESH")")
 TMUX_CMD=(tmux new-session -A "${TMUX_ARGS[@]}")
 
 if [ "$DETACH" = 1 ]; then

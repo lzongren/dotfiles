@@ -124,3 +124,42 @@ tmux_args() { sed -n '/^--- tmux$/,$p' "$TMUX_LOG" | sed '1d'; }
   [ ! -e "$ROOT/proj" ]
   [ ! -s "$TMUX_LOG" ]
 }
+
+@test "detach: --fresh starts a new conversation in an existing folder instead of continuing one" {
+  mkdir -p "$REMOTE/work/app"
+  cd "$ROOT/app"
+  run "$DEVBOX" --detach --fresh --cc app-review
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"created app-review" ]]
+  args="$(tmux_args)"
+  [ "$(printf '%s\n' "$args" | sed -n 1,6p | tr '\n' ' ')" = "new-session -d -s app-review -c $REMOTE/work/app " ]
+  [[ "$(printf '%s\n' "$args" | sed -n 7p)" == *"exec claude;"* ]]
+  [[ "$(printf '%s\n' "$args" | sed -n 7p)" != *"--continue"* ]]
+  [ ! -e "$ROOT/app/app-review" ]
+}
+
+@test "detach: --fresh codex starts codex without resuming the last conversation" {
+  cd "$ROOT/app"
+  run "$DEVBOX" --detach --fresh --codex app-codex
+  [ "$status" -eq 0 ]
+  [[ "$(tmux_args | sed -n 7p)" == *"exec codex;"* ]]
+  [[ "$(tmux_args | sed -n 7p)" != *"resume"* ]]
+}
+
+@test "detach: a shell starts in the folder given, even a sync root itself" {
+  cd "$BATS_TEST_TMPDIR"
+  run "$DEVBOX" --detach root-sh "$ROOT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"created root-sh" ]]
+  [ "$(tmux_args | sed -n 1,4p | tr '\n' ' ')" = "new-session -d -s root-sh " ]
+  [ "$(tmux_args | sed -n 5,6p | tr '\n' ' ')" = "-c $REMOTE/work " ]
+  [ ! -e "$ROOT/root-sh" ]
+}
+
+@test "detach: --fresh --cc with a path starts there, not in a new workspace folder" {
+  cd "$BATS_TEST_TMPDIR"
+  run "$DEVBOX" --detach --fresh --cc root-cc "$ROOT"
+  [ "$status" -eq 0 ]
+  [ "$(tmux_args | sed -n 1,6p | tr '\n' ' ')" = "new-session -d -s root-cc -c $REMOTE/work " ]
+  [ ! -e "$ROOT/root-cc" ]
+}
