@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { PRESETS, TERMINAL_OPTIONS, uiTokens } from '../../src/theme'
+import { lookTokens, PRESETS, TERMINAL_OPTIONS, uiTokens } from '../../src/theme'
 import type { Palette } from '../../src/shared/types'
 
 const css = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/styles.css'), 'utf8')
@@ -103,7 +103,7 @@ describe.each(PRESETS.flatMap((l) => [[`${l.label} dark`, l, 'dark'] as const, [
   '%s accent',
   (_, look, mode) => {
     it('stands apart from the text, so accent-colored state still shows', () => {
-      const t = uiTokens(mode === 'dark' ? look.palette! : look.lightPalette!, false, look.gradient![mode], look.accent?.[mode])
+      const t = lookTokens(look, mode)
       expect(contrast(t['--accent'], t['--text'])).toBeGreaterThanOrEqual(1.5)
     })
   },
@@ -118,32 +118,30 @@ const MUDDY: Palette = { background: '#555555', foreground: '#777777', ansi: Arr
 const MID_LIGHT_TEXT: Palette = { background: '#767676', foreground: '#ffffff', ansi: Array(16).fill('#9a9a9a') }
 const MID_DARK_TEXT: Palette = { background: '#808080', foreground: '#000000', ansi: Array(16).fill('#606060') }
 
-type Stops = Parameters<typeof uiTokens>[2]
-const CASES: [string, Palette, Stops, string?][] = [
-  ...PRESETS.flatMap((l): [string, Palette, Stops, string?][] => [
-    [`${l.label} dark`, l.palette!, l.gradient!.dark, l.accent?.dark],
-    [`${l.label} light`, l.lightPalette!, l.gradient!.light, l.accent?.light],
-  ]),
-  ['Catppuccin Latte', LATTE, undefined],
-  ['a low-contrast palette', MUDDY, undefined],
-  ['a mid-grey background with white text', MID_LIGHT_TEXT, undefined],
-  ['a mid-grey background with black text', MID_DARK_TEXT, undefined],
+type Case = [string, Palette, (more: boolean) => Record<string, string>]
+const plain = (name: string, p: Palette): Case => [name, p, (more) => uiTokens(p, more)]
+const CASES: Case[] = [
+  ...PRESETS.flatMap((l) => (['dark', 'light'] as const).map((mode): Case => [`${l.label} ${mode}`, mode === 'dark' ? l.palette! : l.lightPalette!, (more) => lookTokens(l, mode, more)])),
+  plain('Catppuccin Latte', LATTE),
+  plain('a low-contrast palette', MUDDY),
+  plain('a mid-grey background with white text', MID_LIGHT_TEXT),
+  plain('a mid-grey background with black text', MID_DARK_TEXT),
 ]
 
 describe.each(
-  CASES.flatMap(([name, palette, stops, accent]) => [
-    [name, palette, stops, accent, false] as const,
-    [`${name}, more contrast`, palette, stops, accent, true] as const,
+  CASES.flatMap(([name, palette, make]) => [
+    [name, palette, make, false] as const,
+    [`${name}, more contrast`, palette, make, true] as const,
   ]),
-)('theme derived from %s (WCAG AA)', (_, palette, stops, accent, more) => {
-  const t = uiTokens(palette, more, stops, accent)
+)('theme derived from %s (WCAG AA)', (_, palette, make, more) => {
+  const t = make(more)
   it('keeps every text token at least 4.5:1 on every surface', () => {
-    for (const fg of ['--text', '--dim', '--accent', '--bell', '--danger', '--grad-a', '--grad-b', '--grad-c']) {
+    for (const fg of ['--text', '--dim', '--accent', '--accent-soft', '--bell', '--danger', '--grad-a', '--grad-b', '--grad-c']) {
       for (const bg of ['--bg', '--surface', '--tile', '--raised', '--selected']) {
         expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
       }
     }
-    for (const [bg, fgs] of [['--bell-bg', ['--text', '--dim', '--bell']], ['--danger-bg', ['--text', '--dim', '--danger']]] as const) {
+    for (const [bg, fgs] of [['--bell-bg', ['--text', '--dim', '--bell', '--accent', '--accent-soft']], ['--danger-bg', ['--text', '--dim', '--danger', '--accent', '--accent-soft']]] as const) {
       for (const fg of fgs) expect(contrast(t[fg], t[bg]), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5)
     }
   })
@@ -161,6 +159,7 @@ describe.each(
   it('keeps chip text and control borders readable', () => {
     for (const [fg, bg] of [
       ['--on-accent', '--accent'],
+      ['--on-accent', '--accent-hover'],
       ['--on-accent', '--grad-a'],
       ['--on-accent', '--grad-b'],
       ['--on-accent', '--grad-c'],
@@ -171,5 +170,8 @@ describe.each(
     }
     expect(contrast(t['--control'], t['--bg'])).toBeGreaterThanOrEqual(more ? 4.5 : 3)
     expect(contrast(t['--control'], t['--surface'])).toBeGreaterThanOrEqual(more ? 4.5 : 3)
+    for (const bg of ['--bg', '--surface', '--tile', '--raised', '--selected', '--bell-bg', '--danger-bg']) {
+      expect(contrast(t['--accent-line'], t[bg]), `--accent-line on ${bg}`).toBeGreaterThanOrEqual(more ? 4.5 : 3)
+    }
   })
 })
