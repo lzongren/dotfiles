@@ -1,7 +1,8 @@
 """Report what each tmux session's coding agent is doing, as one JSON document.
 
 Runs on the remote host (Python 3.7+, stdlib only), fed over ssh stdin. The
-server prepends one line, `ARGS = {...}`, carrying the artifact patterns.
+server prepends one line, `ARGS = {...}`, carrying the artifact patterns. With
+`"mode": "return"` it instead reports the records one work item is recovered from.
 """
 import datetime
 import glob
@@ -13,6 +14,7 @@ import re
 import signal
 import stat as stat_mode
 import subprocess
+import sys
 import time
 
 ARGS = globals().get("ARGS") or {}
@@ -179,7 +181,7 @@ def tmux_panes():
             ["tmux", "list-panes", "-a", "-F", fmt],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            universal_newlines=True,
+            universal_newlines=True, errors="replace",
             timeout=5,
         ).stdout
     except (OSError, subprocess.SubprocessError):
@@ -787,6 +789,551 @@ def save_cache(path, cache, key):
         pass
 
 
+RETURN_TEXT = 4096
+SHELL_LINES = 40
+DEFAULT_BRANCHES = {"main", "master", "develop", "HEAD", ""}
+
+
+def keep(text, limit=RETURN_TEXT):
+    if not isinstance(text, str):
+        return ""
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def git_place(path):
+    try:
+        out = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            universal_newlines=True, errors="replace",
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    lines = out.stdout.splitlines()
+    if out.returncode != 0 or len(lines) < 2:
+        return None, None
+    return lines[0], lines[1]
+
+
+def tool_error_text(block):
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def return_records(path, start):
+    with open(path, "rb") as fh:
+        info = os.fstat(fh.fileno())
+        tail = start == 0 and info.st_size > SCAN_MAX
+        if tail:
+            start = info.st_size - SCAN_MAX
+        fh.seek(start)
+        data = fh.read(min(info.st_size - start, SCAN_MAX))
+    data = data[: data.rfind(b"\n") + 1]
+    end = start + len(data)
+    records = []
+    turn_ends = []
+    turn = 0
+    pending = None
+    last = None
+    closes = False
+
+    def flush(final):
+        nonlocal pending
+        if pending:
+            pending["final"] = final
+            records.append(pending)
+        pending = None
+
+    for rec in jsonl(data, tail):
+        if rec.get("uuid"):
+            last = rec["uuid"]
+        kind = rec.get("type")
+        if kind == "system" and rec.get("subtype") == "turn_duration":
+            turn_ends.append(epoch(rec.get("timestamp")))
+            closes = closes or (turn == 0 and pending is None)
+            flush(True)
+            continue
+        if rec.get("isSidechain"):
+            continue
+        prompt = human_prompt(rec)
+        if prompt:
+            flush(False)
+            turn += 1
+            records.append(
+                {
+                    "id": rec.get("uuid") or "",
+                    "kind": "devbox" if prompt.startswith("[devbox ") else "decision",
+                    "at": epoch(rec.get("timestamp")),
+                    "text": keep(prompt),
+                    "turn": turn,
+                }
+            )
+        elif kind == "assistant" and not rec.get("isApiErrorMessage"):
+            for block in msg(rec).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "text" and block.get("text", "").strip():
+                    pending = {"id": rec.get("uuid") or "", "kind": "agent", "at": epoch(rec.get("timestamp")), "text": keep(block["text"]), "turn": turn}
+        elif kind == "user":
+            content = msg(rec).get("content")
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                    records.append(
+                        {"id": rec.get("uuid") or "", "kind": "failure", "at": epoch(rec.get("timestamp")), "text": keep(tool_error_text(block), 600), "turn": turn}
+                    )
+    flush(False)
+    return records, turn_ends, last, end, info.st_ino, closes
+
+
+def capped(records):
+    kept = []
+    dropped = {}
+    counts = {}
+    for rec in reversed(records):
+        kind = rec["kind"]
+        counts[kind] = counts.get(kind, 0) + 1
+        if counts[kind] > (ARGS.get("caps") or {}).get(kind, 100):
+            dropped[kind] = dropped.get(kind, 0) + 1
+        else:
+            kept.append(rec)
+    kept.reverse()
+    return kept, dropped
+
+
+def shell_record(pane):
+    try:
+        text = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-J", "-S", "-{}".format(SHELL_LINES), "-t", pane["id"]],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            universal_newlines=True, errors="replace",
+            timeout=5,
+        ).stdout.rstrip()
+        active = subprocess.run(
+            ["tmux", "display", "-p", "-t", pane["id"], "#{window_activity}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            universal_newlines=True, errors="replace",
+            timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if not text:
+        return []
+    digest = hashlib.sha1(text.encode()).hexdigest()[:12]
+    return [{"id": "shell:{}:{}".format(pane["id"], digest), "kind": "shell", "at": epoch(int(active)) if active.isdigit() else None, "text": keep(text)}]
+
+
+def return_main():
+    os.umask(0o077)
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, lambda *_: os._exit(124))
+        signal.alarm(DEADLINE)
+    target = ARGS.get("target")
+    prs = ARGS.get("prs") or {}
+    since = ARGS.get("from") or {}
+    prefer = ARGS.get("prefer")
+    prefer_pane = ARGS.get("preferPane")
+    registry = claude_registry()
+    chosen = {}
+    for pane in tmux_panes():
+        reg = registry.get(pane["id"])
+        agent = "claude" if reg or pane["cmd"] == "claude" else "codex" if pane["cmd"] == "codex" else "shell"
+        best = chosen.get(pane["session"])
+        same = pane["session"] == target and bool(prefer) and (reg or {}).get("sessionId") == prefer
+        rank = (same and pane["id"] == prefer_pane, same, agent != "shell", pane["active"])
+        if best is None or rank > best[3]:
+            chosen[pane["session"]] = (pane, agent, reg, rank)
+    if target not in chosen:
+        print(json.dumps({"v": 1, "now": int(time.time()), "sessions": []}))
+        return
+    places = {name: git_place(pane["path"]) for name, (pane, _, _, _) in chosen.items()}
+    repo, branch = places[target]
+    mine = set(prs.get(target) or [])
+    candidates = [
+        name
+        for name in chosen
+        if name == target
+        or mine & set(prs.get(name) or [])
+        or (repo and branch not in DEFAULT_BRANCHES and places[name] == (repo, branch))
+    ]
+    lookalikes = []
+    for name, (pane, _, _, _) in chosen.items():
+        if name in candidates:
+            continue
+        other_repo, other_branch = places[name]
+        if branch not in DEFAULT_BRANCHES and other_branch == branch and other_repo != repo:
+            why = "branch"
+        elif (
+            not (repo and places[name] == (repo, branch))
+            and HOME.rstrip("/") not in (pane["path"].rstrip("/"), chosen[target][0]["path"].rstrip("/"))
+            and os.path.basename(pane["path"].rstrip("/")) == os.path.basename(chosen[target][0]["path"].rstrip("/"))
+        ):
+            why = "folder"
+        else:
+            continue
+        lookalikes.append(dict({"name": name, "path": pane["path"], "why": why}, **({"repo": other_repo} if other_repo else {}), **({"branch": other_branch} if other_branch else {})))
+    sessions = []
+    for name in candidates:
+        pane, agent, reg, _ = chosen[name]
+        out = {"name": name, "pane": pane["id"], "cmd": pane["cmd"], "agent": agent, "path": pane["path"], "records": []}
+        if places[name][0]:
+            out["repo"], out["branch"] = places[name]
+        if reg:
+            out["registry"] = {k: reg.get(k) for k in ("sessionId", "status", "waitingFor") if reg.get(k) is not None}
+            out["registry"]["since"] = epoch(reg.get("statusUpdatedAt"))
+        if agent == "shell":
+            out["records"] = shell_record(pane)
+        elif agent == "claude" and reg and reg.get("sessionId"):
+            path = claude_transcript(reg["sessionId"], reg.get("cwd") or pane["path"])
+            if path:
+                info = os.stat(path)
+                prior = since.get(name) or {}
+                partial = prior.get("ino") == info.st_ino and prior.get("sid") == reg["sessionId"] and isinstance(prior.get("size"), int) and 0 < prior["size"] <= info.st_size
+                records, turn_ends, last, end, ino, closes = return_records(path, prior["size"] if partial else 0)
+                out["records"], dropped = capped(records)
+                if dropped:
+                    out["dropped"] = dropped
+                out["turnEnds"] = turn_ends
+                out["partial"] = partial
+                if partial and closes:
+                    out["closes"] = True
+                out["transcript"] = {"ino": ino, "size": end, "last": last or (prior.get("last") if partial else "") or "", "sid": reg["sessionId"]}
+        sessions.append(out)
+    sys.stdout.buffer.write(json.dumps({"v": 1, "now": int(time.time()), "home": HOME, "sessions": sessions, "lookalikes": lookalikes}, ensure_ascii=False).encode("utf-8", "replace") + b"\n")
+
+
+PASTED_RE = re.compile(r"\[Pasted text #\d+ \+\d+ lines\]")
+PROMPT_RE = re.compile(r"^[\s│┃|]*❯\s?(.*?)[\s│┃|]*$")
+
+
+def tmux_call(args, data=None):
+    try:
+        done = subprocess.run(
+            ["tmux"] + args,
+            input=None if data is None else data.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeEncodeError):
+        return 1, ""
+    return done.returncode, done.stdout.decode("utf-8", "replace")
+
+
+def pane_identity(pane, session):
+    if not re.fullmatch(r"%\d+", pane or ""):
+        return "bad_target"
+    code, out = tmux_call(["display", "-p", "-t", pane, "#{session_name}\t#{pane_current_command}"])
+    parts = out.rstrip("\n").split("\t")
+    if code != 0 or len(parts) != 2:
+        return "gone"
+    if parts[0] != session:
+        return "other_session"
+    if parts[1] != "claude":
+        return "not_agent"
+    return None
+
+
+def prompt_text(pane):
+    code, out = tmux_call(["capture-pane", "-p", "-t", pane])
+    lines = [m for m in (PROMPT_RE.match(line) for line in out.splitlines()) if m]
+    return lines[-1].group(1).strip() if code == 0 and lines else None
+
+
+def prompt_state(pane):
+    text = prompt_text(pane)
+    if text is None:
+        return "no_prompt"
+    return "typed" if text else None
+
+
+def delivered(reg, pane, request_id):
+    path = claude_transcript(reg.get("sessionId"), reg.get("cwd") or "")
+    if not path:
+        return False
+    marker = "[devbox repair {}]".format(request_id).encode()
+    escaped = json.dumps("[devbox repair {}]".format(request_id))[1:-1].encode()
+    with open(path, "rb") as fh:
+        fh.seek(max(0, os.fstat(fh.fileno()).st_size - SCAN_MAX))
+        data = fh.read(SCAN_MAX)
+    return marker in data or escaped in data
+
+
+def send_main():
+    os.umask(0o077)
+    pane = ARGS.get("pane") or ""
+    request_id = str(ARGS.get("requestId") or "")
+    packet = ARGS.get("packet") or ""
+
+    def done(result, code=None):
+        print(json.dumps({"result": result, "code": code} if code else {"result": result}))
+
+    problem = pane_identity(pane, ARGS.get("session"))
+    if problem:
+        return done("refused", problem)
+    reg = claude_registry().get(pane)
+    if not reg:
+        return done("refused", "no_registry")
+    if reg.get("sessionId") != ARGS.get("sessionId"):
+        return done("refused", "other_conversation")
+    if request_id and delivered(reg, pane, request_id):
+        return done("already")
+    if reg.get("status") == "busy":
+        return done("refused", "busy")
+    if reg.get("status") != "idle":
+        return done("refused", "waiting")
+    problem = prompt_state(pane)
+    if problem:
+        return done("refused", problem)
+    buffer = "devbox-" + re.sub(r"[^A-Za-z0-9-]", "", request_id)[:40]
+    if tmux_call(["load-buffer", "-b", buffer, "-"], packet)[0] != 0:
+        return done("failed", "load_failed")
+    if tmux_call(["paste-buffer", "-p", "-d", "-b", buffer, "-t", pane])[0] != 0:
+        tmux_call(["delete-buffer", "-b", buffer])
+        return done("failed", "paste_failed")
+    shown = None
+    for _ in range(10):
+        time.sleep(0.2)
+        shown = prompt_text(pane)
+        if shown and PASTED_RE.fullmatch(shown):
+            break
+    if pane_identity(pane, ARGS.get("session")):
+        return done("unknown", "changed_after_paste")
+    if not (shown and PASTED_RE.fullmatch(shown)):
+        return done("held", "prompt_changed")
+    reg = claude_registry().get(pane) or {}
+    if reg.get("status") != "idle" or reg.get("sessionId") != ARGS.get("sessionId"):
+        return done("held", "agent_changed")
+    if tmux_call(["send-keys", "-t", pane, "Enter"])[0] != 0:
+        return done("unknown", "enter_failed")
+    return done("pasted")
+
+
+INQUIRY_DIR = os.path.join(CACHE_DIR, "inquiries")
+INQUIRY_RE = re.compile(r"q-[A-Za-z0-9-]{1,40}")
+ASK_TOOLS = ["Read", "Grep", "Glob"]
+ASK_SECONDS = 600
+ASK_SETTINGS = ("awsAuthRefresh", "awsCredentialExport", "model", "modelOverrides", "availableModels", "enforceAvailableModels", "fallbackModel")
+ASK_ENV = re.compile(
+    r"^(CLAUDE_CODE_USE_BEDROCK|CLAUDE_CODE_USE_VERTEX|AWS_REGION|AWS_PROFILE|CLOUD_ML_REGION|ANTHROPIC_VERTEX_PROJECT_ID"
+    r"|ANTHROPIC_[A-Z_]*MODEL[A-Z_]*|ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION|DISABLE_[A-Z_]+)$"
+)
+ASK_RUNNER = r"""
+import json, os, signal, subprocess, sys
+with open(sys.argv[1]) as fh:
+    a = json.load(fh)
+os.remove(sys.argv[1])
+out = open(a["out"], "a")
+
+
+def note(rec):
+    out.write(json.dumps(rec) + "\n")
+    out.flush()
+
+
+with open(a["prompt"]) as stdin, open(a["err"], "w") as err:
+    child = subprocess.Popen(
+        a["argv"], cwd=a["cwd"], env=a["env"], stdin=stdin, stdout=subprocess.PIPE, stderr=err,
+        universal_newlines=True, errors="replace", start_new_session=True,
+    )
+
+
+def stop():
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def expire(*_):
+    note({"type": "devbox", "error": "timeout"})
+    stop()
+
+
+signal.signal(signal.SIGALRM, expire)
+signal.alarm(a["seconds"])
+checked = False
+for line in child.stdout:
+    out.write(line)
+    out.flush()
+    try:
+        event = json.loads(line)
+    except ValueError:
+        continue
+    if checked:
+        continue
+    if event.get("type") == "system" and event.get("subtype") == "init":
+        checked = True
+        tools = set(event.get("tools") or [])
+        if not tools <= set(a["tools"]) or event.get("mcp_servers"):
+            note({"type": "devbox", "error": "not_read_only", "tools": sorted(tools)})
+            stop()
+            break
+    elif event.get("type") in ("assistant", "user", "result"):
+        note({"type": "devbox", "error": "not_read_only"})
+        stop()
+        break
+child.wait()
+note({"type": "devbox", "exit": child.returncode})
+for leftover in a["cleanup"]:
+    try:
+        os.remove(leftover)
+    except OSError:
+        pass
+"""
+
+
+def ask_settings():
+    settings = read_json(os.path.join(CLAUDE, "settings.json"))
+    settings = settings if isinstance(settings, dict) else {}
+    out = {k: settings[k] for k in ASK_SETTINGS if k in settings}
+    env = {k: v for k, v in (settings.get("env") or {}).items() if ASK_ENV.match(k) and isinstance(v, str)}
+    if env:
+        out["env"] = env
+    return out
+
+
+def claude_binary(reg):
+    theirs = ""
+    try:
+        exe = os.readlink("/proc/{}/exe".format(int(reg.get("pid"))))
+        if os.path.basename(exe) == "claude" and os.access(exe, os.X_OK):
+            return exe
+        with open("/proc/{}/environ".format(int(reg.get("pid"))), "rb") as f:
+            env = dict(x.split(b"=", 1) for x in f.read().split(b"\0") if b"=" in x)
+        theirs = env.get(b"PATH", b"").decode("utf-8", "replace")
+    except (OSError, ValueError, TypeError):
+        pass
+    extra = [os.path.join(HOME, d) for d in (".local/bin", ".claude/local", ".npm-global/bin")] + ["/usr/local/bin"]
+    for folder in theirs.split(os.pathsep) + os.environ.get("PATH", "").split(os.pathsep) + extra:
+        candidate = os.path.join(folder, "claude")
+        if os.path.isabs(folder) and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def forget_old_inquiries():
+    cutoff = time.time() - 7 * 86400
+    for name in os.listdir(INQUIRY_DIR):
+        path = os.path.join(INQUIRY_DIR, name)
+        try:
+            if INQUIRY_RE.match(name) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def ask_main():
+    os.umask(0o077)
+
+    def done(result, code=None):
+        print(json.dumps({"result": result, "code": code} if code else {"result": result}))
+
+    iid = str(ARGS.get("inquiryId") or "")
+    if not INQUIRY_RE.fullmatch(iid):
+        return done("refused", "bad_id")
+    pane = ARGS.get("pane") or ""
+    problem = pane_identity(pane, ARGS.get("session"))
+    if problem:
+        return done("refused", problem)
+    reg = claude_registry().get(pane)
+    if not reg:
+        return done("refused", "no_registry")
+    if reg.get("sessionId") != ARGS.get("sessionId"):
+        return done("refused", "other_conversation")
+    cwd = reg.get("cwd") or ""
+    if not os.path.isdir(cwd):
+        return done("refused", "no_folder")
+    binary = claude_binary(reg)
+    if not binary:
+        return done("refused", "no_claude")
+    os.makedirs(INQUIRY_DIR, mode=0o700, exist_ok=True)
+    forget_old_inquiries()
+    base = os.path.join(INQUIRY_DIR, iid)
+    if os.path.exists(base + ".pid"):
+        return done("started")
+    with open(base + ".settings.json", "w") as fh:
+        json.dump(ask_settings(), fh)
+    with open(base + ".prompt", "w") as fh:
+        fh.write(str(ARGS.get("prompt") or ""))
+    budget = ARGS.get("budget") if isinstance(ARGS.get("budget"), (int, float)) else 3
+    argv = [binary, "-p", "--resume", reg["sessionId"], "--fork-session", "--no-session-persistence", "--safe-mode", "--restricted"]
+    argv += ["--tools", ",".join(ASK_TOOLS), "--strict-mcp-config", "--settings", base + ".settings.json"]
+    argv += ["--permission-mode", "dontAsk", "--output-format", "stream-json", "--verbose", "--max-budget-usd", "%g" % budget]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE_CODE_PLUGIN")}
+    env["PATH"] = os.pathsep.join([os.path.dirname(binary), env.get("PATH", "")])
+    job = {"argv": argv, "cwd": cwd, "env": env, "prompt": base + ".prompt", "out": base + ".jsonl", "err": base + ".err", "tools": ASK_TOOLS, "seconds": ASK_SECONDS}
+    job["cleanup"] = [base + ".settings.json", base + ".prompt"]
+    with open(base + ".job.json", "w") as fh:
+        json.dump(job, fh)
+    try:
+        runner = subprocess.Popen(
+            [sys.executable, "-I", "-c", ASK_RUNNER, base + ".job.json"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError:
+        for leftover in job["cleanup"] + [base + ".job.json"]:
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+        return done("failed", "no_runner")
+    with open(base + ".pid", "w") as fh:
+        fh.write(str(runner.pid))
+    return done("started")
+
+
+def askpoll_main():
+    found = {}
+    for iid in ARGS.get("ids") or []:
+        if not isinstance(iid, str) or not INQUIRY_RE.fullmatch(iid):
+            continue
+        base = os.path.join(INQUIRY_DIR, iid)
+        try:
+            pid = int(open(base + ".pid").read().strip())
+        except (OSError, ValueError):
+            found[iid] = {"state": "unknown"}
+            continue
+        try:
+            with open(base + ".jsonl", "rb") as fh:
+                data = fh.read(SCAN_MAX)
+        except OSError:
+            data = b""
+        tools, calls, result, error, exited = None, [], None, None, False
+        for rec in jsonl(data, False):
+            kind = rec.get("type")
+            if kind == "system" and rec.get("subtype") == "init":
+                tools = sorted(rec.get("tools") or [])
+            elif kind == "assistant":
+                calls += [b.get("name") for b in msg(rec).get("content") or [] if isinstance(b, dict) and b.get("type") == "tool_use"]
+            elif kind == "result":
+                result = rec
+            elif kind == "devbox":
+                error = error or rec.get("error")
+                exited = exited or "exit" in rec
+        if error:
+            found[iid] = {"state": "failed", "reason": error}
+        elif result and (result.get("is_error") or result.get("subtype") != "success"):
+            found[iid] = {"state": "failed", "reason": clip(str(result.get("result") or result.get("subtype")), 200)}
+        elif result:
+            found[iid] = {"state": "replied", "answer": keep(result.get("result") or "", 20000), "cost": result.get("total_cost_usd"), "tools": tools or [], "calls": calls}
+        elif exited or not alive(pid, None):
+            found[iid] = {"state": "failed", "reason": "stopped"}
+        else:
+            found[iid] = {"state": "running"}
+    print(json.dumps(found))
+
+
 def main():
     os.umask(0o077)
     if hasattr(signal, "SIGALRM"):
@@ -830,4 +1377,4 @@ def main():
     print(json.dumps({"v": 1, "now": int(time.time()), "home": HOME, "agents": agents}))
 
 
-main()
+{"return": return_main, "send": send_main, "ask": ask_main, "askpoll": askpoll_main}.get(ARGS.get("mode"), main)()
