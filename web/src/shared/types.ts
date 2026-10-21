@@ -1,3 +1,5 @@
+import type { Basis, Correction, Separation, Work } from './recover.js'
+
 export interface Session {
   name: string
   attached: boolean
@@ -89,11 +91,7 @@ export interface WorkspacesResponse {
 export type AgentChoice = 'cc' | 'codex' | 'shell'
 
 
-export interface CreateSessionRequest {
-  name: string
-  root: string
-  agent: AgentChoice
-}
+export type CreateSessionRequest = { name: string; agent: AgentChoice; goal?: string } & ({ root: string } | { beside: string })
 
 export interface CreateSessionResponse {
   name: string
@@ -141,4 +139,135 @@ export interface NoteResponse {
 
 export interface ThemeResponse {
   ghostty: GhosttyLook | null
+}
+
+export interface ReturnTarget {
+  session: string
+  pane: string
+  sessionId: string
+}
+
+export interface DraftState {
+  text: string
+  basis: Basis[] | null
+  corrections: Correction[]
+  earlier: string[]
+  target: ReturnTarget | null
+  quote?: Record<string, boolean>
+  others?: string[]
+  setAside?: string[]
+  read?: string[]
+  follows?: number
+  savedAt?: number
+}
+
+export type RepairState = 'sending' | 'delivered' | 'working' | 'replied' | 'held' | 'failed' | 'unknown'
+
+export interface Repair {
+  id: string
+  packet: string
+  target: ReturnTarget
+  basis: Basis[]
+  version: string
+  draftVersion: string
+  sentAt: number
+  state: RepairState
+  reason?: string
+  deliveredId?: string
+  replyId?: string
+  reply?: string
+  repliedAt?: number
+  accepted?: { at: number; replyId: string }
+  check?: string
+  checked?: { earlier: string[]; setAside?: string[]; read?: string[] }
+}
+
+export type InquiryState = 'sending' | 'running' | 'replied' | 'failed' | 'unknown'
+
+export interface Inquiry {
+  id: string
+  question: string
+  target: ReturnTarget
+  version: string
+  askedAt: number
+  state: InquiryState
+  answer?: string
+  cost?: number
+  tools?: string[]
+  calls?: string[]
+  reason?: string
+  repliedAt?: number
+}
+
+export interface WorkState {
+  key: string
+  draft: DraftState | null
+  draftVersion: string
+  repairs: Repair[]
+  inquiries: Inquiry[]
+  decisions: Record<string, string>
+  separations: Separation[]
+  seenAt?: number
+  lookedAt?: number
+  goal?: string
+}
+
+export interface ProbeRecord {
+  id: string
+  kind: 'decision' | 'agent' | 'failure' | 'shell' | 'devbox'
+  at: number
+  text: string
+  turn?: number
+  final?: boolean
+}
+
+export interface ProbeSession {
+  name: string
+  pane: string
+  cmd: string
+  agent: 'claude' | 'codex' | 'shell'
+  path: string
+  repo?: string
+  branch?: string
+  registry?: { sessionId: string; status: string; waitingFor?: string; since?: number }
+  transcript?: { ino: number; size: number; last: string; sid?: string }
+  closes?: boolean
+  records: ProbeRecord[]
+  dropped?: Record<string, number>
+  partial?: boolean
+  turnEnds?: number[]
+}
+
+export interface ReturnResponse {
+  session: string
+  host: string
+  fetchedAt: number
+  work: Work
+  sessions: ProbeSession[]
+  state: WorkState
+  separated: Separation[]
+  lookalikes: Lookalike[]
+  apart?: string
+}
+
+export interface Lookalike {
+  name: string
+  path: string
+  repo?: string
+  branch?: string
+  why: 'branch' | 'folder'
+}
+
+export interface ReturnSummary {
+  draft: boolean
+  repair?: RepairState
+  sent?: string
+  goal?: string
+  accepted?: boolean
+  missed?: string[]
+  open?: number
+  looked?: number
+  question?: boolean
+  asking: number
+  answered: number
 }
