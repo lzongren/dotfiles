@@ -15,7 +15,7 @@ import {
 import { loadConfig } from './config.js'
 import { BodyError, readBody, readJson } from './body.js'
 import { detach, openLocal, runAgentProbe, runUpload, spawnAttachPty, statusRaw } from './exec.js'
-import { allowed, localMirror, openable, parseRemoteRead, readMirror, readOutputMax, readTimeout, remoteReadScript, resolveMirror } from './files.js'
+import { allowed, localMirror, mirrorFolder, openable, parseRemoteRead, readMirror, readOutputMax, readTimeout, remoteReadScript, resolveMirror } from './files.js'
 import { readGhostty } from './ghostty.js'
 import type { InsightsResponse } from '../src/shared/types.js'
 import { DAY_RE, listDays, readNote, writeNote } from './notes.js'
@@ -27,6 +27,8 @@ import { createSessionSource, RemoteUnreachableError } from './sessions.js'
 import { attachTerminalServer } from './terminal.js'
 import { serveStatic } from './static.js'
 import { removeState, writeState } from './state.js'
+import { createReturnService, parseDraft, type Reply } from './return.js'
+import { createReturnStore } from './return-store.js'
 
 export interface AppOptions {
   port: number
@@ -35,6 +37,7 @@ export interface AppOptions {
   distRoot: string
   version: string
   notesDir?: string
+  returnDir?: string
 }
 
 export interface App {
@@ -72,6 +75,40 @@ export async function createApp(opts: AppOptions): Promise<App> {
     process.env.DEVBOX_NOTES_DIR ??
     path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'devbox', 'notes')
 
+  const returnDir =
+    opts.returnDir ??
+    process.env.DEVBOX_RETURN_DIR ??
+    path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'devbox', 'return')
+  const returns = createReturnService({
+    host: config.host,
+    store: createReturnStore(returnDir, config.host),
+    now: () => Math.floor(Date.now() / 1000),
+    probe: async (args) => {
+      const ret = args.mode === 'return'
+      return runAgentProbe(config.host, probeScript(await readFile(probePath, 'utf8'), args), ret ? 30000 : 20000, ret ? 16 * 1024 * 1024 : undefined)
+    },
+    prs: async () => {
+      const insights = lastInsights ?? (await fetchInsights())
+      return Object.fromEntries(insights.agents.map((a) => [a.session, a.artifacts.filter((x) => /\/pull\/\d+/.test(x.url)).map((x) => x.url)]))
+    },
+  })
+  const returnBody = (req: Parameters<typeof readJson>[0], res: ServerResponse, handle: (body: Record<string, unknown>, session: string) => Promise<Reply | null> | Reply | null, limit = 128 * 1024) => {
+    readJson(req, limit)
+      .then(async (raw) => {
+        const body = (raw ?? {}) as Record<string, unknown>
+        const session = typeof body.session === 'string' && SESSION_NAME_RE.test(body.session) ? body.session : ''
+        const reply = session ? await handle(body, session) : null
+        if (!reply) return sendJson(res, 400, { error: 'bad_request', message: 'invalid request body' })
+        return sendJson(res, reply.status, reply.body)
+      })
+      .catch((err: unknown) => {
+        if (err instanceof BodyError) sendJson(res, err.status, { error: 'bad_request', message: err.message })
+        else if (err instanceof RemoteUnreachableError) sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
+        else sendJson(res, 500, { error: 'internal', message: 'the request failed' })
+      })
+  }
+  const ok = (body: Record<string, unknown> = { ok: true }): Reply => ({ status: 200, body })
+
   let boundPort = opts.port
   const server = createServer((req, res) => {
     applySecurityHeaders(res)
@@ -103,7 +140,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
       if (url.pathname === '/api/sessions' && req.method === 'POST') {
         readJson(req)
           .then(async (raw) => {
-            const body = (raw ?? {}) as { name?: unknown; root?: unknown; agent?: unknown }
+            const body = (raw ?? {}) as { name?: unknown; root?: unknown; agent?: unknown; beside?: unknown; goal?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             const agent = body.agent ?? 'cc'
             if (!SESSION_NAME_RE.test(name)) {
@@ -112,9 +149,22 @@ export async function createApp(opts: AppOptions): Promise<App> {
             if (!isAgentChoice(agent)) {
               return sendJson(res, 400, { error: 'bad_agent', message: 'agent must be cc, codex, or shell' })
             }
-            const root = config.syncs.find((s) => s.name === body.root)
-            if (!root) return sendJson(res, 400, { error: 'bad_root', message: 'unknown sync root' })
-            const result = await detach(opts.bin, agent, name, root.localPath)
+            if (body.goal !== undefined && (typeof body.goal !== 'string' || body.goal.length > 2000)) {
+              return sendJson(res, 400, { error: 'bad_goal', message: 'goal must be text' })
+            }
+            const goal = typeof body.goal === 'string' ? body.goal.trim() : ''
+            let cwd = config.syncs.find((s) => s.name === body.root)?.localPath
+            if (body.beside !== undefined) {
+              const beside = (await getSessions()).sessions.find((s) => s.name === body.beside)
+              if (!beside) return sendJson(res, 400, { error: 'bad_beside', message: 'no such session' })
+              const home = config.syncs.every((s) => s.remotePath.startsWith('/')) ? undefined : (lastInsights ?? (await fetchInsights().catch(() => null)))?.home
+              const mirror = localMirror(beside.path, home, config.syncs)
+              const folder = mirror ? await mirrorFolder(mirror) : null
+              if (!folder) return sendJson(res, 400, { error: 'no_folder', message: `${beside.name} doesn't run in a folder under a synced root` })
+              cwd = folder
+            }
+            if (!cwd) return sendJson(res, 400, { error: 'bad_root', message: 'unknown sync root' })
+            const result = await detach(opts.bin, agent, name, cwd, body.beside !== undefined)
             const verdict = result.stdout.trim().split('\n').pop() ?? ''
             if (result.exitCode !== 0 || !/^(created|exists) /.test(verdict)) {
               return sendJson(res, 502, {
@@ -124,6 +174,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
             }
             getSessions.invalidate()
             const created = verdict.startsWith('created ')
+            if (created) await returns.started(name, goal)
             return sendJson(res, created ? 201 : 200, { name, created })
           })
           .catch((err: unknown) => {
@@ -248,6 +299,73 @@ export async function createApp(opts: AppOptions): Promise<App> {
             })
           return
         }
+      }
+      if (url.pathname === '/api/return/summary' && req.method === 'GET') {
+        returns
+          .summaries()
+          .then((body) => sendJson(res, 200, { sessions: body }))
+          .catch(() => sendJson(res, 500, { error: 'internal', message: 'could not read Return state' }))
+        return
+      }
+      if (url.pathname === '/api/return/brief' && req.method === 'GET') {
+        const session = url.searchParams.get('session') ?? ''
+        const left = url.searchParams.get('left')
+        if (!SESSION_NAME_RE.test(session) || (left !== null && !/^\d{1,12}$/.test(left))) return sendJson(res, 400, { error: 'bad_request', message: 'session is required' })
+        returns
+          .brief(session, left === null ? undefined : Number(left))
+          .then((reply) => sendJson(res, reply.status, reply.body))
+          .catch((err: unknown) => {
+            if (err instanceof RemoteUnreachableError) sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
+            else sendJson(res, 500, { error: 'return_failed', message: err instanceof Error ? err.message : 'could not read the work' })
+          })
+        return
+      }
+      if (url.pathname === '/api/return' && req.method === 'GET') {
+        const session = url.searchParams.get('session') ?? ''
+        if (!SESSION_NAME_RE.test(session)) return sendJson(res, 400, { error: 'bad_request', message: 'session is required' })
+        returns
+          .load(session)
+          .then((body) => ('error' in body ? sendJson(res, 404, body) : sendJson(res, 200, body)))
+          .catch((err: unknown) => {
+            if (err instanceof RemoteUnreachableError) sendJson(res, 502, { error: 'remote_unreachable', message: err.message })
+            else sendJson(res, 500, { error: 'return_failed', message: err instanceof Error ? err.message : 'could not load the work' })
+          })
+        return
+      }
+      if (url.pathname === '/api/return/draft' && req.method === 'PUT') {
+        return returnBody(req, res, async (body, session) => {
+          const draft = parseDraft(body.draft)
+          if (!draft || typeof body.base !== 'string') return null
+          const saved = await returns.saveDraft(session, draft, body.base)
+          return saved.saved ? ok({ version: saved.version }) : { status: 409, body: { error: 'conflict', draft: saved.draft, version: saved.version } }
+        }, 1024 * 1024)
+      }
+      if (url.pathname === '/api/return/repair' && req.method === 'POST') {
+        return returnBody(req, res, (body, session) => (typeof body.requestId === 'string' ? returns.repair(session, body.requestId, { preview: body.preview, version: body.version }) : null))
+      }
+      if (url.pathname === '/api/return/accept' && req.method === 'POST') {
+        return returnBody(req, res, (body, session) => (typeof body.requestId === 'string' ? returns.accept(session, body.requestId) : null))
+      }
+      if (url.pathname === '/api/return/ask' && req.method === 'POST') {
+        return returnBody(req, res, (body, session) =>
+          typeof body.inquiryId === 'string' && typeof body.question === 'string' ? returns.ask(session, body.inquiryId, body.question) : null,
+        )
+      }
+      if (url.pathname === '/api/return/seen' && req.method === 'POST') {
+        return returnBody(req, res, async (_body, session) => ok({ seenAt: (await returns.seen(session)).seenAt }))
+      }
+      if (url.pathname === '/api/return/decide' && req.method === 'POST') {
+        return returnBody(req, res, async (body, session) => {
+          if (typeof body.key !== 'string' || (body.limitId !== null && typeof body.limitId !== 'string')) return null
+          return ok({ decisions: (await returns.decide(session, body.key, body.limitId as string | null)).decisions })
+        })
+      }
+      if (url.pathname === '/api/return/separate' && req.method === 'POST') {
+        return returnBody(req, res, async (body, session) => {
+          if (typeof body.work !== 'string' || typeof body.member !== 'string' || typeof body.undo !== 'boolean') return null
+          await returns.separate(session, body.work, body.member, body.undo)
+          return ok()
+        })
       }
       if (url.pathname === '/api/theme' && req.method === 'GET') {
         readGhostty()

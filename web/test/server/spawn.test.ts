@@ -62,6 +62,7 @@ beforeAll(async () => {
   log = path.join(stateDir, 'stub.log')
   process.env.DEVBOX_STUB_ROOT = root
   process.env.STUB_LOG = log
+  process.env.DEVBOX_STUB_MODE = 'beside'
   app = await createApp({ port: 0, bin: stubsDir, stateDir, distRoot, version: '0' })
 })
 
@@ -70,6 +71,7 @@ afterAll(async () => {
   delete process.env.DEVBOX_STUB_ROOT
   delete process.env.STUB_LOG
   delete process.env.DEVBOX_STUB_DETACH
+  delete process.env.DEVBOX_STUB_MODE
   for (const dir of [root, stateDir, distRoot]) rmSync(dir, { recursive: true, force: true })
 })
 
@@ -93,6 +95,14 @@ describe('POST /api/sessions', () => {
     expect(res.body).toEqual({ name: 'proj', created: true })
     expect(logLines()).toContain('--detach --cc proj')
     expect(logLines()).toContain(`PWD=${root}`)
+  })
+
+  it('keeps the goal you gave a session it created, for the pages that list it, and sends it nowhere', async () => {
+    const res = await post({ name: 'goal-proj', root: 'dotfiles', agent: 'cc', goal: '  Add boundary tests for the budget  ' })
+    expect(res.status).toBe(201)
+    expect(logLines().join('\n')).not.toContain('boundary')
+    expect(((await call('GET', '/api/return/summary')).body.sessions as Record<string, { goal?: string }>)['goal-proj']?.goal).toBe('Add boundary tests for the budget')
+    expect((await post({ name: 'goal-bad', root: 'dotfiles', agent: 'cc', goal: 5 })).status).toBe(400)
   })
 
   it('reports an already running session with 200', async () => {
@@ -134,6 +144,38 @@ describe('POST /api/sessions', () => {
     expect((await call('POST', '/api/sessions', { body: JSON.stringify({ pad: 'x'.repeat(70 * 1024) }) })).status).toBe(413)
     expect((await post({ name: 'proj', root: 'dotfiles' }, { Authorization: 'Bearer nope' })).status).toBe(401)
     expect((await post({ name: 'proj', root: 'dotfiles' }, { Origin: 'http://evil.example' })).status).toBe(403)
+    expect(logLines().some((l) => l.startsWith('--detach'))).toBe(false)
+  })
+
+  it('starts a new conversation beside a session, in its synced folder', async () => {
+    const res = await post({ name: 'proj-review', beside: 'proj-a', agent: 'cc' })
+    expect(res.status).toBe(201)
+    expect(logLines()).toContain(`--detach --fresh --cc proj-review ${path.join(root, 'existing-proj')}`)
+    expect(logLines()).toContain(`PWD=${path.join(root, 'existing-proj')}`)
+  })
+
+  it('starts a shell beside a session without an agent flag', async () => {
+    const res = await post({ name: 'proj-sh', beside: 'proj-a', agent: 'shell' })
+    expect(res.status).toBe(201)
+    expect(logLines()).toContain(`--detach proj-sh ${path.join(root, 'existing-proj')}`)
+    expect(logLines()).toContain(`PWD=${path.join(root, 'existing-proj')}`)
+  })
+
+  it('starts beside a session that runs at a synced root itself, in that root', async () => {
+    const res = await post({ name: 'root-sh', beside: 'at-root', agent: 'shell' })
+    expect(res.status).toBe(201)
+    expect(logLines()).toContain(`--detach root-sh ${root}`)
+  })
+
+  it.each([
+    [{ name: 'x', beside: 'nobody', agent: 'cc' }, 'bad_beside'],
+    [{ name: 'x', beside: 'escapes', agent: 'cc' }, 'no_folder'],
+    [{ name: 'x', beside: '../etc', agent: 'cc' }, 'bad_beside'],
+    [{ name: 'x', beside: 'cc-demo', agent: 'cc' }, 'no_folder'],
+  ])('refuses to start beside %j', async (body, code) => {
+    const res = await post(body)
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe(code)
     expect(logLines().some((l) => l.startsWith('--detach'))).toBe(false)
   })
 
