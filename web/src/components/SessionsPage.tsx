@@ -77,13 +77,15 @@ export function SessionsPage({
       const fresh = isFresh(session, insight, seen)
       const work = workFor(works, session.name)
       const own = works.find((w) => w.session.name === session.name)
+      const note = returnNote(returns[session.name])
       return {
         session,
         insight,
         title: displayTitle(headline(session), insight) || session.name,
         work: work ? titleOf(work) : '',
         lane: own?.attention === 'needs' ? 'blocked' : laneOf(session, insight, seen, now),
-        state: own?.tone === 'error' && !returnNote(returns[session.name]) ? own.status : stateOf(session, insight, fresh, now, returns[session.name]),
+        tone: note ? undefined : (own?.tone ?? toneOf(session, insight, fresh, now)),
+        state: own?.tone === 'error' && !note ? own.status : stateOf(session, insight, fresh, now, returns[session.name]),
       }
     })
     .sort((a, b) => ORDER.indexOf(a.lane) - ORDER.indexOf(b.lane) || b.session.activityEpoch - a.session.activityEpoch)
@@ -124,7 +126,7 @@ export function SessionsPage({
               <span className="page-row-work" data-none={r.work ? undefined : 'true'}>
                 {r.work || 'Nothing new'}
               </span>
-              <span className="page-row-state" data-lane={r.lane}>
+              <span className="page-row-state" data-lane={r.lane} data-tone={r.tone}>
                 {r.state}
               </span>
               <Icon name="next" />

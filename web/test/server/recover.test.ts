@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { basisOf, draftChecks, evidenceAmounts, limitPushes, partly, clause, digest, keptOthers, limitText, namedRule, othersSince, briefOf, changeIssue, checkedRule, measured, constraints, draftFor, spoken, QUESTION_START, differences, draftBlockers, draftIssues, draftRuleHits, entriesOf, headRules, holdingOf, keptLines, uniqueRules, pruned, newerThan, retryBlock, shownAs, uncheckedAmounts, unmentioned, askedLines, attachedIn, replyGaps, nearestFor, contextOf, askedIn, leadAsk, packetOf, scopeHits, exceptionKey, askedParts, groupWork, limitsIn, questionPrompt, quotedRules, repairPacket, ruleKey, undoCorrection, workOf, type Entry, type Member, type Rule } from '../../src/shared/recover.js'
+import { basisOf, draftChecks, evidenceAmounts, limitPushes, partly, clause, digest, keptOthers, limitText, namedRule, othersSince, briefOf, changeIssue, checkedRule, measured, constraints, draftFor, spoken, QUESTION_START, differences, draftBlockers, draftIssues, draftRuleHits, entriesOf, headRules, skippedParts, flagNote, holdingOf, keptLines, uniqueRules, pruned, newerThan, retryBlock, shownAs, uncheckedAmounts, unmentioned, askedLines, attachedIn, replyGaps, nearestFor, contextOf, askedIn, leadAsk, packetOf, scopeHits, exceptionKey, askedParts, groupWork, limitsIn, questionPrompt, quotedRules, repairPacket, ruleKey, undoCorrection, workOf, type Entry, type Member, type Rule } from '../../src/shared/recover.js'
 import type { Repair } from '../../src/shared/types.js'
 
 const you = (id: string, at: number, text: string): Entry => ({ id, kind: 'decision', author: 'you', at, text, session: 'fix' })
@@ -158,6 +158,44 @@ describe('constraints', () => {
     const rules = (text: string) => constraints([you('u1', 1, text)]).rules.map((x) => x.sentence)
     expect(rules('Don\u2019t push to main. You mustn\u2019t merge it.')).toEqual(['Don\u2019t push to main.', 'You mustn\u2019t merge it.'])
   })
+})
+
+describe('reading a reply against what you asked', () => {
+  const packet = (body: string) => `[devbox repair r-1]\nPurpose: repair.\nTarget: this session, fix.\n\n${body}\n\nWhat this is based on, quoted from this conversation:\n- Rule (you, 2026-10-16 03:01Z): "Keep the 10 second total deadline and retry only idempotent requests."\n\nWhen you finish`
+
+  it('names the parts of a flagged line the reply skips, without changing what is flagged', () => {
+    expect(skippedParts('- Cherry-pick 4be19c2 and rerun the upload tests.', 'Cherry-picked it. Reran the upload tests.').skipped).toEqual(['Cherry-pick 4be19c2'])
+    expect(skippedParts('Rebase and rerun.', 'Rebased onto main.\nAll green again on the rerun.')).toEqual({ parts: ['Rebase', 'rerun'], skipped: [] })
+    for (const [line, reply] of [
+      ['Remove the debug logging and the feature flag.', 'Removed the debug logging and the flag.'],
+      ['Keep the delay between 100 and 500 ms.', 'Delay is now 100 to 400 ms.'],
+    ]) expect(replyGaps(packet(line), `[devbox result r-1] ${reply}`)).toEqual([])
+    const rule = new Set(['retry', 'idempot', 'request'])
+    expect(skippedParts('Rerun and retry only idempotent uploads.', 'Rerun is green. Upload tests pass.', rule).skipped).toEqual(['retry only idempotent uploads'])
+    expect(skippedParts('Check the logs and do it.', 'Nothing here.').skipped).toEqual([])
+    const deadline = new Set(['keep', 'total', 'deadl'])
+    const reply = 'Rebased onto main.\nAll green again on the rerun.\nTotal deadline kept at 9.6 s.\nMerged the PR.'
+    expect(skippedParts('Rebase and rerun, and keep the total deadline.', reply, deadline).skipped).toEqual([])
+    expect(flagNote('Rebase and rerun and never merge the PR.', reply, deadline)).toBe('The reply doesn\'t seem to mention “never merge the PR”.')
+    expect(flagNote('Rebase and rerun.', 'Rebased onto main.\nAll green again on the rerun.')).toBe('The reply may cover this only in part.')
+    expect(flagNote('Shorten the waits.', 'Nothing here.', undefined, 'Waits are fine.')).toBe('The reply may cover this only in part · nearest in the reply: “Waits are fine.”')
+  })
+
+  it('flags a line the reply shares only one word with', () => {
+    for (const [line, reply] of [
+      ['Because the upstream is flaky, allow 2 attempts and add exponential backoff with jitter.', 'At most two attempts.'],
+      ['Allow 2 attempts for uploads.', 'Downloads now get at most two attempts.'],
+      ['Add jitter to the backoff, at most 500 ms.', 'Backoff capped at 0.5 s.'],
+    ]) expect(replyGaps(packet(line), `[devbox result r-1] ${reply}`)).toEqual([line])
+  })
+
+  it('counts a limit the reply repeats as mentioned, and a line it covers only in part as possibly missed', () => {
+    const reply = '[devbox result r-1] retry.test.ts passes: total deadline 9.6 s with at most 2 attempts.'
+    expect(replyGaps(packet('Allow 2 attempts so slow upstream calls get one more chance.'), reply)).toEqual([])
+    expect(replyGaps(packet('Rerun the upload tests and fix it.'), '[devbox result r-1] Upload tests rerun and I fixed it. All pass.')).toEqual([])
+    expect(replyGaps(packet('Then rerun keeps total deadline and the other retry tests.'), reply)).toEqual(['Then rerun keeps total deadline and the other retry tests.'])
+  })
+
 })
 
 describe('headRules', () => {

@@ -122,7 +122,7 @@ async function ownTab(name: string) {
   fireEvent.click(sidebar().getByRole('button', { name: new RegExp(`^${name}`) }))
   await flush()
   await flush()
-  fireEvent.click(within(screen.getByRole('region', { name: `Pick up ${name}` })).getByRole('button', { name: 'Open as its own tab' }))
+  fireEvent.click(within(screen.getByRole('region', { name: `Pick up ${name}` })).getByRole('button', { name: 'Open the full-screen terminal' }))
   await flush()
 }
 async function showAll() {
@@ -550,7 +550,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: "Open a's terminal" }))
     await flush()
     await flush()
-    fireEvent.click(within(screen.getByRole('region', { name: 'Pick up a' })).getByRole('button', { name: 'Open as its own tab' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Pick up a' })).getByRole('button', { name: 'Open the full-screen terminal' }))
     await flush()
     const note = screen.getByText(/^In A · keeps holding/).closest('[role="note"]') as HTMLElement
     expect(note).toHaveTextContent('In A · keeps holding: Never merge the PR without asking me')

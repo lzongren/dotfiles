@@ -2574,8 +2574,8 @@ kbd {
 }
 
 .work-kind:has(:checked) {
-  border-color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--text);
+  border-color: var(--accent);
+  background: var(--selected);
 }
 
 .work-kind span {
@@ -4119,7 +4119,7 @@ code.session-chip {
   align-items: center;
   gap: 6px;
   margin: 0 0 24px;
-  padding: 4px 0;
+  padding: 20px 0 4px;
   background: none;
   border: 0;
   color: var(--dim);
@@ -4130,11 +4130,6 @@ code.session-chip {
 
 .pickup-all:hover {
   color: var(--text);
-}
-
-.pickup-all {
-  padding: 14px 0;
-  border-top: 1px solid var(--line-1);
 }
 
 .pickup-all::before {
@@ -4373,6 +4368,14 @@ code.session-chip {
 .page-row-state[data-lane='blocked'] {
   color: var(--bell);
   font-weight: 600;
+}
+
+.page-row-state[data-lane='blocked'][data-tone='waiting'] {
+  color: var(--accent);
+}
+
+.page-row-state[data-lane='blocked'][data-tone='error'] {
+  color: var(--danger);
 }
 
 .page .page-row-link {

@@ -35,6 +35,7 @@ import {
   replyGaps,
   REPORT_BACK,
   askedParts,
+  flagNote,
   askedIn,
   sentencesOf,
   entriesOf,
@@ -212,11 +213,11 @@ function Source({ entry, now, replacedBy, above = false }: { entry: Entry; now: 
 }
 
 type Step = 'changes' | 'result' | 'draft'
-const PENDING_TITLE: Partial<Record<Repair['state'], string>> = { sending: 'Sending to', delivered: 'Repair delivered to', working: 'The agent is working on the repair in' }
+const PENDING_TITLE: Partial<Record<Repair['state'], string>> = { sending: 'Sending to', delivered: 'Repair delivered to', working: 'Repair delivered to' }
 const STATE_TITLE: Record<Repair['state'], string> = {
   sending: 'Sending',
   delivered: 'Delivered · waiting on the agent',
-  working: 'Delivered · the session reports it busy',
+  working: 'Delivered · no reply yet',
   replied: 'Replied · review it',
   held: 'In the prompt, not submitted',
   failed: 'Not sent · the draft is kept',
@@ -1622,7 +1623,7 @@ export function ReturnView({
                 <p>{holding.length ? holding.join(' · ') : 'No limit or rule recorded yet.'}</p>
                 {goal ? <p className="member-goal">Your goal when you started {name}: “{goal}”</p> : null}
                 <small>
-                  What you type here goes straight to {name} and isn't checked against these{canAct || name !== session ? '. A repair from the draft is' : ''}.{' '}
+                  What you type here goes straight to {name} and isn't checked against these{canAct || name !== session ? '. A repair from the draft is checked' : ''}.{' '}
                   <button
                     type="button"
                     className="link"
@@ -1632,7 +1633,7 @@ export function ReturnView({
                       onOpenTerminal(name)
                     }}
                   >
-                    Open as its own tab
+                    Open the full-screen terminal
                   </button>
                 </small>
               </div>
@@ -1841,7 +1842,7 @@ export function ReturnView({
                   {replied?.accepted
                     ? `You accepted it ${ago(now, replied.accepted.at)} ago. That records that you read the reply; it doesn't merge, push or close anything.`
                     : replied
-                      ? "Devbox doesn't run checks or read the reply for meaning. Each limit says whether it changed after the repair was sent. A line you asked for, or a rule, is flagged when the reply doesn't seem to mention it; a row without a flag is still unchecked, and yours to read."
+                      ? "Devbox doesn't run checks or read the reply for meaning. Each limit says whether it changed after the repair was sent. A line you asked for is flagged when the reply doesn't seem to mention it; a row without a flag is still unchecked, and yours to read."
                       : 'No repair has come back yet. You can hand back a repair or ask first; only accepting needs a full check.'}
                 </p>
                 {replied ? (
@@ -1877,11 +1878,7 @@ export function ReturnView({
                           <li key={i}>
                             <span>{line}</span>
                             {unsaid.has(line) ? (
-                              loose[i] ? (
-                                <small>Maybe only partly covered, not counted as missed · nearest in the reply: “{loose[i]}”</small>
-                              ) : (
-                                <small className="asked-none">The reply doesn't seem to mention this.</small>
-                              )
+                              <small className="asked-none">{flagNote(line, reply, context, loose[i])}</small>
                             ) : near ? (
                               <small>Not checked · nearest in the reply: “{near}”</small>
                             ) : (
@@ -1912,9 +1909,14 @@ export function ReturnView({
                             {a.from}: “{a.text}”
                           </span>
                           {a.missed.length ? (
-                            <small className="asked-none">The reply doesn't seem to mention {a.missed.map((x) => `“${x}”`).join(', ')}.</small>
+                            <small className="asked-none">
+                              The reply doesn't seem to mention {a.missed.map((x) => `“${x}”`).join(', ')}.
+                              {a.flagged.length ? ` It doesn't seem to mention ${a.flagged.map((x) => `“${x}”`).join(' or ')} either; ${a.flagged.length > 1 ? "they're" : "it's"} flagged above, in what you asked.` : ''}
+                            </small>
                           ) : a.flagged.length ? (
-                            <small className="asked-none">The reply doesn't seem to mention {a.flagged.map((x) => `“${x}”`).join(', ')} either; it's flagged above, in what you asked.</small>
+                            <small className="asked-none">
+                              The reply doesn't seem to mention {a.flagged.map((x) => `“${x}”`).join(' or ')} either; {a.flagged.length > 1 ? "they're" : "it's"} flagged above, in what you asked.
+                            </small>
                           ) : (
                             <small>Not checked · read the reply for it.</small>
                           )}
@@ -1942,10 +1944,6 @@ export function ReturnView({
                         <span>{r.sentence}</span>
                         <b data-state={tag ? 'changed' : 'none'}>
                           {tag}not checked by Devbox
-                          {(() => {
-                            const skipped = replied ? unmentioned(askedParts(r.sentence).join('\n'), reply) : []
-                            return skipped.length ? `; the reply doesn't seem to mention ${skipped.length === askedParts(r.sentence).length ? 'it' : skipped.map((x) => `“${x}”`).join(', ')}` : ''
-                          })()}
                         </b>
                       </li>
                     )

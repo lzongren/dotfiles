@@ -137,7 +137,7 @@ describe('the home list', () => {
     const suggestion = { ...limit('a3', 30000, sec(900), 'I suggest raising the deadline to 30 seconds.'), key: 'deadline|max', subject: 'deadline', author: 'agent' as const, shown: 'raising the deadline to 30 seconds' }
     const list = items([session('fix')], [agent('fix', { turnAt: sec(30) })], {}, { fix: brief({ brief: { ...brief().brief, failing, rules: [rule, raise], why, suggestions: [suggestion] } }) })
     render(<PickUpList items={list} now={NOW} onContinue={() => undefined} onOpen={() => undefined} />)
-    expect(screen.getByRole('listitem')).toHaveTextContent("Since you left Check “keeps total deadline” failed 10m ago · 12.6 s, limit 10 s · may have passed sinceThe agent suggested “raising the deadline to 30 seconds” · your rule: “Don't raise it to 30 seconds”You changed")
+    expect(screen.getByRole('listitem')).toHaveTextContent("Since you left Check “keeps total deadline” failed 10m ago · 12.6 s, limit 10 s · it may have passed since; only failures are recordedThe agent suggested “raising the deadline to 30 seconds” · your rule: “Don't raise it to 30 seconds”You changed")
     expect(screen.getByRole('listitem')).not.toHaveTextContent('against')
     cleanup()
     const seen = items([session('fix')], [agent('fix', { turnAt: sec(30) })], {}, { fix: brief({ brief: { ...brief().brief, leftAt: sec(300), failing, rules: [rule] } }) })

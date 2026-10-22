@@ -936,6 +936,24 @@ export const unmentioned = (asked: string, reply: string, context = new Set<stri
   })
 }
 
+export const skippedParts = (line: string, reply: string, context = new Set<string>()) => {
+  const parts = /^report back:/i.test(line)
+    ? []
+    : line
+        .replace(/^[-*]\s+/, '')
+        .split(/[?;]\s*|\.(?:\s+|$)|,?\s+and\s+/)
+        .map((p) => p.trim())
+        .filter((p) => stems(p).length)
+  const skipped = parts.filter((p) => !partly([p], reply, stems(p).some((w) => !context.has(w)) ? context : undefined)[0])
+  return { parts, skipped: parts.length < 2 ? [] : skipped }
+}
+
+export const flagNote = (line: string, reply: string, context = new Set<string>(), near?: string) => {
+  const { parts, skipped } = skippedParts(line, reply, context)
+  const lead = skipped.length && skipped.length < parts.length ? `The reply doesn't seem to mention ${skipped.map((x) => `“${x}”`).join(', ')}` : near || (parts.length > 1 && !skipped.length) ? 'The reply may cover this only in part' : "The reply doesn't seem to mention this"
+  return near ? `${lead} · nearest in the reply: “${near}”` : `${lead}.`
+}
+
 export const nearestFor = (lines: string[], reply: string, context = new Set<string>(), unique = true) => {
   const sentences = replySentences(reply).map((s) => ({ s, words: new Set(stems(s)) }))
   const pairs = lines
@@ -988,9 +1006,7 @@ export const partly = (lines: string[], reply: string, context = new Set<string>
 
 export const replyGaps = (packet: string, reply: string) => {
   const context = contextOf(packet)
-  const open = unmentioned(askedIn(packet), reply, context)
-  const near = partly(open, reply, context)
-  return [...open.filter((_, i) => !near[i]), ...attachedGaps(packet, reply).flatMap((a) => (a.missed.length ? [a.missed.join('; ')] : []))]
+  return [...unmentioned(askedIn(packet), reply, context), ...attachedGaps(packet, reply).flatMap((a) => (a.missed.length ? [a.missed.join('; ')] : []))]
 }
 
 export function draftBlockers(text: string, c: Constraints): Conflict[] {

@@ -37,7 +37,7 @@ function Row({ item, now, primary, onContinue, onOpen }: { item: HomeItem; now: 
         ? 'Waiting for the answer to your read-only question. It comes back under New since you looked, so you can leave.'
         : 'Waiting for the reply to the repair you sent. It comes back under Needs you, so you can leave.'
       : result && b?.failing
-        ? `Check “${checkName(b.failing.text)}” failed ${ago(now, b.failing.at)} ago · ${result} · may have passed since`
+        ? `Check “${checkName(b.failing.text)}” failed ${ago(now, b.failing.at)} ago · ${result} · it may have passed since; only failures are recorded`
         : b?.since
           ? said(spoken(b.since.text, b), replyish || /^\s*\[devbox result /.test(b.since.text))
           : item.insight.summary

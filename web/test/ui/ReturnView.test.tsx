@@ -979,13 +979,15 @@ describe('the repair draft', () => {
     expect(editor()).toHaveValue(`Fix it.\nThe reply to r-1 doesn't seem to cover these. Do each, or say why not:\n- Check that kill $$ stops the worker.\n${report}`)
   })
 
-  it('says a line may be only partly covered when the reply shares only the words of your rules, and quotes the nearest sentence', async () => {
-    const packet = '[devbox repair r-1]\nPurpose: repair.\nTarget: this session, fix.\n\nThen rerun keeps total deadline and the other retry tests.\n\nWhat this is based on, quoted from this conversation:\n- Rule (you, 2026-10-16 03:01Z): "Keep the 10 second total deadline and retry only idempotent requests."\n\nWhen you finish'
-    const out: Repair = { id: 'r-1', packet, target: { session: 'fix', pane: '%1', sessionId: 's1' }, basis: currentBasis, version: 'a2', draftVersion: 'v0', sentAt: T + 9000, state: 'replied', reply: '[devbox result r-1] retry.test.ts passes: total deadline 9.6 s.', replyId: 'a9' }
+  it('names the part of a line the reply skips, and quotes the nearest sentence', async () => {
+    const packet = '[devbox repair r-1]\nPurpose: repair.\nTarget: this session, fix.\n\nFix the uploader and shorten the backoff waits.\nRebase and rerun.\nThen rerun keeps total deadline and the other retry tests.\n\nWhat this is based on, quoted from this conversation:\n- Rule (you, 2026-10-16 03:01Z): "Keep the 10 second total deadline and retry only idempotent requests."\n\nWhen you finish'
+    const out: Repair = { id: 'r-1', packet, target: { session: 'fix', pane: '%1', sessionId: 's1' }, basis: currentBasis, version: 'a2', draftVersion: 'v0', sentAt: T + 9000, state: 'replied', reply: '[devbox result r-1] The uploader is fixed. retry.test.ts passes: total deadline 9.6 s.\nRebased onto main.\nAll green again on the rerun.', replyId: 'a9' }
     await show({ state: state({ draft: draft('x'), draftVersion: 'v0', repairs: [out] }) })
     fireEvent.click(screen.getByRole('button', { name: 'Result & acceptance' }))
     const asked = screen.getByRole('article', { name: 'What you asked' })
-    expect(within(asked).getByText('Then rerun keeps total deadline and the other retry tests.').closest('li')).toHaveTextContent('Maybe only partly covered, not counted as missed · nearest in the reply: “retry.test.ts passes: total deadline 9.6 s.”')
+    expect(within(asked).getByText('Fix the uploader and shorten the backoff waits.').closest('li')).toHaveTextContent('The reply doesn\'t seem to mention “shorten the backoff waits”')
+    expect(within(asked).getByText('Rebase and rerun.').closest('li')).toHaveTextContent('The reply may cover this only in part.')
+    expect(within(asked).getByText('Then rerun keeps total deadline and the other retry tests.').closest('li')).toHaveTextContent('The reply doesn\'t seem to mention “Then rerun keeps total deadline” · nearest in the reply: “retry.test.ts passes: total deadline 9.6 s.”')
     expect(screen.getByRole('article', { name: 'The reply' }).compareDocumentPosition(asked) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
@@ -1898,7 +1900,7 @@ describe("the work's sessions as tabs", () => {
     expect(bar).toHaveTextContent('Keeps holding while you continue')
     expect(bar).toHaveTextContent('Your goal when you started tests: “Cover the budget boundary”')
     expect(bar).toHaveTextContent('at most 1 attempt')
-    expect(bar).toHaveTextContent("What you type here goes straight to tests and isn't checked against these. A repair from the draft is.")
+    expect(bar).toHaveTextContent("What you type here goes straight to tests and isn't checked against these. A repair from the draft is checked.")
     expect(screen.getByTestId('term-tests')).toHaveAttribute('data-active', 'true')
     expect(screen.queryByRole('navigation', { name: 'Steps' })).toBeNull()
     const records = within(screen.getByRole('complementary', { name: "This work's records" }))
@@ -1990,7 +1992,7 @@ describe("the work's sessions as tabs", () => {
     render(<ReturnView session="fix" onClose={() => undefined} onOpenTerminal={onOpenTerminal} />)
     await settle()
     fireEvent.click(tabs().getByRole('button', { name: /tests$/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Open as its own tab' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open the full-screen terminal' }))
     expect(onOpenTerminal).toHaveBeenCalledWith('tests')
     expect(screen.queryByTestId('term-tests')).toBeNull()
     expect(screen.getByRole('navigation', { name: 'Steps' })).toBeInTheDocument()
