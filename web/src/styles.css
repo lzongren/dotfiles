@@ -2427,8 +2427,8 @@ kbd {
   font-weight: 500;
 }
 
-.work-tabs .tab-name {
-  max-width: 24ch;
+.work-tab-name {
+  max-width: 18ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2821,7 +2821,17 @@ kbd {
 .brief-facts dd {
   display: grid;
   gap: 4px;
+  min-width: 0;
   margin: 0;
+}
+
+.brief-facts dd .link {
+  justify-self: start;
+  text-align: left;
+}
+
+:is(.brief-facts dd, .holds-list li, .rail-item span) {
+  overflow-wrap: anywhere;
 }
 
 .next-evidence {

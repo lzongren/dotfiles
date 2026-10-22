@@ -38,6 +38,7 @@ export interface Limit {
   session: string
   sentence: string
   reason?: string
+  pasted?: true
 }
 
 export interface Held {
@@ -65,6 +66,7 @@ export interface Rule {
   session: string
   sentence: string
   reason?: string
+  pasted?: true
 }
 
 export interface Constraints {
@@ -178,9 +180,12 @@ const SUGGEST_RE = new RegExp(
   `\\b(?:rais(?:e|es|ed|ing)|increas(?:e|es|ed|ing)|lower(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|set(?:s|ting)?|bump(?:s|ed|ing)?|extend(?:s|ed|ing)?|chang(?:e|es|ed|ing)|cut(?:s|ting)?|shorten(?:s|ed|ing)?|lengthen(?:s|ed|ing)?)\\s+(?:the\\s+)?(?:[a-z-]+\\s+){0,2}?([a-z]+)\\s+to\\s+${NUM}(?:\\s*${UNIT})?`,
   'gi',
 )
-const RULE_RE = /\b(?:never|do not|don't|must not|mustn't|only|must|always|(?:on|with|use|keep|against) the same)\b/i
+const RULE_RE = /\b(?:never|do not|don['\u2019]t|must not|mustn['\u2019]t|only|must|always|(?:on|with|use|keep|against) the same)\b/i
+const PASTED_CHARS = 600
+const PASTED_LINES = 10
+const PASTED_LONG = 1500
 const REASON_RE = /\b(?:because|so that|due to)\b\s*(.+?)[\s.!?]*$/i
-const NEXT_REASON_RE = /^(?:this is |that's |that is )?because\b\s*(.+?)[\s.!?]*$|^the reason (?:is|being)\s+(.+?)[\s.!?]*$/i
+const NEXT_REASON_RE = /^(?:this is |that['\u2019]s |that is )?because\b\s*(.+?)[\s.!?]*$|^the reason (?:is|being)\s+(.+?)[\s.!?]*$/i
 
 function timingIn(sentence: string, start: number, end: number): string | undefined {
   const within = (cut: RegExp) => {
@@ -287,6 +292,7 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
   for (const entry of ordered) {
     if (entry.kind !== 'decision' && entry.kind !== 'agent') continue
     const sentences = sentencesOf(entry.text)
+    const pasted = entry.text.length > PASTED_LONG || (entry.text.length > PASTED_CHARS && entry.text.split('\n').filter((l) => l.trim()).length >= PASTED_LINES)
     let n = 0
     sentences.forEach((sentence, i) => {
       const found = limitsIn(sentence)
@@ -294,7 +300,7 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
       const reason = reasonFor(sentences, i)
       if (found.length === 0) {
         if (entry.author === 'you' && RULE_RE.test(sentence)) {
-          rules.push({ recordId: entry.id, author: entry.author, at: entry.at, session: entry.session, sentence, ...(reason ? { reason } : {}) })
+          rules.push({ recordId: entry.id, author: entry.author, at: entry.at, session: entry.session, sentence, ...(reason ? { reason } : {}), ...(pasted ? { pasted: true } : {}) })
         }
         return
       }
@@ -313,6 +319,7 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
           session: entry.session,
           sentence,
           ...(reason ? { reason } : {}),
+          ...(pasted ? { pasted: true } : {}),
         }
         if (entry.author === 'agent') {
           suggestions.push(limit)
@@ -385,7 +392,8 @@ export function briefOf(entries: Entry[], c: Constraints, session: string, leftA
   const before = (at: number) => leftAt === undefined || at <= leftAt
   const after = (at: number) => leftAt === undefined || at > leftAt
   const live = c.holds.filter((h) => !h.decided)
-  const mine = [...live.map((h) => h.limit), ...c.rules].filter((x) => x.author === 'you')
+  const yours = [...live.map((h) => h.limit), ...c.rules].filter((x) => x.author === 'you')
+  const mine = yours.some((x) => !x.pasted) ? yours.filter((x) => !x.pasted) : yours
   const reasons = mine.filter((x) => x.reason)
   const kept = mine.filter((x) => before(x.at)).sort((a, b) => b.at - a.at || b.sentence.length - a.sentence.length)[0]
   const why = newest(reasons.filter((x) => before(x.at))) ?? (leftAt === undefined ? undefined : kept) ?? newest(reasons)
@@ -662,7 +670,7 @@ export interface RuleHit {
   clause: string
 }
 
-const KEEPS_OUT = /\b(?:don't|do not|never|not|no|without|avoid|instead of)\b/i
+const KEEPS_OUT = /\b(?:don['\u2019]t|do not|never|not|no|without|avoid|instead of)\b/i
 const keptOut = (line: string, at: number) => {
   const lead = line.slice(0, at)
   return KEEPS_OUT.test(lead.slice(lead.match(/^.*(?:[.!?:;,]\s|\s—\s)/)?.[0].length ?? 0))
@@ -698,7 +706,7 @@ function settingRules(s: Found, rules: Rule[]): Array<{ rule: Rule; clause: stri
   return out
 }
 
-const FORBIDS = /\b(?:never|do not|don't|must not|mustn't)\s+(?:ever\s+)?([a-z]+)\s+(?:(?:the|a|an|any|this|that|your|my|our)\s+)?([a-z][\w-]*)/gi
+const FORBIDS = /\b(?:never|do not|don['\u2019]t|must not|mustn['\u2019]t)\s+(?:ever\s+)?([a-z]+)\s+(?:(?:the|a|an|any|this|that|your|my|our)\s+)?([a-z][\w-]*)/gi
 const NOT_THINGS = new Set(['it', 'them', 'that', 'this', 'anything', 'something', 'to', 'be', 'more', 'less', 'than', 'until', 'without', 'unless', 'with', 'on', 'in', 'at', 'for', 'by', 'as', 'up', 'down'])
 
 function forbidden(line: string, rules: Rule[]): Array<{ rule: Rule; clause: string; shown: string }> {
@@ -845,7 +853,7 @@ export function draftChecks(draft: { text: string; earlier?: string[]; setAside?
 const SKIP_ASK = /^(?:please continue in this conversation|follow my decisions and the limits quoted below|treat this as evidence to check|latest result \(|the reply to \S+ doesn't seem to cover these)/i
 const EARLIER_NOTE = '(Earlier comparison only, not a requirement.)'
 const ASK_STOP = new Set(['also', 'what', 'which', 'that', 'this', 'with', 'from', 'your', 'them', 'they', 'then', 'their', 'there', 'about', 'still', 'report', 'back', 'decision', 'please', 'into', 'when', 'have', 'been', 'were', 'will', 'would', 'should', 'could', 'only', 'each', 'just', 'some', 'more', 'than', 'here'])
-const NEGATION = /\b(?:never|not|no|nothing|none|neither|nor|without|don't|doesn't|didn't|won't|can't|cannot|isn't|wasn't)\b/g
+const NEGATION = /\b(?:never|not|no|nothing|none|neither|nor|without|don['\u2019]t|doesn['\u2019]t|didn['\u2019]t|won['\u2019]t|can['\u2019]t|cannot|isn['\u2019]t|wasn['\u2019]t)\b/g
 const stems = (t: string) =>
   (t.toLowerCase().replace(NEGATION, ' nnot ').match(/[a-z]{4,}|\d+/g) ?? []).filter((w) => !ASK_STOP.has(w)).map((w) => w.replace(/(?:ing|ed|es|e|s)$/, '').replace(/([b-df-hj-np-tv-z])\1$/, '$1').slice(0, 5))
 
@@ -874,7 +882,7 @@ export const askedLines = (asked: string) =>
         : [l],
     )
 
-const FORMAT_ASK = /^(?:don't|do not|never|separate facts|say what is unknown|facts? (?:vs\.?|versus|or|and) (?:guess|inference|opinion)|please\b|be (?:brief|short)|keep it short|cite\b|(?:point to|quote|name) (?:the )?(?:message|file|line|source|record)s?\b)/i
+const FORMAT_ASK = /^(?:don['\u2019]t|do not|never|separate facts|say what is unknown|facts? (?:vs\.?|versus|or|and) (?:guess|inference|opinion)|please\b|be (?:brief|short)|keep it short|cite\b|(?:point to|quote|name) (?:the )?(?:message|file|line|source|record)s?\b)/i
 export const askedParts = (question: string) =>
   question
     .split(/[?;]\s*|\.(?:\s+|$)/)
@@ -1168,6 +1176,41 @@ export const keptOthers = (entries: Entry[], session: string, ids: string[] = []
 
 export const ruleKey = (r: Rule) => `${r.recordId}|${r.sentence}`
 
+const PLAIN_RULE_RE = /^(?:[-*\u2022]\s+|\*\*)?(?:(?:please|and|also|just|so|ok|okay|then|but)[\s,]+)*\**(?:never|do not|don['\u2019]t|must|only|always|keep|use|stay|make sure|ensure)\b|\byou\s+(?:must|should|shall|need to|have to|never|only|always|can only|may only)\b|\b(?:make sure|ensure)\b/i
+const ASIDE_RE = /\?["')\]]*$|^(?:\/\/|\/\*|>\s)|^I\s+(?:don['\u2019]t|do not|never|always)\b(?!\s+(?:want|need|like|let|allow|expect)\b)|\b(?:has|have|had)\s+(?:never|always|only)\b|^the only\b/i
+export const RULES_SHOWN = 5
+export const flaggedRules = (b: Pick<Brief, 'rules' | 'suggestions' | 'leftAt'>, failure?: { text: string }) =>
+  [checkedRule(failure?.text, b.rules), ...sinceLeft(b).map((x) => namedRule(x, b.rules)?.rule)].filter((r): r is Rule => r !== undefined)
+export function uniqueRules(rules: Rule[], session: string): Rule[] {
+  const pick = new Map<string, Rule>()
+  const weight = (r: Rule) => (r.pasted ? 0 : 4) + (r.reason ? 2 : 0) + (r.session === session ? 1 : 0)
+  for (const r of rules) {
+    const had = pick.get(r.sentence)
+    if (!had || weight(r) >= weight(had)) pick.set(r.sentence, r)
+  }
+  return rules.filter((r) => pick.get(r.sentence) === r)
+}
+export function headRules(rules: Rule[], session: string, flaggedCopies: Rule[] = []): { unique: Rule[]; head: Rule[] } {
+  const unique = uniqueRules(rules, session)
+  const named = new Set(flaggedCopies.map((r) => r.sentence))
+  const flagged = unique.filter((r) => named.has(r.sentence))
+  const score = new Map(
+    unique.map((r) => {
+      const plain = PLAIN_RULE_RE.test(r.sentence)
+      const base = ASIDE_RE.test(r.sentence) ? 0 : r.pasted ? (plain ? 2 : 0) : plain ? 6 : 3
+      return [r, base && base + (r.session === session ? 1 : 0)]
+    }),
+  )
+  const top = new Set(unique.filter((r) => !flagged.includes(r) && (score.get(r) ?? 0) >= 2).sort((a, b) => (score.get(a) ?? 0) - (score.get(b) ?? 0)).slice(-RULES_SHOWN))
+  return { unique, head: unique.filter((r) => top.has(r) || flagged.includes(r)) }
+}
+export function holdingOf(b: Brief, session: string, failure = b.failing, where = 'on the work page'): { rules: Rule[]; more?: string } {
+  const { unique, head } = headRules(b.rules, session, flaggedRules(b, failure))
+  const more = unique.length - head.length
+  const n = `${more} ${head.length ? 'more ' : ''}rule${more === 1 ? '' : 's'}`
+  return { rules: head, ...(more ? { more: head.length ? n : `${n} ${where}` } : {}) }
+}
+
 export const reasonNote = (h: Held) =>
   h.limit.reason ? `Reason: ${h.limit.reason}` : h.replaced.some((l) => l.reason) ? "No reason recorded. The replaced limit's reason may not apply to this one" : 'No reason recorded'
 
@@ -1234,16 +1277,20 @@ export function questionPrompt(input: { id: string; cwd: string; question: strin
 
 const AUTHORS: Record<ProbeRecord['kind'], Author> = { decision: 'you', devbox: 'you', agent: 'agent', failure: 'tool', shell: 'shell' }
 
-export function entriesOf(sessions: ProbeSession[]): Entry[] {
-  return sessions.flatMap((s) =>
-    s.records.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      author: AUTHORS[r.kind],
-      at: r.at,
-      text: r.text,
-      session: s.name,
-      ...(r.turn === undefined ? {} : { turn: r.turn }),
-    })),
-  )
+export function entriesOf(sessions: ProbeSession[], first: string): Entry[] {
+  const read = new Set<string>()
+  return [...sessions]
+    .sort((a, b) => Number(b.name === first) - Number(a.name === first))
+    .filter((s) => !s.transcript?.sid || (!read.has(s.transcript.sid) && !!read.add(s.transcript.sid)))
+    .flatMap((s) =>
+      s.records.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        author: AUTHORS[r.kind],
+        at: r.at,
+        text: r.text,
+        session: s.name,
+        ...(r.turn === undefined ? {} : { turn: r.turn }),
+      })),
+    )
 }

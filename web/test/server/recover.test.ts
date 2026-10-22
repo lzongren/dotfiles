@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { basisOf, draftChecks, evidenceAmounts, limitPushes, partly, clause, digest, keptOthers, limitText, namedRule, othersSince, briefOf, changeIssue, checkedRule, measured, constraints, draftFor, spoken, QUESTION_START, differences, draftBlockers, draftIssues, draftRuleHits, keptLines, pruned, newerThan, retryBlock, shownAs, uncheckedAmounts, unmentioned, askedLines, attachedIn, replyGaps, nearestFor, contextOf, askedIn, leadAsk, packetOf, scopeHits, exceptionKey, askedParts, groupWork, limitsIn, questionPrompt, quotedRules, repairPacket, ruleKey, undoCorrection, workOf, type Entry, type Member } from '../../src/shared/recover.js'
+import { basisOf, draftChecks, evidenceAmounts, limitPushes, partly, clause, digest, keptOthers, limitText, namedRule, othersSince, briefOf, changeIssue, checkedRule, measured, constraints, draftFor, spoken, QUESTION_START, differences, draftBlockers, draftIssues, draftRuleHits, entriesOf, headRules, holdingOf, keptLines, uniqueRules, pruned, newerThan, retryBlock, shownAs, uncheckedAmounts, unmentioned, askedLines, attachedIn, replyGaps, nearestFor, contextOf, askedIn, leadAsk, packetOf, scopeHits, exceptionKey, askedParts, groupWork, limitsIn, questionPrompt, quotedRules, repairPacket, ruleKey, undoCorrection, workOf, type Entry, type Member, type Rule } from '../../src/shared/recover.js'
 import type { Repair } from '../../src/shared/types.js'
 
 const you = (id: string, at: number, text: string): Entry => ({ id, kind: 'decision', author: 'you', at, text, session: 'fix' })
@@ -152,6 +152,98 @@ describe('constraints', () => {
   it('lists rules it cannot compare as decisions, so nothing worded that way is lost', () => {
     const r = constraints([you('u1', 1, 'Never merge the PR automatically. Only retry idempotent requests.')])
     expect(r.rules.map((x) => x.sentence)).toEqual(['Never merge the PR automatically.', 'Only retry idempotent requests.'])
+  })
+
+  it('reads a rule however it is worded, curly apostrophes included', () => {
+    const rules = (text: string) => constraints([you('u1', 1, text)]).rules.map((x) => x.sentence)
+    expect(rules('Don\u2019t push to main. You mustn\u2019t merge it.')).toEqual(['Don\u2019t push to main.', 'You mustn\u2019t merge it.'])
+  })
+})
+
+describe('headRules', () => {
+  const rule = (sentence: string, session = 'fix', extra: Partial<Rule> = {}): Rule => ({ recordId: sentence, author: 'you', at: 1, session, sentence, ...extra })
+
+  it('leads with five plainly worded rules, this session\'s first, then fills with the rest you typed', () => {
+    const rules = [rule('Never push.'), rule('Only touch src/.', 'review'), rule('Merge it only after CI passes.'), rule('Keep it read-only.'), rule('- Never force-push.'), rule('Make sure tests pass.', 'review'), rule('**Always** rebase.')]
+    expect(headRules(rules, 'fix').head.map((r) => r.sentence)).toEqual(['Never push.', 'Keep it read-only.', '- Never force-push.', 'Make sure tests pass.', '**Always** rebase.'])
+    expect(headRules([rule('Merge it only after CI passes.'), rule('The PR must not be merged.'), rule("I don't want the agent to push.")], 'fix').head).toHaveLength(3)
+  })
+
+  it('keeps questions, code, quotes and pasted text out of the lead unless a check or suggestion names them, and lists a repeated rule once', () => {
+    const pasted = rule('The only gap is the connector, we must check it.', 'fix', { pasted: true })
+    const noise = [rule("Why don't we allowlist it too?"), rule('// the target must still be allowed.'), rule('> never merge it'), rule("I don't have any concerns."), rule('It has always passed.'), rule('The only gap is the connector.'), pasted]
+    expect(headRules(noise, 'fix').head).toEqual([])
+    expect(headRules(noise, 'fix', [pasted]).head).toEqual([pasted])
+    const banner = rule('Do not click links unless you know the sender.', 'fix', { pasted: true })
+    expect(headRules([banner], 'fix').head).toEqual([banner])
+    expect(headRules([banner, ...['a', 'b', 'c', 'd', 'e'].map((x) => rule(`Merge ${x} only after CI.`))], 'fix').head).not.toContain(banner)
+    const mine = rule('Never push.', 'fix', { recordId: 'u2' })
+    expect(headRules([rule('Never push.', 'review'), mine], 'fix').head).toEqual([mine])
+    expect(uniqueRules([rule('Never push.', 'review'), mine, rule('Only src/.')], 'fix').map((r) => `${r.session} ${r.sentence}`)).toEqual(['fix Never push.', 'fix Only src/.'])
+    const reasoned = rule('Never push.', 'review', { reason: 'CI deploys from it' })
+    expect(uniqueRules([reasoned, mine], 'fix')).toEqual([reasoned])
+    const typed = rule('We only deploy on Tuesdays.', 'fix', { recordId: 'a' })
+    expect(uniqueRules([typed, rule('We only deploy on Tuesdays.', 'fix', { recordId: 'b', pasted: true })], 'fix')).toEqual([typed])
+  })
+
+  it("keeps your typed copy, with its reason, when a check names a pasted copy of the same rule", () => {
+    const pasted = rule('Never push to main.', 'review', { recordId: 'p1', pasted: true })
+    const typed = rule('Never push to main.', 'fix', { recordId: 'u1', reason: 'CI deploys from it' })
+    expect(headRules([pasted, typed], 'fix', [pasted]).head).toEqual([typed])
+  })
+
+  it('counts the rules it leaves out once each, and says where they are when none lead', () => {
+    const e = [you('u1', 1, 'Never push. Never push. Why must we wait?')]
+    expect(holdingOf(briefOf(e, constraints(e), 'fix'), 'fix')).toEqual({ rules: [expect.objectContaining({ sentence: 'Never push.' })], more: '1 more rule' })
+    const asides = [you('u1', 1, "Why must we wait? I don't have concerns.")]
+    expect(holdingOf(briefOf(asides, constraints(asides), 'fix'), 'fix')).toEqual({ rules: [], more: '2 rules on the work page' })
+  })
+
+  it('reads a long message as pasted only when it is long and spread over lines', () => {
+    const typed = `${'We are fixing the retry budget for the API client today. '.repeat(10)}Merge it only after CI passes.`
+    const pasted = `${'> quoted line from the thread\n'.repeat(30)}Merge it only after CI passes.`
+    const brief = 'Fix the retry flake.\n- Only touch src/retry.ts\n- The PR must not be merged until CI is green\n- Keep the 10 s deadline\n- Ask before you push\n- Run the suite twice'
+    expect(constraints([you('u1', 1, brief.padEnd(450, ' '))]).rules[0].pasted).toBeUndefined()
+    expect(constraints([you('u1', 1, typed)]).rules[0].pasted).toBeUndefined()
+    expect(constraints([you('u1', 1, pasted)]).rules[0].pasted).toBe(true)
+  })
+
+  it("doesn't take a reason from pasted text as yours, and reads a typed message with paragraphs as typed", () => {
+    const why = (text: string) => { const e = [you('u1', 1, text)]; return briefOf(e, constraints(e), 'fix').why?.reason }
+    const typedToo = (text: string) => { const e = [you('u0', 0, 'Never drop the old path, because callers still use it.'), you('u1', 1, text)]; return briefOf(e, constraints(e), 'fix').why?.reason }
+    expect(typedToo(`${'log line\n'.repeat(80)}Deploy must be retried because the token expired.`)).toBe('callers still use it')
+    expect(typedToo(`${'log line\n'.repeat(80)}Retry at most 3 times because the upstream rate-limits us.`)).toBe('callers still use it')
+    expect(why(`${'Context for the task.\n'.repeat(80)}Keep at most 3 retries because the API rate-limits us.`)).toBe('the API rate-limits us')
+    const typed = `${'We spent the morning on the retry flake and found the budget resets twice per call, so every retry ran out early.\n\n'.repeat(5)}The PR must not be merged until CI is green, because CI deploys from it.`
+    expect(typed.length).toBeGreaterThan(600)
+    expect(why(typed)).toBe('CI deploys from it')
+    expect(why('Never merge the PR. That\u2019s because CI deploys from it.')).toBe('CI deploys from it')
+  })
+
+  it('flags a draft against a rule written with a curly apostrophe', () => {
+    const c = constraints([you('u1', 1, 'Don\u2019t touch the lockfile.')])
+    expect(draftRuleHits('Touch the lockfile to fix it.', c)).toHaveLength(1)
+  })
+
+  it('shows the rule a failing check names wherever what holds is summed up, however it is worded', () => {
+    const e: Entry[] = [you('u1', 1, `${'Background.\n'.repeat(60)}Deploys are only allowed within the 10 second total deadline.`), { id: 'f1', kind: 'failure', author: 'tool', at: 2, text: 'FAIL keeps total deadline', session: 'fix' }]
+    const b = briefOf(e, constraints(e), 'fix')
+    expect(b.rules[0].pasted).toBe(true)
+    expect(holdingOf(b, 'fix').rules.map((r) => r.sentence)).toEqual(['Deploys are only allowed within the 10 second total deadline.'])
+    const repaired = { ...b, failing: undefined }
+    expect(holdingOf(repaired, 'fix').rules).toEqual([])
+    expect(holdingOf(repaired, 'fix', e[1]).rules.map((r) => r.sentence)).toEqual(['Deploys are only allowed within the 10 second total deadline.'])
+  })
+})
+
+describe('entriesOf', () => {
+  const s = (name: string, sid: string | undefined, ids: string[]) => ({ name, pane: '%1', cmd: 'claude', agent: 'claude' as const, path: '/w', records: ids.map((id) => ({ id, kind: 'decision' as const, at: 1, text: 'Never merge.' })), ...(sid ? { transcript: { ino: 1, size: 1, last: ids.at(-1) ?? '', sid } } : {}) })
+
+  it('reads a conversation two sessions share once, as the session named first', () => {
+    const read = (first: string) => entriesOf([s('fix', 'c1', ['u1']), s('review', 'c2', ['u2']), s('devbox', 'c1', ['u1'])], first).map((e) => `${e.session}:${e.id}`)
+    expect(read('fix')).toEqual(['fix:u1', 'review:u2'])
+    expect(read('devbox')).toEqual(['devbox:u1', 'review:u2'])
+    expect(entriesOf([s('a', undefined, ['u1']), s('b', undefined, ['u1'])], 'b').map((e) => e.session)).toEqual(['b', 'a'])
   })
 })
 

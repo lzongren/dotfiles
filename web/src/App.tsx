@@ -3,7 +3,7 @@ import { getBrief, getInsights, getReturnSummary, getSessions, type ApiResult, t
 import type { AgentInsight, ReturnSummary, SessionsResponse } from './shared/types'
 import { changeMark, displayTitle, laneOf, loadSeen, markSeen, type Lane } from './insights'
 import { usePoll } from './poll'
-import { clause, lower } from './shared/recover'
+import { clause, holdingOf, lower } from './shared/recover'
 import { initToken } from './token'
 import { ConnectionStatus, INSIGHTS_STALE_MS, type Cause, type Failure } from './components/ConnectionStatus'
 import { Gradient, mostSerious } from './components/Icon'
@@ -499,7 +499,8 @@ export function App() {
             const work = workFor(groups, name)
             const b = work?.brief?.brief
             if (!work || !b) return null
-            const holding = [...b.holds.map((h) => lower(h.limit.shown)), ...b.rules.map((r) => clause(r.sentence))]
+            const { rules, more } = holdingOf(b, work.session.name)
+            const holding = [...b.holds.map((h) => lower(h.limit.shown)), ...rules.map((r) => clause(r.sentence)), ...(more ? [more] : [])]
             return (
               <div className="hold-bar term-hold" role="note">
                 <strong>In {titleOf(work)} · keeps holding: </strong>

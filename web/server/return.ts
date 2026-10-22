@@ -283,7 +283,7 @@ export function createReturnService(deps: ReturnDeps) {
     const fetched = await fetch(session)
     if ('error' in fetched) return { status: 404, body: { error: fetched.error } }
     const state = await advance(session, fetched.sessions)
-    const entries = entriesOf(fetched.sessions)
+    const entries = entriesOf(fetched.sessions, session)
     return {
       status: 200,
       body: {
@@ -348,7 +348,7 @@ export function createReturnService(deps: ReturnDeps) {
     }
     const s = fetched.sessions.find((x) => x.name === session)
     if (!s) return { status: 404, body: { error: 'unknown_session' } }
-    const entries = entriesOf(fetched.sessions)
+    const entries = entriesOf(fetched.sessions, session)
     const c = constraints(entries, state.decisions)
     const block = existing && retryBlock(existing, { version: state.draftVersion, repairs: state.repairs, c, conversation: conversationOf(s), target: state.draft?.target?.sessionId })
     if (existing && block === 'superseded') return { status: 409, body: { error: block, requestId: newerThan(existing, state.repairs)?.id } }
@@ -428,7 +428,7 @@ export function createReturnService(deps: ReturnDeps) {
     const r = state.repairs.find((x) => x.id === requestId)
     if (!r) return { status: 404, body: { error: 'unknown_request' } }
     if (r.state !== 'replied' || !r.replyId) return { status: 409, body: { error: 'no_reply' } }
-    const changed = differences(r.basis, constraints(entriesOf(fetched.sessions), state.decisions))
+    const changed = differences(r.basis, constraints(entriesOf(fetched.sessions, session), state.decisions))
     if (changed.length) return { status: 409, body: { error: 'evidence_changed', differences: changed } }
     const accepted = { at: deps.now(), replyId: r.replyId }
     await deps.store.update(workKey(session), (w) => ({ ...w, repairs: w.repairs.map((x) => (x.id === requestId ? { ...x, accepted } : x)) }))

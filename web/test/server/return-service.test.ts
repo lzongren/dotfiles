@@ -74,7 +74,7 @@ async function loaded(svc: ReturnType<typeof service>) {
 }
 
 function draftFor(text: string, records = base): DraftState {
-  const c = constraints(entriesOf([fixSession(records)]))
+  const c = constraints(entriesOf([fixSession(records)], 'fix'))
   return { text, basis: basisOf(c), corrections: [], earlier: [], target: { session: 'fix', pane: '%1', sessionId: 's1' } }
 }
 
@@ -250,7 +250,7 @@ describe('trying a repair again', () => {
   const predicted = async (svc: ReturnType<typeof service>) => {
     const w = await loaded(svc)
     const r = w.state.repairs.find((x) => x.id === 'r-1') as Repair
-    return retryBlock(r, { version: w.state.draftVersion, repairs: w.state.repairs, c: constraints(entriesOf(w.sessions), w.state.decisions), conversation: conversationOf(w.sessions.find((x) => x.name === 'fix')), target: w.state.draft?.target?.sessionId })
+    return retryBlock(r, { version: w.state.draftVersion, repairs: w.state.repairs, c: constraints(entriesOf(w.sessions, 'fix'), w.state.decisions), conversation: conversationOf(w.sessions.find((x) => x.name === 'fix')), target: w.state.draft?.target?.sessionId })
   }
   const sent = async (svc: ReturnType<typeof service>, outcome: { result: string; code?: string }) => {
     const first = await svc.saveDraft('fix', draftFor('Retry at most 2 attempts.'), '')
@@ -422,7 +422,7 @@ describe('sending a repair', () => {
     const text = 'Retry at most 2 attempts.'
     const { version } = await svc.saveDraft('fix', { ...draftFor(text), others: ['c1', 'gone'] }, '')
     const preview = (others: string[]) => {
-      const entries = entriesOf(host.sessions)
+      const entries = entriesOf(host.sessions, 'fix')
       return digest(packetOf(PREVIEW_ID, '/work/api', 'fix', { text, earlier: [], others }, entries, constraints(entries)))
     }
     expect(await svc.repair('fix', 'r-1', { preview: preview([]), version })).toMatchObject({ status: 409, body: { error: 'preview_changed' } })

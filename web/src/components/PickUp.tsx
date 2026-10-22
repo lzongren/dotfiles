@@ -1,6 +1,6 @@
 import { useId } from 'react'
 import { displayTitle, plain } from '../insights'
-import { checkedRule, checkName, limitText, lower, measured, namedRule, sinceLeft, spoken } from '../shared/recover'
+import { checkedRule, checkName, holdingOf, limitText, lower, measured, namedRule, sinceLeft, spoken } from '../shared/recover'
 import { ago } from '../time'
 import { Icon, StateIcon } from './Icon'
 import { headline } from './SessionList'
@@ -53,7 +53,8 @@ function Row({ item, now, primary, onContinue, onOpen }: { item: HomeItem; now: 
   const named = new Map(recent.map((x) => [x.id, namedRule(x, b?.rules ?? [])]))
   const quoted = new Set([...named.values()].flatMap((p) => p?.rule.sentence ?? []))
   const mine = [...new Set([result ? undefined : rule?.sentence, b?.why && !b.why.reason ? b.why.sentence : undefined].filter((x): x is string => Boolean(x) && !quoted.has(x as string)))]
-  const limits = b ? [...b.holds.map((h) => lower(h.limit.shown)), ...b.rules.map((r) => r.sentence)] : []
+  const held = b ? holdingOf(b, name) : undefined
+  const limits = b && held ? [...b.holds.map((h) => lower(h.limit.shown)), ...held.rules.map((r) => r.sentence), ...(held.more ? [held.more] : [])] : []
   return (
     <li className="pickup-row" data-tone={item.tone}>
       <span className="pickup-icon" data-tone={item.tone}>

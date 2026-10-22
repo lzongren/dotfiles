@@ -9,7 +9,7 @@ import type { ReturnResponse } from '../../src/shared/types.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const previewOf = (r: ReturnResponse) => {
-  const entries = entriesOf(r.sessions)
+  const entries = entriesOf(r.sessions, r.session)
   return digest(packetOf(PREVIEW_ID, r.sessions.find((x) => x.name === r.session)!.path, r.session, r.state.draft!, entries, constraints(entries, r.state.decisions)))
 }
 const stubsDir = path.resolve(here, '../stubs')

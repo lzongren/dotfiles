@@ -43,6 +43,8 @@ import {
   lower,
   keptOthers,
   measured,
+  headRules,
+  holdingOf,
   namedRule,
   othersSince,
   QUESTION_START,
@@ -311,10 +313,14 @@ const tally = (es: Entry[]) => {
 function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = false, stated = false, asked, lastSaid, lastFailure, repairs = [] }: { brief: Brief; c: Constraints; session: string; now: number; onOpen: (name: string) => void; after?: Entry[]; compact?: boolean; stated?: boolean; asked?: string; lastSaid?: Entry; lastFailure?: Entry; repairs?: Repair[] }) {
   const checked = checkedRule((brief.failing ?? lastFailure)?.text, c.rules)
   const by = (x: { session: string; at: number }) => `${x.session === session ? 'you' : `you in ${x.session}`}, ${day(x.at)}`
-  const quoted = new Set([...c.holds.flatMap((h) => [h.limit, ...h.replaced]), ...c.rules].map((x) => x.sentence))
-  const unquoted = !lastSaid ? '' : lastSaid.kind === 'devbox' ? (leadAsk(lastSaid.text, repairs.find((r) => lastSaid.text.startsWith(`[devbox repair ${r.id}]`))?.check) ?? '') : sentencesOf(lastSaid.text).filter((s) => !quoted.has(s)).join(' ')
   const recent = sinceLeft(brief)
   const named = new Map(recent.map((x) => [x.id, namedRule(x, c.rules)]))
+  const marked = [checked, ...[...named.values()].map((p) => p?.rule)].filter((r): r is Rule => r !== undefined)
+  const { unique, head } = headRules(c.rules, session, marked)
+  const isChecked = (r: Rule) => checked !== undefined && r.sentence === checked.sentence
+  const isNamed = (r: Rule) => recent.some((x) => named.get(x.id)?.rule.sentence === r.sentence)
+  const quoted = new Set([...c.holds.flatMap((h) => [h.limit, ...h.replaced]), ...head].map((x) => x.sentence))
+  const unquoted = !lastSaid ? '' : lastSaid.kind === 'devbox' ? (leadAsk(lastSaid.text, repairs.find((r) => lastSaid.text.startsWith(`[devbox repair ${r.id}]`))?.check) ?? '') : sentencesOf(lastSaid.text).filter((s) => !quoted.has(s)).join(' ')
   const open = stated ? recent.filter((x) => !named.get(x.id)) : recent
   const ofRow = (e: Entry) => open.filter((x) => x.recordId === e.id)
   const statedAbove = (e: Entry) => recent.some((x) => x.recordId === e.id && named.get(x.id)) && !spoken(e.text, brief) && !ofRow(e).length
@@ -323,6 +329,7 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
   const hidden = after.filter((e) => !said.includes(e) && e.id !== brief.failing?.id && !(unquoted && e.id === lastSaid?.id) && !loose.some((x) => x.recordId === e.id) && !(stated && statedAbove(e)))
   const unshown = tally(hidden)
   const [showHidden, setShowHidden] = useState(false)
+  const [allRules, setAllRules] = useState(false)
   const count = tally(after.filter((e) => !(stated && statedAbove(e))))
   const suggested = (x: Brief['suggestions'][number]) => {
     const p = named.get(x.id)
@@ -330,11 +337,12 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
   }
   const you = (x: { session: string }) => (x.session === session ? 'you' : `you in ${x.session}`)
   const live = c.holds.filter((h) => !h.decided)
+  const rules = allRules ? unique : head
   const why = brief.why
-  const whyShown = why && (c.rules.some((r) => r.sentence === why.sentence) || live.some((h) => h.replaced.length > 0 && h.limit.reason !== undefined && h.limit.reason === why.reason))
+  const whyShown = why && (head.some((r) => r.sentence === why.sentence && r.reason === why.reason) || live.some((h) => h.replaced.length > 0 && h.limit.reason !== undefined && h.limit.reason === why.reason))
   const holds = (
     <>
-            {live.length === 0 && c.conflicts.length === 0 && c.rules.length === 0 ? <p className="lane-empty">No limits or rules found in your messages.</p> : null}
+            {live.length === 0 && c.conflicts.length === 0 && rules.length === 0 ? <p className="lane-empty">{c.rules.length ? 'No limits found.' : 'No limits or rules found in your messages.'}</p> : null}
             <ul className="holds-list">
               {live.map((h) => (
                 <li key={h.key} data-changed={h.replaced.length > 0 || undefined}>
@@ -364,16 +372,16 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
                   )}
                 </li>
               ))}
-              {c.rules.map((r) => (
+              {rules.map((r) => (
                 <li key={ruleKey(r)}>
                   {clause(r.sentence)}
-                  {r === checked && (brief.failing || lastFailure) ? (
+                  {isChecked(r) && (brief.failing || lastFailure) ? (
                     <>
                       {' '}
                       <span className="hold-tag failing">{brief.failing ? 'failing check' : 'failed before the repair'}</span>
                     </>
                   ) : null}
-                  {recent.some((x) => named.get(x.id)?.rule === r) ? (
+                  {isNamed(r) ? (
                     <>
                       {' '}
                       <span className="hold-tag">named in an agent suggestion</span>
@@ -385,14 +393,19 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
                 </li>
               ))}
             </ul>
-            {live.length || c.rules.length || brief.suggestions.length ? (
+            {allRules || head.length < unique.length ? (
+              <button type="button" className="link when" aria-expanded={allRules} onClick={() => setAllRules((v) => !v)}>
+                {allRules ? 'Show fewer rules' : head.length ? plural(unique.length - head.length, 'more rule') : `Show ${plural(unique.length, 'rule')}`}
+              </button>
+            ) : null}
+            {live.length || rules.length || brief.suggestions.length ? (
               <details className="quiet">
                 <summary>Where these come from</summary>
                 <ul className="return-list">
                   {live.map((h) => (
                     <Sourced key={h.key} h={h} you={you} />
                   ))}
-                  {c.rules.map((r) => (
+                  {rules.map((r) => (
                     <li key={ruleKey(r)} className="hold rule">
                       <blockquote>{r.sentence}</blockquote>
                       <p className="when">
@@ -518,7 +531,7 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
           <h4 id="return-holds">What holds now</h4>
           {compact ? (
             <details className="quiet">
-              <summary>{counted(live.length, c.rules.length) || 'none found in your messages'}</summary>
+              <summary>{counted(live.length, unique.length) || 'none found in your messages'}</summary>
               {holds}
             </details>
           ) : (
@@ -653,7 +666,7 @@ export function ReturnView({
   leftRef.current = left
   const now = Date.now()
 
-  const entries = useMemo(() => (data ? entriesOf(data.sessions) : []), [data])
+  const entries = useMemo(() => (data ? entriesOf(data.sessions, session) : []), [data, session])
   const c = useMemo(() => constraints(entries, data?.state.decisions ?? {}), [entries, data])
   const target = data?.sessions.find((s) => s.name === session)
   const running = conversationOf(target)
@@ -679,7 +692,7 @@ export function ReturnView({
     setFailure(null)
     setData(result.data)
     const s = result.data.state
-    const read = entriesOf(result.data.sessions)
+    const read = entriesOf(result.data.sessions, session)
     onStateChanged?.(false, result.data.work, briefOf(read, constraints(read, s.decisions), session, s.seenAt ?? leftRef.current, actedAt(s.repairs)))
     const adopted = !loaded.current || (adopt && idle && at === edits.current && !unsaved.current && !saving.current)
     if (adopted) {
@@ -1134,7 +1147,8 @@ export function ReturnView({
       )
     ) : null
   const nextWork = works.find((w) => w.attention === 'needs' && w.session.name !== session && !w.brief?.work.members.some((m) => m.name === session))
-  const holding = [...brief.holds.map((h) => lower(h.limit.shown)), ...brief.rules.map((r) => clause(r.sentence))]
+  const held = holdingOf(brief, session, brief.failing ?? priorFailure, 'in What holds now')
+  const holding = [...brief.holds.map((h) => lower(h.limit.shown)), ...held.rules.map((r) => clause(r.sentence)), ...(held.more ? [held.more] : [])]
   const tabs = [
     ...data.work.members.map((m) => ({ name: m.name, kind: data.sessions.find((x) => x.name === m.name)?.agent ?? 'shell' })),
     ...created.filter((c) => !data.work.members.some((m) => m.name === c.name)),
@@ -1581,7 +1595,7 @@ export function ReturnView({
           {tabs.map((t) => (
             <button key={t.name} type="button" aria-current={tab === t.name ? 'page' : undefined} onClick={() => openTab(t.name)}>
               <AgentIcon agent={t.kind} />
-              <span className="tab-name" title={t.name}>
+              <span className="work-tab-name" title={t.name}>
                 {t.name}
               </span>
             </button>
