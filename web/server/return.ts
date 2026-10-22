@@ -276,7 +276,7 @@ export function createReturnService(deps: ReturnDeps) {
     const separated = separations.filter((x) => x.work === fetched.work.key)
     const from = separations.find((x) => x.session === session && x.work !== fetched.work.key)
     const members = await Promise.all(fetched.work.members.map(async (m) => ({ ...m, ...(m.name === session ? (state.goal ? { goal: state.goal } : {}) : await deps.store.read(workKey(m.name)).then((w) => (w.goal ? { goal: w.goal } : {}))) })))
-    return { session, host: deps.host, fetchedAt: Date.now(), work: { ...fetched.work, members }, sessions: fetched.sessions, state: { ...state, seenAt: leftOf(state, deps.now()) }, separated, lookalikes: fetched.lookalikes, ...(from ? { apart: from.work } : {}) }
+    return { session, questionBudgetUsd: ASK_BUDGET_USD, host: deps.host, fetchedAt: Date.now(), work: { ...fetched.work, members }, sessions: fetched.sessions, state: { ...state, seenAt: leftOf(state, deps.now()) }, separated, lookalikes: fetched.lookalikes, ...(from ? { apart: from.work } : {}) }
   }
 
   async function brief(session: string, left?: number): Promise<Reply> {
@@ -290,7 +290,7 @@ export function createReturnService(deps: ReturnDeps) {
         session,
         work: fetched.work,
         agents: Object.fromEntries(fetched.sessions.map((s) => [s.name, s.agent])),
-        brief: briefOf(entries, constraints(entries, state.decisions), session, leftOf(state, deps.now()) ?? left, actedAt(state.repairs)),
+        brief: briefOf(entries, constraints(entries, state.decisions, session), session, leftOf(state, deps.now()) ?? left, actedAt(state.repairs)),
       },
     }
   }
@@ -313,12 +313,12 @@ export function createReturnService(deps: ReturnDeps) {
       if (asking) follow(key.slice('session:'.length))
       const answered = w.inquiries.filter((q) => q.state === 'replied' && (q.repliedAt ?? 0) > (w.lookedAt ?? w.seenAt ?? 0)).length
       const accepted = Boolean(newest?.accepted)
-      const gaps = (accepted || newest?.state === 'replied') && newest?.reply ? gapsOf(newest.id, newest.packet, newest.reply) : []
+      const gaps = (!accepted && newest?.state === 'replied') && newest?.reply ? gapsOf(newest.id, newest.packet, newest.reply) : []
       const open = gaps.length
       const looked = w.lookedAt !== undefined && deps.now() - w.lookedAt <= VISIT_GAP ? w.lookedAt : undefined
       if (!draft && !latest && !accepted && looked === undefined && asking === 0 && answered === 0 && !w.goal) continue
       const sent = latest && LIVE.has(latest.state) && latest.state !== 'replied' ? leadAsk(latest.packet, latest.check) : undefined
-      out[key.slice('session:'.length)] = { draft, ...(latest ? { repair: latest.state } : {}), ...(sent ? { sent } : {}), ...(w.goal ? { goal: w.goal } : {}), ...(accepted ? { accepted } : {}), ...(open ? { open } : {}), ...(accepted && open ? { missed: gaps } : {}), ...(looked === undefined ? {} : { looked }), asking, answered }
+      out[key.slice('session:'.length)] = { ...(newest || w.inquiries.length ? { activity: JSON.stringify([newest?.id, newest?.state, w.inquiries.map((q) => [q.id, q.state])]) } : {}), draft, ...(latest ? { repair: latest.state } : {}), ...(sent ? { sent } : {}), ...(w.goal ? { goal: w.goal } : {}), ...(accepted ? { accepted } : {}), ...(open ? { open } : {}), ...(looked === undefined ? {} : { looked }), asking, answered }
     }
     return out
   }
@@ -349,7 +349,7 @@ export function createReturnService(deps: ReturnDeps) {
     const s = fetched.sessions.find((x) => x.name === session)
     if (!s) return { status: 404, body: { error: 'unknown_session' } }
     const entries = entriesOf(fetched.sessions, session)
-    const c = constraints(entries, state.decisions)
+    const c = constraints(entries, state.decisions, session)
     const block = existing && retryBlock(existing, { version: state.draftVersion, repairs: state.repairs, c, conversation: conversationOf(s), target: state.draft?.target?.sessionId })
     if (existing && block === 'superseded') return { status: 409, body: { error: block, requestId: newerThan(existing, state.repairs)?.id } }
     if (block === 'lost' || block === 'draft_changed') return { status: 409, body: { error: block } }
@@ -428,7 +428,7 @@ export function createReturnService(deps: ReturnDeps) {
     const r = state.repairs.find((x) => x.id === requestId)
     if (!r) return { status: 404, body: { error: 'unknown_request' } }
     if (r.state !== 'replied' || !r.replyId) return { status: 409, body: { error: 'no_reply' } }
-    const changed = differences(r.basis, constraints(entriesOf(fetched.sessions, session), state.decisions))
+    const changed = differences(r.basis, constraints(entriesOf(fetched.sessions, session), state.decisions, session))
     if (changed.length) return { status: 409, body: { error: 'evidence_changed', differences: changed } }
     const accepted = { at: deps.now(), replyId: r.replyId }
     await deps.store.update(workKey(session), (w) => ({ ...w, repairs: w.repairs.map((x) => (x.id === requestId ? { ...x, accepted } : x)) }))

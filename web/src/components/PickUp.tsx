@@ -27,7 +27,7 @@ const Tone = ({ item }: { item: HomeItem }) =>
     <StateIcon tone={item.tone} />
   )
 
-function Row({ item, now, primary, onContinue, onOpen }: { item: HomeItem; now: number; primary: boolean; onContinue: (name: string) => void; onOpen: (name: string) => void }) {
+function Row({ item, now, primary, onContinue, onOpen, onLater }: { item: HomeItem; now: number; primary: boolean; onContinue: (name: string) => void; onOpen: (name: string) => void; onLater?: (name: string) => void }) {
   const b = item.brief?.brief
   const result = b?.failing && item.insight.state !== 'waiting' ? measured(b.failing.text) : undefined
   const replyish = /^(?:Repair replied|Result accepted|Accepted · )/.test(item.status)
@@ -35,7 +35,7 @@ function Row({ item, now, primary, onContinue, onOpen }: { item: HomeItem; now: 
     item.attention === 'waiting'
       ? item.status === 'Question running'
         ? 'Waiting for the answer to your read-only question. It comes back under New since you looked, so you can leave.'
-        : 'Waiting for the reply to the repair you sent. It comes back under Needs you, so you can leave.'
+        : 'Waiting for the reply to the repair you sent. It comes back under New since you looked, so you can leave.'
       : result && b?.failing
         ? `Check “${checkName(b.failing.text)}” failed ${ago(now, b.failing.at)} ago · ${result} · it may have passed since; only failures are recorded`
         : b?.since
@@ -178,15 +178,18 @@ function Row({ item, now, primary, onContinue, onOpen }: { item: HomeItem; now: 
           </button>
         </details>
       </div>
-      <button type="button" className={primary ? 'primary pickup-go' : 'pickup-go'} onClick={() => onContinue(name)}>
-        {item.action}
-        <Icon name="next" />
-      </button>
+      <div className="pickup-actions">
+        <button type="button" className={primary ? 'primary pickup-go' : 'pickup-go'} onClick={() => onContinue(name)}>
+          {item.action}
+          <Icon name="next" />
+        </button>
+        {onLater ? <button type="button" className="link" onClick={() => onLater(name)}>{item.attention === 'later' ? 'Bring back' : 'Later'}</button> : null}
+      </div>
     </li>
   )
 }
 
-export function PickUpList({ items, now, elsewhere = 0, onContinue, onOpen }: { items: HomeItem[]; now: number; elsewhere?: number; onContinue: (name: string) => void; onOpen: (name: string) => void }) {
+export function PickUpList({ items, now, elsewhere = 0, onContinue, onOpen, onLater }: { items: HomeItem[]; now: number; elsewhere?: number; onContinue: (name: string) => void; onOpen: (name: string) => void; onLater?: (name: string) => void }) {
   const id = useId()
   const groups = ATTENTION.map((a) => ({ ...a, items: items.filter((i) => i.attention === a.kind) })).filter((g) => g.items.length)
   return (
@@ -203,16 +206,17 @@ export function PickUpList({ items, now, elsewhere = 0, onContinue, onOpen }: { 
         </p>
       )}
       {groups.map((g, gi) => (
-        <div key={g.kind} className="pickup-group">
-          <h3 id={`${id}-${g.kind}`}>
-            {g.title} <span className="lane-count">{g.items.length}</span>
-          </h3>
+        <details open={g.kind !== 'later'} key={g.kind} className="pickup-group">
+          <summary>
+            <h3 id={`${id}-${g.kind}`}>{g.title} <span className="lane-count">{g.items.length}</span></h3>
+          </summary>
+          {g.kind === 'later' ? <p className="lane-empty">Saved here until a new agent update or handoff change. Opening a conversation does not bring it back. No reminder is scheduled.</p> : null}
           <ul className="pickup-rows">
             {g.items.map((item, i) => (
-              <Row key={item.session.name} item={item} now={now} primary={gi === 0 && i === 0} onContinue={onContinue} onOpen={onOpen} />
+              <Row key={item.session.name} item={item} now={now} primary={gi === 0 && i === 0} onContinue={onContinue} onOpen={onOpen} onLater={onLater} />
             ))}
           </ul>
-        </div>
+        </details>
       ))}
     </section>
   )

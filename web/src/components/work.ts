@@ -3,7 +3,7 @@ import type { Tone } from './Icon'
 import { isFresh, laneOf } from '../insights'
 import type { AgentInsight, ReturnSummary, Session } from '../shared/types'
 
-export type Attention = 'needs' | 'new' | 'waiting' | 'unsent' | 'accepted'
+export type Attention = 'needs' | 'new' | 'waiting' | 'unsent' | 'accepted' | 'later'
 
 export interface HomeItem {
   session: Session
@@ -26,13 +26,14 @@ export const ATTENTION: Array<{ kind: Attention; title: string; count: (n: numbe
   { kind: 'waiting', title: 'Waiting on the agent', count: (n) => `${n} waiting on the agent` },
   { kind: 'unsent', title: 'Not sent yet', count: (n) => `${n} not sent yet` },
   { kind: 'accepted', title: 'Accepted · merging is yours', count: (n) => `${n} accepted` },
+  { kind: 'later', title: 'Later · on this browser', count: (n) => `${n} for later` },
 ]
 
 const PENDING = new Set(['sending', 'delivered', 'working'])
-const FOR_YOU = new Set(['replied', 'unknown', 'held'])
+const FOR_YOU = new Set(['unknown', 'held'])
 
 const STEPS: Array<[(s: ReturnSummary) => boolean, string | ((s: ReturnSummary) => string), string | null]> = [
-  [(s) => s.repair === 'replied', (s) => (s.open ? `Repair replied · ${s.open} thing${s.open === 1 ? '' : 's'} it may have missed` : 'Repair replied, review it'), 'Review the reply'],
+  [(s) => s.repair === 'replied', 'Repair replied, review it', 'Review the reply'],
   [(s) => s.repair === 'unknown', 'Delivery unknown', 'See the handoff receipt'],
   [(s) => s.repair === 'held', 'Repair waiting in the prompt', 'See the handoff receipt'],
   [(s) => s.answered > 0, 'Question answered', 'Read the answer'],
@@ -40,7 +41,7 @@ const STEPS: Array<[(s: ReturnSummary) => boolean, string | ((s: ReturnSummary) 
   [(s) => s.asking > 0, 'Question running', 'See the question'],
   [(s) => s.draft, 'Draft not sent', 'Continue the unsent draft'],
   [(s) => Boolean(s.question), 'Question not sent', 'Finish the unsent question'],
-  [(s) => Boolean(s.accepted), (s) => (s.open ? `Accepted · ${s.open} thing${s.open === 1 ? '' : 's'} it may have missed` : 'Result accepted · merge is still yours'), 'See the accepted result'],
+  [(s) => Boolean(s.accepted), 'Result accepted · merge is still yours', 'See the accepted result'],
 ]
 const stepOf = (s?: ReturnSummary) => (s ? STEPS.find(([when]) => when(s)) : undefined)
 
@@ -66,6 +67,8 @@ function stateOf(insight: AgentInsight, summary: ReturnSummary | undefined, fail
   return { status, action, also }
 }
 
+export const attentionStamp = (insight: AgentInsight, summary?: ReturnSummary) => JSON.stringify([insight.turnAt, insight.summaryAt, insight.state, insight.waitingFor, summary?.activity, summary?.repair, Boolean(summary?.draft)])
+
 export function homeItems(
   sessions: Session[],
   insights: Map<string, AgentInsight>,
@@ -73,6 +76,7 @@ export function homeItems(
   now: number,
   returns: Record<string, ReturnSummary>,
   briefs: Record<string, BriefResponse>,
+  deferred: Record<string, string> = {},
 ): HomeItem[] {
   const found: HomeItem[] = []
   const own = new Set<string>()
@@ -87,10 +91,11 @@ export function homeItems(
     const mine = lane === 'blocked' || FOR_YOU.has(summary?.repair ?? '')
     const failing = brief?.brief.failing
     const failed = lane !== 'working' && !PENDING.has(summary?.repair ?? '') && Boolean(failing) && (brief?.brief.leftAt === undefined || (failing?.at ?? 0) > brief.brief.leftAt)
-    const attention: Attention | null =
-      mine || failed
+    const attention: Attention | null = deferred[session.name] === attentionStamp(insight, summary)
+      ? 'later'
+      : mine || failed
         ? 'needs'
-        : summary?.answered
+        : summary?.answered || summary?.repair === 'replied'
           ? 'new'
           : PENDING.has(summary?.repair ?? '') || summary?.asking
             ? 'waiting'
@@ -102,9 +107,9 @@ export function homeItems(
                 ? 'accepted'
                 : null
     if (!attention) continue
-    if (lane === 'blocked') own.add(session.name)
+    if (lane === 'blocked' || attention === 'later') own.add(session.name)
     const state = stateOf(insight, summary, failed)
-    const tone: Tone = state.status === 'Check failed' || insight.state === 'error' ? 'error' : insight.state === 'waiting' ? 'waiting' : attention === 'needs' ? 'bell' : attention === 'waiting' ? 'working' : attention === 'accepted' ? 'idle' : 'fresh'
+    const tone: Tone = attention === 'later' ? 'idle' : state.status === 'Check failed' || insight.state === 'error' ? 'error' : insight.state === 'waiting' ? 'waiting' : attention === 'needs' ? 'bell' : attention === 'waiting' ? 'working' : attention === 'accepted' ? 'idle' : 'fresh'
     found.push({ session, insight, attention, tone, ...state, ...(summary?.sent ? { sent: summary.sent } : {}), ...(summary?.missed ? { missed: summary.missed } : {}), ...(summary?.looked !== undefined ? { looked: summary.looked } : {}), ...(brief ? { brief } : {}) })
   }
   const order = (a: HomeItem, b: HomeItem) =>

@@ -54,6 +54,7 @@ export function Overview({
   visited,
   onOpen,
   onPickUp,
+  onLater,
   onAll,
   host = '',
   connected = true,
@@ -68,6 +69,7 @@ export function Overview({
   visited: string[]
   onOpen: (name: string) => void
   onPickUp: (name: string) => void
+  onLater?: (name: string) => void
   onAll: () => void
   host?: string
   connected?: boolean
@@ -94,7 +96,7 @@ export function Overview({
           </span>
         ) : null}
       </p>
-      <PickUpList items={pickups} now={now} elsewhere={need} onContinue={onPickUp} onOpen={onOpen} />
+      <PickUpList items={pickups} now={now} elsewhere={need} onContinue={onPickUp} onOpen={onOpen} onLater={onLater} />
       {seen.length ? (
         <details className="home-seen quiet" open={seen.some((s) => returnNote(returns[s.name])) || undefined}>
           <summary>

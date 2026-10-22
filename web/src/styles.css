@@ -3900,12 +3900,18 @@ code.session-chip {
   margin-top: 24px;
 }
 
-.pickup-group h3 {
+.pickup-group > summary {
   margin: 0;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--line-1);
   font-size: 15px;
   font-weight: 650;
+}
+
+.pickup-group > summary h3 {
+  display: inline;
+  font-size: inherit;
+  margin: 0;
 }
 
 .pickup-group .lane-count {
@@ -3918,6 +3924,13 @@ code.session-chip {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.pickup-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 .pickup-row {
@@ -4430,8 +4443,9 @@ code.session-chip {
     grid-template-columns: 28px minmax(0, 1fr);
   }
 
-  .pickup-go {
+  .pickup-actions {
     grid-column: 2;
+    align-items: flex-start;
     justify-self: start;
   }
 

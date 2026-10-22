@@ -9,7 +9,7 @@ import { ConnectionStatus, INSIGHTS_STALE_MS, type Cause, type Failure } from '.
 import { Gradient, mostSerious } from './components/Icon'
 import { Overview } from './components/Overview'
 import { PickUpRail, titleOf } from './components/PickUp'
-import { homeItems, type HomeItem } from './components/work'
+import { attentionStamp, homeItems, type HomeItem } from './components/work'
 import { ArtifactsPage } from './components/ArtifactsPage'
 import { SessionsPage, workFor } from './components/SessionsPage'
 import { ReturnView } from './components/ReturnView'
@@ -124,6 +124,12 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(storedWidth)
   const [dock, setDock] = useState<FileRef | null>(null)
   const [pickup, setPickup] = useState<string | null>(null)
+  const [deferred, setDeferred] = useState<Record<string, string>>(() => {
+    try {
+      const parsed: unknown = JSON.parse(localStorage.getItem('devbox.later') ?? '{}')
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.fromEntries(Object.entries(parsed).filter(([, v]) => typeof v === 'string')) : {}
+    } catch { return {} }
+  })
   const [returns, setReturns] = useState<Record<string, ReturnSummary>>({})
   const [briefs, setBriefs] = useState<Record<string, { mark: number; left: number; visit: number; data?: BriefResponse; failed?: number }>>({})
   const [visits, setVisits] = useState<Record<string, number>>(() => {
@@ -296,8 +302,9 @@ export function App() {
     [data, insights],
   )
   const known = useMemo(() => Object.fromEntries(Object.entries(briefs).flatMap(([name, b]) => (b.data ? [[name, b.data]] : []))), [briefs])
-  const pickups = homeItems(data?.sessions ?? [], insights, seenAt, now, returns, known)
-    .slice(0, PICKUPS)
+  const deferredHere = Object.fromEntries((data?.sessions ?? []).flatMap((s) => deferred[`${host}:${s.name}`] ? [[s.name, deferred[`${host}:${s.name}`]]] : []))
+  const candidates = homeItems(data?.sessions ?? [], insights, seenAt, now, returns, known, deferredHere)
+  const pickups = [...candidates.filter((i) => i.attention !== 'later').slice(0, PICKUPS), ...candidates.filter((i) => i.attention === 'later')]
     .map((i) => (briefs[i.session.name] ? i : { ...i, reading: true }))
   const groups: HomeItem[] = [
     ...pickups,
@@ -308,9 +315,20 @@ export function App() {
       return [{ session, insight, attention: 'new', tone: 'fresh', status: '', action: '', brief: b }]
     }),
   ]
+  const laterNames = new Set(pickups.filter((i) => i.attention === 'later').map((i) => i.session.name))
+  const setLater = (name: string) => {
+    const insight = insights.get(name)
+    if (!insight) return
+    const next = { ...deferred }
+    const key = `${host}:${name}`
+    if (laterNames.has(name)) delete next[key]
+    else next[key] = attentionStamp(insight, returns[name])
+    setDeferred(next)
+    try { localStorage.setItem('devbox.later', JSON.stringify(next)) } catch {}
+  }
   const needPickups = pickups.filter((i) => i.attention === 'needs')
-  const needing = new Set([...(lanes.get('blocked') ?? []), ...needPickups.map((i) => i.session.name)])
-  const waiting = new Set([...needing, ...(lanes.get('ready') ?? [])]).size
+  const needing = new Set([...(lanes.get('blocked') ?? []).filter((n) => !laterNames.has(n)), ...needPickups.map((i) => i.session.name)])
+  const waiting = needing.size
   const listed = new Set(pickups.flatMap((i) => [i.session.name, ...(i.brief?.work.members.map((m) => m.name) ?? [])]))
   const pickupItem = pickups.find((i) => i.session.name === pickup)
   const pickupRow = data?.sessions.find((s) => s.name === pickup)
@@ -519,7 +537,7 @@ export function App() {
           onClose={closeTerminal}
         />
         <div className="overview-wrap" hidden={activeTab !== null || view !== 'now' || pickup !== null}>
-          <Overview sessions={data.sessions} insights={insights} now={now} seenAt={seenAt} pickups={pickups} visited={Object.keys(visits)} covered={covered} onOpen={(name) => go(name, 'terminal')} onPickUp={(name) => (pickups.find((i) => i.session.name === name)?.action === 'Answer the question' ? go(name, 'terminal') : openPickup(name))} onAll={() => show('sessions')} host={host} connected={sessionsHealth.failure === null} returns={returns} />
+          <Overview onLater={setLater} sessions={data.sessions} insights={insights} now={now} seenAt={seenAt} pickups={pickups} visited={Object.keys(visits)} covered={covered} onOpen={(name) => go(name, 'terminal')} onPickUp={(name) => (pickups.find((i) => i.session.name === name)?.action === 'Answer the question' ? go(name, 'terminal') : openPickup(name))} onAll={() => show('sessions')} host={host} connected={sessionsHealth.failure === null} returns={returns} />
         </div>
         {view === 'sessions' ? (
           <div className="overview-wrap" hidden={activeTab !== null}>

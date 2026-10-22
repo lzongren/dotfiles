@@ -56,6 +56,7 @@ function respond(extra: Partial<ReturnResponse> = {}) {
   response = {
     session: 'fix',
     host: 'dev',
+    questionBudgetUsd: 3,
     fetchedAt: Date.now(),
     work: { key: 'branch:/work/api@fix/retry', members: [{ name: 'fix', reason: 'same branch fix/retry in api' }] },
     sessions: [fix()],
@@ -132,7 +133,7 @@ describe('reading what you came back to', () => {
   it('opens on the brief: why, where you stopped, what the agent said since, and what holds now with its sources, then the next step with its evidence', async () => {
     await show({ sessions: [fix([...BASE, rec('a3', 'agent', T + 7500, 'I suggest raising the deadline to 30 seconds.', 2, true)])] })
     const brief = area(/where you left off/i)
-    expect(brief).toHaveTextContent(/Why it's this wayNo reason recorded with your decisions\.Stopped atBudget done\. CI fails\.Since you left“One test still fails\.” fix · \S+ agoThe agent suggested “raising the deadline to 30 seconds” · not set by you fix · \S+ agoNot shown: 1 of yoursWhat holds now/)
+    expect(brief).toHaveTextContent(/Reason before you leftNo explicit reason recovered from the available messages\.Stopped atBudget done\. CI fails\.Since you left“One test still fails\.” fix · \S+ agoThe agent suggested “raising the deadline to 30 seconds” · not set by you fix · \S+ agoNot shown: 1 of yoursWhat holds now/)
     expect(brief.querySelector('.holds-list')).toHaveTextContent(/at most 1 attempt changed \S+ agowas at most 2 attempts · No reason recorded/)
     expect(within(brief).getByText(/^replaces the earlier/i).closest('li')).toHaveTextContent('At most 2 attempts, because upstream is rate limiting.')
     expect(brief).toHaveTextContent("One reason isn't recorded: why at most 1 attempt")
@@ -236,7 +237,7 @@ describe('reading what you came back to', () => {
   it('names the session of a constraint that came from another session in this work', async () => {
     const other: ProbeSession = { ...fix([rec('t1', 'decision', T + 7600, 'Only touch files under test/.', 1)]), name: 'tests', pane: '%4' }
     await show({ sessions: [fix(), other] })
-    expect(within(area(/where you left off/i)).getByText('Only touch files under test/.', { selector: 'blockquote' }).closest('li')).toHaveTextContent(/you in tests/i)
+    expect(within(area(/where you left off/i)).getByText('Only touch files under test/.', { selector: 'blockquote p' }).closest('blockquote')).toHaveTextContent(/you in tests/i)
   })
 
   it('stops asking the host while hidden behind a terminal, and catches up when shown again', async () => {
@@ -256,30 +257,21 @@ describe('reading what you came back to', () => {
     expect(gets).toBe(2)
   })
 
-  it("quotes this session's rules unless you untick them, and another session's only if you tick them", async () => {
+  it('keeps related rules out of the repair and lets you exclude a local rule', async () => {
     const other: ProbeSession = { ...fix([rec('t1', 'decision', T + 7600, 'Only touch files under test/.', 1)]), name: 'tests', pane: '%4' }
     await show({ sessions: [fix([...BASE, rec('u3', 'decision', T + 7700, "Don't edit anything yet. Never commit.", 3)]), other], state: state({ draft: draft('Retry at most 1 attempt per request.'), draftVersion: 'v0' }) })
     const basis = area(/added to the message/i)
-    expect(basis).toHaveTextContent(/Limit\s*at most 1 attempt\s*Rules\s*Don't edit anything yet\s*Never commit\s*Change which rules go with it/)
-    const mine = within(basis).getByRole('checkbox', { name: /quote “never commit\.” in the repair/i })
     const noEdit = within(basis).getByRole('checkbox', { name: /quote “don't edit anything yet\.” in the repair/i })
-    const theirs = within(basis).getByRole('checkbox', { name: /quote “only touch files under test\/\.” in the repair/i })
-    expect(mine).toBeChecked()
     expect(noEdit).toBeChecked()
-    expect(theirs).not.toBeChecked()
+    expect(within(basis).queryByRole('checkbox', { name: /only touch files/ })).toBeNull()
     fireEvent.click(noEdit)
-    fireEvent.click(theirs)
-    expect(basis).toHaveTextContent(/Limit\s*at most 1 attempt\s*Rules\s*Only touch files under test\/\s*Never commit/)
     fireEvent.click(screen.getByText(/the full message, as the agent gets it/i))
     const preview = screen.getByText(/the full message, as the agent gets it/i).closest('details')
     expect(preview).toHaveTextContent('Never commit.')
     expect(preview).not.toHaveTextContent("Don't edit anything yet.")
-    expect(preview).toHaveTextContent('Rule (you in tests')
+    expect(preview).not.toHaveTextContent('Only touch files under test/.')
     await settle(600)
-    expect((posts.filter((p) => p.url === '/api/return/draft').at(-1)?.body.draft as DraftState).quote).toEqual({ "u3|Don't edit anything yet.": false, 't1|Only touch files under test/.': true })
-    fireEvent.click(theirs)
-    await settle(600)
-    expect((posts.filter((p) => p.url === '/api/return/draft').at(-1)?.body.draft as DraftState).quote).toEqual({ "u3|Don't edit anything yet.": false, 't1|Only touch files under test/.': false })
+    expect((posts.filter((p) => p.url === '/api/return/draft').at(-1)?.body.draft as DraftState).quote).toEqual({ "u3|Don't edit anything yet.": false })
   })
 
   it('puts the failure, its result and the action under the brief, which marks your rule that shares the check\'s wording', async () => {
@@ -304,10 +296,10 @@ describe('reading what you came back to', () => {
     const brief = area(/where you left off/i)
     const shown = () => [...brief.querySelectorAll('.holds-list li')].map((li) => li.firstChild?.textContent)
     expect(shown()).toEqual(['at most 1 attempt', 'Keep the 10 second total deadline and retry only idempotent requests', 'Never push to main', 'Only touch files under src/', 'Never skip the linter', 'Never edit the lockfile', 'Never delete fixtures'])
-    expect(brief).toHaveTextContent(/Why it's this wayCI deploys from it/)
+    expect(brief).toHaveTextContent(/Reason before you leftCI deploys from it/)
     fireEvent.click(within(brief).getByRole('button', { name: '1 more rule' }))
     expect(shown()).toHaveLength(8)
-    expect(brief).toHaveTextContent(/Why it's this wayCI deploys from it/)
+    expect(brief).toHaveTextContent(/Reason before you leftCI deploys from it/)
     expect(within(brief).getByRole('button', { name: 'Show fewer rules' })).toHaveAttribute('aria-expanded', 'true')
     cleanup()
     await show({ sessions: [fix([checked, ...older.slice(1).map((t, i) => rec(`r${i}`, 'decision', T + 200 + i, t, 1)), ...BASE, failing])] })
@@ -947,10 +939,11 @@ describe('the repair draft', () => {
     const evidence = screen.getByRole('article', { name: 'Evidence you attached' })
     expect(within(evidence).getByText(/^review: /).closest('li')).toHaveTextContent("review: “The 200ms backoff has no reason; budget reset needs checking.”The reply doesn't seem to mention “budget reset needs checking”.")
     expect(asked).toHaveTextContent("Devbox doesn't check that the reply did these")
-    expect(screen.getByRole('button', { name: 'Accept anyway' })).not.toHaveClass('primary')
-    expect(screen.getByRole('button', { name: 'Accept anyway' }).nextSibling).toHaveTextContent('The 3 things it may have missed stay listed on Now after you accept.')
+    expect(screen.getByRole('button', { name: 'Accept this result' })).toHaveClass('primary')
+    expect(screen.getByRole('button', { name: 'Accept this result' }).nextSibling).toHaveTextContent('Wording hints stay in the history and do not decide completion.')
     const list = screen.getByText('Merging, pushing or deploying').closest('ul') as HTMLElement
     expect(within(list).getByText(/Never merge the PR without asking me/).closest('li')).toHaveTextContent(/^Never merge the PR without asking me\.not checked by Devbox$/)
+    if (!screen.getByText('Compare with the request · optional wording hints').closest('details')!.open) fireEvent.click(screen.getByText('Compare with the request · optional wording hints'))
     fireEvent.click(screen.getByRole('button', { name: 'Draft a follow-up for what it may have missed' }))
     expect(screen.getByRole('button', { name: /^Handoff / })).toHaveAttribute('aria-current', 'page')
     expect(editor()).toHaveValue("The reply to r-1 doesn't seem to cover these. Do each, or say why not:\n- Also add a test for idempotent writes.\n- budget reset needs checking\nReport back: what you changed, which tests you ran and their output, and what is still unresolved.")
@@ -961,10 +954,12 @@ describe('the repair draft', () => {
     const out: Repair = { id: 'r-1', packet, target: { session: 'fix', pane: '%1', sessionId: 's1' }, basis: currentBasis, version: 'a2', draftVersion: 'v0', sentAt: T + 9000, state: 'replied', reply: '[devbox result r-1] Capped each attempt.', replyId: 'a9' }
     await show({ state: state({ draft: draft('Check the logs too.'), draftVersion: 'v1', repairs: [out] }) })
     fireEvent.click(screen.getByRole('button', { name: 'Result & acceptance' }))
+    if (!screen.getByText('Compare with the request · optional wording hints').closest('details')!.open) fireEvent.click(screen.getByText('Compare with the request · optional wording hints'))
     fireEvent.click(screen.getByRole('button', { name: 'Draft a follow-up for what it may have missed' }))
     const once = "Check the logs too.\n\nThe reply to r-1 doesn't seem to cover these. Do each, or say why not:\n- Also add a test for idempotent writes.\nReport back: what you changed, which tests you ran and their output, and what is still unresolved."
     expect(editor()).toHaveValue(once)
     fireEvent.click(screen.getByRole('button', { name: 'Result & acceptance' }))
+    if (!screen.getByText('Compare with the request · optional wording hints').closest('details')!.open) fireEvent.click(screen.getByText('Compare with the request · optional wording hints'))
     fireEvent.click(screen.getByRole('button', { name: 'Draft a follow-up for what it may have missed' }))
     expect(editor()).toHaveValue(once)
   })
@@ -975,6 +970,7 @@ describe('the repair draft', () => {
     const report = 'Report back: what you changed, which tests you ran and their output, and what is still unresolved.'
     await show({ state: state({ draft: draft(`Fix it.\n${report}`), draftVersion: 'v1', repairs: [out] }) })
     fireEvent.click(screen.getByRole('button', { name: 'Result & acceptance' }))
+    if (!screen.getByText('Compare with the request · optional wording hints').closest('details')!.open) fireEvent.click(screen.getByText('Compare with the request · optional wording hints'))
     fireEvent.click(screen.getByRole('button', { name: 'Draft a follow-up for what it may have missed' }))
     expect(editor()).toHaveValue(`Fix it.\nThe reply to r-1 doesn't seem to cover these. Do each, or say why not:\n- Check that kill $$ stops the worker.\n${report}`)
   })
@@ -1384,7 +1380,7 @@ describe('the repair draft', () => {
       [
         'Please continue in this conversation.',
         '',
-        'Decision: find and fix why the recorded failure quoted below fails, then rerun the checks that cover it.',
+        'Decision: check the current revision and rerun the relevant checks first. Only if the recorded failure still occurs, fix its cause and rerun those checks; otherwise report the revision and current test evidence without unnecessary edits.',
         'Follow my decisions and the limits quoted below, not earlier agent suggestions.',
         'Report back: what you changed, which tests you ran and their output, and what is still unresolved.',
       ].join('\n'),
@@ -1768,7 +1764,7 @@ describe('questions', () => {
     await show({ state: state({ draft: draft('Retry at most 1 attempt per request.'), draftVersion: 'v0' }) })
     fireEvent.click(screen.getByRole('button', { name: /ask first \(read-only\)/i }))
     const q = area(/ask \(read-only\)/i)
-    expect(q).toHaveTextContent('Not sent yet · costs up to about $1')
+    expect(q).toHaveTextContent('Not sent yet · requested spending limit $3')
     expect(within(q).getByRole('button', { name: /send only the question/i })).toHaveClass('primary')
     expect(screen.getByRole('button', { name: /send repair to session fix/i })).not.toHaveClass('primary')
     expect(q).toHaveTextContent('never sees the question, and your draft stays out of it.')
@@ -2026,4 +2022,30 @@ describe("the work's sessions as tabs", () => {
     expect(form().getByRole('alert')).toHaveTextContent('A session named web-sh is already running. Describe it differently.')
     expect(screen.queryByTestId('term-web-sh')).toBeNull()
   })
+})
+
+
+describe('question budget disclosure', () => {
+  it('displays the service budget and blocks sending when the service does not provide one', async () => {
+    await show({ questionBudgetUsd: 7 })
+    fireEvent.click(screen.getByRole('button', { name: /ask first/i }))
+    expect(area(/ask \(read-only\)/i)).toHaveTextContent('requested spending limit $7')
+    cleanup()
+    await show({ questionBudgetUsd: undefined })
+    fireEvent.click(screen.getByRole('button', { name: /ask first/i }))
+    expect(screen.getByRole('button', { name: 'Send only the question' })).toBeDisabled()
+  })
+})
+
+
+it('folds unchanged basis and wording hints without hiding the reply or attribution warning', async () => {
+  const packet = '[devbox repair r-1]\nPurpose: repair.\nTarget: this session, fix.\n\nAdd a regression test.\n\nWhat this is based on, quoted from this conversation:\n- Rule'
+  const out: Repair = { id: 'r-1', packet, target: { session: 'fix', pane: '%1', sessionId: 's1' }, basis: currentBasis, version: 'a2', draftVersion: 'v0', sentAt: T + 9000, state: 'replied', reply: 'Tests pass.', replyId: 'a9' }
+  await show({ state: state({ repairs: [out] }) })
+  fireEvent.click(screen.getByRole('button', { name: 'Result & acceptance' }))
+  expect(screen.getByRole('article', { name: 'The reply' })).toBeVisible()
+  expect(screen.getByText(/It doesn't start with/)).toBeVisible()
+  expect(screen.getByText('Compare with the request · optional wording hints').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByText('Recorded limits unchanged · inspect basis and verification limits').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByRole('button', { name: 'Accept this result' })).toBeEnabled()
 })

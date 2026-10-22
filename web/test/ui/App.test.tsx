@@ -393,11 +393,11 @@ describe('App', () => {
     render(<App />)
     await flush()
     await advance(100)
-    expect(screen.getByRole('region', { name: /pick up where you left off/i })).toHaveTextContent(/Needs you 2/)
+    expect(screen.getByRole('region', { name: /pick up where you left off/i })).toHaveTextContent(/Needs you 1/)
     await ownTab('sh')
-    expect(screen.getAllByRole('tab')[0]).toHaveAccessibleDescription('2 need you')
+    expect(screen.getAllByRole('tab')[0]).toHaveAccessibleDescription('1 needs you, 1 new')
     expect(screen.getAllByRole('tab')[0].closest('.tab')?.querySelector('.state-icon')).toHaveAttribute('data-tone', state)
-    expect(within(within(document.querySelector('.sidebar') as HTMLElement).getByRole('navigation', { name: 'Work' })).getByText(/^Needs you/)).toHaveTextContent('Needs you 2')
+    expect(within(within(document.querySelector('.sidebar') as HTMLElement).getByRole('navigation', { name: 'Work' })).getByText(/^Needs you/)).toHaveTextContent('Needs you 1')
     expect(sidebar().queryByRole('group', { name: /Needs you/ })).toBeNull()
   })
 
@@ -1050,4 +1050,29 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: "The dashboard server isn't answering" })).toBeInTheDocument()
     expect(status()).toHaveTextContent('Run devbox web in a terminal')
   })
+})
+
+
+it('persists Later across a page remount and brings the item back on a new agent update', async () => {
+  const rows = [session({ name: 'docs', cmd: 'claude' })]
+  let turnAt = NOW_EPOCH - 100
+  fetchMock.mockImplementation(async () => response(okBody(rows)))
+  insightsMock.mockImplementation(async () => response({ fetchedAt: Date.now(), agents: [{ session: 'docs', agent: 'claude', state: 'waiting', waitingFor: 'question', turnAt, title: 'Guide', artifacts: [], commits: 0 }] }))
+  const view = render(<App />)
+  await flush()
+  await advance(100)
+  fireEvent.click(screen.getByRole('button', { name: /^Later$/ }))
+  expect(within(screen.getByRole('region', { name: /pick up where you left off/i })).getByRole('heading', { name: /Later · on this browser/ })).toBeInTheDocument()
+  expect(document.title).not.toMatch(/^\(/)
+  expect(JSON.parse(localStorage.getItem('devbox.later')!)).toHaveProperty('stub-host:docs')
+  view.unmount()
+  const again = render(<App />)
+  await flush()
+  await advance(100)
+  expect(within(screen.getByRole('region', { name: /pick up where you left off/i })).getByRole('heading', { name: /Later · on this browser/ })).toBeInTheDocument()
+  turnAt = NOW_EPOCH
+  await advance(15000)
+  expect(within(screen.getByRole('region', { name: /pick up where you left off/i })).queryByRole('heading', { name: /Later · on this browser/ })).toBeNull()
+  expect(within(screen.getByRole('region', { name: /pick up where you left off/i })).getByRole('heading', { name: 'Needs you 1' })).toBeInTheDocument()
+  again.unmount()
 })

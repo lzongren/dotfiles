@@ -722,9 +722,9 @@ describe('what a reply leaves out', () => {
     const failure: Entry = { id: 'f1', kind: 'failure', author: 'tool', at: 2, text: 'FAIL keeps total deadline\nExpected ≤ 10000ms · Received 12641ms', session: 'fix' }
     const drafted = draftFor(briefOf([failure], c, 'fix', 1))
     const sent = repairPacket({ id: 'r-1', cwd: '/w', session: 'fix', body: drafted, constraints: c, earlier: [], failure })
-    expect(leadAsk(sent, 'keeps total deadline')).toBe('Decision: find and fix why ‘keeps total deadline’ fails, then rerun the checks that cover it.')
-    expect(leadAsk(sent)).toBe('Decision: find and fix the recorded failure, then rerun the checks that cover it.')
-    expect(leadAsk(sent, "parses '$' amounts")).toBe("Decision: find and fix why ‘parses '$' amounts’ fails, then rerun the checks that cover it.")
+    expect(leadAsk(sent, 'keeps total deadline')).toBe('Decision: check ‘keeps total deadline’ on the current revision; repair only if it still fails.')
+    expect(leadAsk(sent)).toBe('Decision: check the recorded failure on the current revision; repair only if it still fails.')
+    expect(leadAsk(sent, "parses '$' amounts")).toBe("Decision: check ‘parses '$' amounts’ on the current revision; repair only if it still fails.")
     expect(repairPacket({ id: 'r-1', cwd: '/w', session: 'fix', body: 'Fix it.\nRetry at most 5 attempts. ', constraints: c, earlier: ['Retry at most 5 attempts. '] })).toContain('Retry at most 5 attempts. (Earlier comparison only, not a requirement.)')
   })
 
@@ -902,22 +902,14 @@ describe('prompt contracts', () => {
     expect(repairPacket({ id: 'r-1', cwd: '/w', session: 'fix', body: 'Add the cursor.', constraints: c, earlier: [] })).not.toContain('other sessions in this work')
   })
 
-  it("quotes the target session's rules unless you untick them, and another session's only when you tick them", () => {
-    const mixed = constraints([you('u1', t0, 'At most 50 items per page. Never commit.'), { ...you('t1', t0 + 60, 'Only touch files under test/.'), session: 'tests' }])
-    const [never, tests] = mixed.rules
-    expect(quotedRules(mixed, {}, 'fix').map((r) => r.sentence)).toEqual(['Never commit.'])
-    expect(quotedRules(mixed, { [ruleKey(never)]: false, [ruleKey(tests)]: true }, 'fix').map((r) => r.sentence)).toEqual(['Only touch files under test/.'])
-    const plain = repairPacket({ id: 'r-1', cwd: '/w', session: 'fix', body: 'Add the cursor.', constraints: mixed, earlier: [] })
-    expect(plain).toContain('What this is based on, quoted from this conversation:')
-    expect(plain).toContain('- Rule (you, 2026-10-16 10:00Z): "Never commit."')
-    expect(plain).toContain('If the request above conflicts with one of these rules')
-    expect(plain).not.toContain('Only touch files under test/.')
-    const bare = repairPacket({ id: 'r-1', cwd: '/w', session: 'fix', body: 'Add the cursor.', constraints: mixed, earlier: [], quote: { [ruleKey(never)]: false } })
-    expect(bare).not.toContain('If the request above conflicts')
-    const packet = repairPacket({ id: 'r-1', cwd: '/w', session: 'fix', body: 'Add the cursor.', constraints: mixed, earlier: [], quote: { [ruleKey(tests)]: true } })
-    expect(packet).toContain('What this is based on, quoted from this conversation and the other sessions named below:')
-    expect(packet).toContain('- Holds now (you, 2026-10-16 10:00Z): "At most 50 items per page."')
-    expect(packet).toContain('- Rule (you in tests, 2026-10-16 10:01Z): "Only touch files under test/."')
+  it('never promotes a related rule to a repair constraint, even with a stale saved quote selection', () => {
+    const mixed = constraints([you('u1', t0, 'At most 50 items per page. Never commit.'), { ...you('t1', t0 + 60, 'Only touch files under test/.'), session: 'tests' }], {}, 'fix')
+    const never = mixed.rules[0]
+    const other = mixed.references![0]
+    expect(quotedRules(mixed, { [ruleKey(never)]: false, [ruleKey(other)]: true }, 'fix')).toEqual([])
+    const packet = repairPacket({ id: 'r-1', cwd: '/w', session: 'fix', body: 'Add the cursor.', constraints: mixed, earlier: [], quote: { [ruleKey(other)]: true } })
+    expect(packet).toContain('Never commit.')
+    expect(packet).not.toContain('Only touch files under test/.')
   })
 
   it('says an older reason may not carry over to the limit that replaced it', () => {
@@ -1114,7 +1106,7 @@ describe('the brief', () => {
       [
         'Please continue in this conversation.',
         '',
-        'Decision: find and fix why the recorded failure quoted below fails, then rerun the checks that cover it.',
+        'Decision: check the current revision and rerun the relevant checks first. Only if the recorded failure still occurs, fix its cause and rerun those checks; otherwise report the revision and current test evidence without unnecessary edits.',
         'Follow my decisions and the limits quoted below, not earlier agent suggestions.',
         'Report back: what you changed, which tests you ran and their output, and what is still unresolved.',
       ].join('\n'),
@@ -1133,4 +1125,75 @@ describe('the brief', () => {
     expect(draftFor(briefOf(calm, constraints(calm), 'fix', left)).split('\n')[2]).toBe('Decision: pick up from your last message and finish what it leaves open.')
     expect(QUESTION_START).toBe("Using the recorded messages, explain why the latest check still fails and what was tried since I left. Separate facts from guesses, and say what is unknown. Don't change code or run tests.")
   })
+})
+
+
+describe('recovery scope and rationale boundaries', () => {
+  it('keeps linked migration limits out of the current HTTP basis, checks and packet', () => {
+    const own = you('u1', 10, 'At most 1 attempt, because upstream is rate limiting.')
+    const other = { ...you('u2', 20, 'For migration jobs, at most 5 attempts instead of 3, because they run overnight.'), session: 'review' }
+    const c = constraints([other, own], {}, 'fix')
+    expect(c.holds.map((h) => h.limit.value)).toEqual([1])
+    expect(c.conflicts).toEqual([])
+    expect(c.references).toEqual([expect.objectContaining({ recordId: 'u2', session: 'review' })])
+    expect(differences(basisOf(constraints([own])), c)).toEqual([])
+    expect(draftIssues('At most 1 attempt.', c)).toEqual([])
+    const packet = repairPacket({ id: 'r1', cwd: '/work', session: 'fix', body: 'Fix HTTP retry.', constraints: c, earlier: [] })
+    expect(packet).not.toContain('migration')
+    expect(briefOf([own, other], c, 'fix').why?.reason).toBe('upstream is rate limiting')
+  })
+
+  it('preserves scoped statements in the same session without declaring them a replacement', () => {
+    const entries = [you('u1', 10, 'At most 1 attempt.'), you('u2', 20, 'For migration jobs, at most 5 attempts instead of 3.')]
+    const c = constraints(entries, {}, 'fix')
+    expect(c.holds[0].limit.value).toBe(1)
+    expect(c.references).toHaveLength(1)
+    const packet = repairPacket({ id: 'r1', cwd: '/work', session: 'fix', body: 'Fix HTTP retry.', constraints: c, earlier: [] })
+    expect(packet).toContain('scope and supersession have not been interpreted')
+    expect(packet).toContain('For migration jobs')
+  })
+
+  it('does not silently replace a different previous value', () => {
+    const c = constraints([you('u1', 10, 'At most 1 attempt.'), you('u2', 20, 'At most 5 attempts instead of 3.')])
+    expect(c.holds).toHaveLength(0)
+    expect(c.conflicts[0].limits.map((l) => l.value)).toEqual([1, 5])
+  })
+
+  it('recovers a source-backed reason without a numeric limit or imperative', () => {
+    const entries = [you('u1', 10, 'We chose SQLite because the app runs offline.')]
+    expect(briefOf(entries, constraints(entries), 'fix', 15).why).toEqual({ reason: 'the app runs offline', sentence: entries[0].text, at: 10, session: 'fix', recordId: 'u1' })
+  })
+
+  it('keeps Chinese constraints as unparsed source notes and recovers only the stated reason', () => {
+    const entries = [you('u1', 10, '最多重试2次，因为上游限流。不要修改支付接口。')]
+    const c = constraints(entries)
+    expect(c.holds).toEqual([])
+    expect(c.references?.map((r) => r.sentence)).toEqual(['最多重试2次，因为上游限流。', '不要修改支付接口。'])
+    expect(briefOf(entries, c, 'fix').why?.reason).toBe('上游限流')
+    expect(repairPacket({ id: 'r1', cwd: '/work', session: 'fix', body: 'Fix retry.', constraints: c, earlier: [] })).toContain('不要修改支付接口。')
+  })
+})
+
+
+describe('negative action lists', () => {
+  it('keeps a coordinated prohibition intact without authorizing a later positive action', () => {
+    for (const text of ['Never merge, push or deploy.', 'Do not merge, push, or deploy.', "Don't merge, push and deploy."]) {
+      expect(scopeHits(text)).toEqual([])
+      expect(clause(text)).toBe(text.slice(0, -1))
+    }
+    expect(scopeHits('Never merge, but push the branch.').map((h) => h.shown)).toEqual(['push'])
+    expect(scopeHits('Never merge, push or deploy. Then push the branch.').map((h) => h.shown)).toEqual(['push'])
+  })
+
+  it('allows the prospective user draft without removing its prohibitions', () => {
+    const text = 'Please continue in retry-fix. First check the current revision and whether the total-deadline check still fails; the recorded failure may be stale. If it still fails, locate and fix the cause, then rerun the relevant deadline and attempt-count checks. Keep the total deadline at most 10 seconds and at most 1 attempt. Never merge, push or deploy. Do not apply the migration-job attempt limit from retry-review to checkout, and do not raise the deadline to 30 seconds. If the current checks already pass, report the evidence without making unnecessary changes. Return the revision, tests and output, and anything still unresolved.'
+    const c = constraints([you('u1', 1, 'Keep the total deadline at most 10 seconds. At most 1 attempt. Never merge, push or deploy.')])
+    expect(draftChecks({ text }, [], c)).toMatchObject({ issues: [], hits: [], scope: [], pushes: [], unread: [] })
+  })
+})
+
+
+it('does not count routing text as an ask or lose the requests after it', () => {
+  expect(askedLines('Please continue in retry-fix. Fix the budget.')).toEqual(['Fix the budget.'])
+  expect(askedLines('Please continue in this conversation. Fix the budget.')).toEqual(['Fix the budget.'])
 })

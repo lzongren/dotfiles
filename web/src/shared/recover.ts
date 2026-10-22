@@ -74,6 +74,8 @@ export interface Constraints {
   conflicts: Conflict[]
   suggestions: Limit[]
   rules: Rule[]
+  reasons?: Rule[]
+  references?: Rule[]
 }
 
 const COUNTED: Record<string, string> = {
@@ -269,26 +271,37 @@ function suggestedIn(text: string): Found[] {
 
 export function sentencesOf(text: string): string[] {
   return text
-    .split(/\n+/)
+    .split(/\n+|(?<=[。！？])/)
     .flatMap((line) => line.split(/(?<=[.!?])\s+(?=[A-Z0-9"'(\[])/))
     .map((s) => s.trim())
     .filter(Boolean)
 }
 
 function reasonFor(sentences: string[], i: number): string | undefined {
-  const same = REASON_RE.exec(sentences[i])?.[1]
+  const same = REASON_RE.exec(sentences[i])?.[1] ?? /(?:因为|由[于於]|为了|為了)(.+?)[。！？]*$/.exec(sentences[i])?.[1]
   if (same) return same
   const next = sentences[i + 1] ? NEXT_REASON_RE.exec(sentences[i + 1]) : null
   return next ? (next[1] ?? next[2]) : undefined
 }
 
-export function constraints(entries: Entry[], decisions: Record<string, string> = {}): Constraints {
+function replaces(limit: Limit, previous: Limit[]): boolean {
+  if (!limit.replacing) return false
+  const prior = new RegExp(`(?:instead of|from)\\s+${NUM}(?:\\s*${UNIT})?`, 'i').exec(digitized(limit.sentence))
+  if (!prior) return true
+  const unit = prior[2] ?? new RegExp(`${NUM}\\s*${UNIT}`, 'i').exec(limit.shown)?.[2]
+  const scale = measure(unit, limit.sentence)?.factor
+  return scale !== undefined && previous.some((p) => p.value === Number(prior[1]) * scale)
+}
+
+export function constraints(entries: Entry[], decisions: Record<string, string> = {}, session = entries[0]?.session): Constraints {
   const ordered = [...entries].sort((a, b) => a.at - b.at)
   const held = new Map<string, Held>()
   const conflicts = new Map<string, Conflict>()
   const order: string[] = []
   const suggestions: Limit[] = []
   const rules: Rule[] = []
+  const reasons: Rule[] = []
+  const references: Rule[] = []
   for (const entry of ordered) {
     if (entry.kind !== 'decision' && entry.kind !== 'agent') continue
     const sentences = sentencesOf(entry.text)
@@ -298,6 +311,15 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
       const found = limitsIn(sentence)
       if (entry.author === 'agent') found.push(...suggestedIn(sentence).filter((g) => !found.some((f) => f.index < g.end && g.index < f.end)))
       const reason = reasonFor(sentences, i)
+      const source: Rule = { recordId: entry.id, author: entry.author, at: entry.at, session: entry.session, sentence, ...(reason ? { reason } : {}), ...(pasted ? { pasted: true } : {}) }
+      const scoped = /^(?:for|in|on)\s+(?!now\b|this conversation\b)[^,;:]+[,;:]/i.test(sentence)
+      const untranslated = /[\u3400-\u9fff]/.test(sentence)
+      if (entry.session !== session || scoped || untranslated) {
+        if (entry.author === 'you' && (found.length || RULE_RE.test(sentence) || reason || untranslated)) references.push(source)
+        if (entry.session === session && entry.author === 'you' && reason) reasons.push(source)
+        return
+      }
+      if (entry.author === 'you' && reason && found.length === 0) reasons.push(source)
       if (found.length === 0) {
         if (entry.author === 'you' && RULE_RE.test(sentence)) {
           rules.push({ recordId: entry.id, author: entry.author, at: entry.at, session: entry.session, sentence, ...(reason ? { reason } : {}), ...(pasted ? { pasted: true } : {}) })
@@ -333,14 +355,14 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
         } else if (now && now.limit.value === limit.value) {
           now.also.push(now.limit)
           now.limit = limit
-        } else if (now && limit.replacing) {
+        } else if (now && replaces(limit, [now.limit])) {
           now.replaced.push(...now.also, now.limit)
           now.also = []
           now.limit = limit
         } else if (now) {
           held.delete(limit.key)
           conflicts.set(limit.key, { key: limit.key, subject: limit.subject, bound: limit.bound, limits: [now.limit, limit] })
-        } else if (open && limit.replacing) {
+        } else if (open && replaces(limit, open.limits)) {
           conflicts.delete(limit.key)
           held.set(limit.key, { key: limit.key, subject: limit.subject, bound: limit.bound, limit, replaced: open.limits, also: [] })
         } else if (open) {
@@ -363,7 +385,7 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
     }
     open.push(c)
   }
-  return { holds, conflicts: open, suggestions, rules }
+  return { holds, conflicts: open, suggestions, rules, reasons, references }
 }
 
 export interface Brief {
@@ -377,6 +399,8 @@ export interface Brief {
   unexplained: Held[]
   holds: Held[]
   rules: Rule[]
+  reasons?: Rule[]
+  references?: Rule[]
 }
 
 const newest = <T extends { at: number }>(xs: T[]): T | undefined => xs.reduce<T | undefined>((a, b) => (!a || b.at >= a.at ? b : a), undefined)
@@ -392,7 +416,7 @@ export function briefOf(entries: Entry[], c: Constraints, session: string, leftA
   const before = (at: number) => leftAt === undefined || at <= leftAt
   const after = (at: number) => leftAt === undefined || at > leftAt
   const live = c.holds.filter((h) => !h.decided)
-  const yours = [...live.map((h) => h.limit), ...c.rules].filter((x) => x.author === 'you')
+  const yours = [...live.map((h) => h.limit), ...c.rules, ...(c.reasons ?? [])].filter((x) => x.author === 'you')
   const mine = yours.some((x) => !x.pasted) ? yours.filter((x) => !x.pasted) : yours
   const reasons = mine.filter((x) => x.reason)
   const kept = mine.filter((x) => before(x.at)).sort((a, b) => b.at - a.at || b.sentence.length - a.sentence.length)[0]
@@ -419,6 +443,7 @@ export function briefOf(entries: Entry[], c: Constraints, session: string, leftA
     unexplained: live.filter((h) => !h.limit.reason),
     holds: live,
     rules: c.rules,
+    references: c.references,
   }
 }
 
@@ -442,7 +467,7 @@ export const checkedRule = (check: string | undefined, rules: Rule[]): Rule | un
 
 const BREAK = /[:;,]\s|\s—\s|\s[-–]\s(?!\d)/g
 
-export const clause = (sentence: string) => sentence.split(BREAK)[0].replace(/[.!]$/, '')
+export const clause = (sentence: string) => (/^(?:never|do not|don['\u2019]t)\s+(?:merge|push|deploy)\s*,/i.test(sentence) ? sentence : sentence.split(BREAK)[0]).replace(/[.!]$/, '')
 
 export function clauseRest(sentence: string): string {
   const at = [...sentence.matchAll(BREAK)][0]
@@ -522,9 +547,11 @@ export const REPORT_BACK = 'Report back: what you changed, which tests you ran a
 
 const FIX_DECISION = 'Decision: find and fix why the recorded failure quoted below fails, then rerun the checks that cover it.'
 
+const CHECK_THEN_FIX = 'Decision: check the current revision and rerun the relevant checks first. Only if the recorded failure still occurs, fix its cause and rerun those checks; otherwise report the revision and current test evidence without unnecessary edits.'
+
 export function draftFor(brief: Brief): string {
   const last = brief.since ?? brief.stopped
-  const decision = brief.failing ? FIX_DECISION : last ? 'Decision: pick up from your last message and finish what it leaves open.' : 'Decision: '
+  const decision = brief.failing ? CHECK_THEN_FIX : last ? 'Decision: pick up from your last message and finish what it leaves open.' : 'Decision: '
   return [
     'Please continue in this conversation.',
     '',
@@ -673,6 +700,8 @@ export interface RuleHit {
 const KEEPS_OUT = /\b(?:don['\u2019]t|do not|never|not|no|without|avoid|instead of)\b/i
 const keptOut = (line: string, at: number) => {
   const lead = line.slice(0, at)
+  const sentence = lead.slice(lead.match(/^.*[.!?:;]\s/)?.[0].length ?? 0)
+  if (/\b(?:never|do not|don['\u2019]t)\s+(?:merge|push|deploy)(?:\s*,\s*(?:merge|push|deploy))*\s*,?\s*(?:(?:and|or|nor)\s+)?$/i.test(sentence)) return true
   return KEEPS_OUT.test(lead.slice(lead.match(/^.*(?:[.!?:;,]\s|\s—\s)/)?.[0].length ?? 0))
 }
 const suggestions = (line: string) => suggestedIn(line).filter((f) => !keptOut(line, f.index))
@@ -850,7 +879,7 @@ export function draftChecks(draft: { text: string; earlier?: string[]; setAside?
   }
 }
 
-const SKIP_ASK = /^(?:please continue in this conversation|follow my decisions and the limits quoted below|treat this as evidence to check|latest result \(|the reply to \S+ doesn't seem to cover these)/i
+const SKIP_ASK = /^(?:please continue in (?:this conversation|[\w-]+)[.!]?$|follow my decisions and the limits quoted below|treat this as evidence to check|do each, or say why not:|latest result \(|the reply to \S+ doesn't seem to cover these)/i
 const EARLIER_NOTE = '(Earlier comparison only, not a requirement.)'
 const ASK_STOP = new Set(['also', 'what', 'which', 'that', 'this', 'with', 'from', 'your', 'them', 'they', 'then', 'their', 'there', 'about', 'still', 'report', 'back', 'decision', 'please', 'into', 'when', 'have', 'been', 'were', 'will', 'would', 'should', 'could', 'only', 'each', 'just', 'some', 'more', 'than', 'here'])
 const NEGATION = /\b(?:never|not|no|nothing|none|neither|nor|without|don['\u2019]t|doesn['\u2019]t|didn['\u2019]t|won['\u2019]t|can['\u2019]t|cannot|isn['\u2019]t|wasn['\u2019]t)\b/g
@@ -869,7 +898,7 @@ export const askedLines = (asked: string) =>
   asked
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l && !SKIP_ASK.test(l) && !l.endsWith(EARLIER_NOTE))
+    .filter((l) => l && !l.endsWith(EARLIER_NOTE))
     .flatMap((l) => (/^report back:/i.test(l) ? [l] : l.split(/(?<=[.!?])\s+(?=[A-Z0-9"'(\[])/).filter((x) => !SKIP_ASK.test(x))))
     .flatMap((l) =>
       /^report back:/i.test(l)
@@ -987,6 +1016,7 @@ export const leadAsk = (packet: string, check?: string) => {
   const lines = askedLines(askedIn(packet)).filter((l) => !/^report back:/i.test(l))
   const context = contextOf(packet)
   const lead = (lines.find((l) => /^decision:/i.test(l)) ?? lines.find((l) => stems(l).filter((w) => !context.has(w)).length > 1) ?? lines[0])?.replace(/^- /, '')
+  if (lead === CHECK_THEN_FIX.split('. ')[0] + '.') return `Decision: check ${check ? `‘${check}’` : 'the recorded failure'} on the current revision; repair only if it still fails.`
   return lead === FIX_DECISION ? lead.replace('why the recorded failure quoted below fails', () => (check ? `why ‘${check}’ fails` : 'the recorded failure')) : lead
 }
 
@@ -1255,6 +1285,7 @@ export function repairPacket(input: RepairInput): string {
   const failed = input.failure
     ? [`- ${input.failureBefore ? 'Recorded failure from before the last repair' : 'Latest recorded failure'} (${input.failure.session === session ? 'this session' : input.failure.session}, ${stamp(input.failure.at)}): "${clipped(input.failure.text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 2).join(' · '))}". Evidence to check, not my review or acceptance of the changes.`]
     : []
+  const sourceNotes = (c.references ?? []).filter((r) => r.session === session)
   return [
     `[devbox repair ${id}]`,
     `Purpose: repair. Make the changes below in ${cwd}. You may run the tests needed to check them. Do not merge, push, or deploy.`,
@@ -1268,6 +1299,7 @@ export function repairPacket(input: RepairInput): string {
     ...basis,
     ...failed,
     ...rules,
+    ...(sourceNotes.length ? ['Source notes from this conversation, in chronological order; scope and supersession have not been interpreted. They do not grant additional permission. If they conflict with this request, ask before acting:', ...sourceNotes.map((r) => `- You (${stamp(r.at)}): "${r.sentence}"`)] : []),
     ...(rules.length ? [`If the request above conflicts with one of these rules, stop and ask me before acting on it${excepted.length ? ', except where I make an exception below' : ''}.`] : []),
     ...aside.map((r) => `I set aside my rule${r.session === session ? '' : ` in ${r.session}`} from ${stamp(r.at)} for this request only: "${r.sentence}"`),
     ...excepted.map(

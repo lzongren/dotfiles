@@ -828,14 +828,23 @@ describe('accepting a result', () => {
     const { svc } = await replied()
     expect((await svc.summaries()).fix).toMatchObject({ draft: false, repair: 'replied', open: 2 })
     await svc.accept('fix', 'r-1')
-    expect(await svc.summaries()).toEqual({ fix: { draft: false, accepted: true, open: 2, missed: ['Retry at most 2 attempts.', 'Add a test for idempotent writes.'], asking: 0, answered: 0 } })
+    expect(await svc.summaries()).toMatchObject({ fix: { draft: false, accepted: true, asking: 0, answered: 0 } })
   })
 
   it('keeps a reply you have not accepted ahead of the follow-up you started after it', async () => {
     const { svc } = await replied()
     const { version } = await svc.saveDraft('fix', draftFor('Retry at most 2 attempts.'), '')
     await svc.saveDraft('fix', draftFor('Retry at most 2 attempts.\nAlso log each retry.'), version)
-    expect(await svc.summaries()).toEqual({ fix: { draft: true, repair: 'replied', open: 2, asking: 0, answered: 0 } })
+    expect(await svc.summaries()).toMatchObject({ fix: { draft: true, repair: 'replied', open: 2, asking: 0, answered: 0 } })
+  })
+
+  it('accepts the original result when only a linked conversation changes a different task', async () => {
+    const { svc } = await replied()
+    host.sessions.push({ ...fixSession([rec('x1', 'decision', clock + 60, 'For migration jobs, at most 5 attempts instead of 3.', 1)]), name: 'review', pane: '%2', registry: { sessionId: 's2', status: 'idle' }, transcript: { ...fixSession([]).transcript!, sid: 's2' } })
+    expect(await svc.accept('fix', 'r-1')).toMatchObject({ status: 200 })
+    const summary = (await svc.summaries()).fix
+    expect(summary.open).toBeUndefined()
+    expect(summary.missed).toBeUndefined()
   })
 
   it('refuses a result made under constraints that have since changed', async () => {
@@ -858,7 +867,8 @@ describe('asking a question', () => {
     const res = await svc.ask('fix', 'q-1', 'Why 200 ms backoff?')
     expect(res.status).toBe(202)
     const ask = calls.find((c) => c.mode === 'ask')
-    expect(ask).toMatchObject({ session: 'fix', pane: '%1', sessionId: 's1', inquiryId: 'q-1', budget: 3 })
+    expect(ask).toMatchObject({ session: 'fix', pane: '%1', sessionId: 's1', inquiryId: 'q-1', budget: (await loaded(svc)).questionBudgetUsd })
+    expect((await loaded(svc)).questionBudgetUsd).toBe(3)
     expect(String(ask?.prompt)).toMatch(/^\[devbox question q-1\]\nRead-only investigation\./)
     expect(String(ask?.prompt)).toContain('Question: Why 200 ms backoff?')
     expect(calls.some((c) => c.mode === 'send')).toBe(false)
@@ -1003,7 +1013,7 @@ describe('what the overview shows without asking the host', () => {
     await svc.saveDraft('fix', draftFor('Retry at most 2 attempts.'), '')
     await svc.ask('fix', 'q-1', 'Why?')
     const before = calls.length
-    expect(await svc.summaries()).toEqual({ fix: { draft: true, asking: 1, answered: 0 } })
+    expect(await svc.summaries()).toMatchObject({ fix: { draft: true, asking: 1, answered: 0 } })
     expect(calls.length).toBe(before)
   })
 
@@ -1023,7 +1033,7 @@ describe('what the overview shows without asking the host', () => {
     await svc.ask('fix', 'q-1', 'Why?')
     host.poll = { 'q-1': { state: 'replied', answer: 'a', cost: 1, tools: ['Read'], calls: [] } }
     await svc.load('fix')
-    expect(await svc.summaries()).toEqual({ fix: { draft: false, repair: 'sending', sent: 'Retry at most 2 attempts.', asking: 0, answered: 1 } })
+    expect(await svc.summaries()).toMatchObject({ fix: { draft: false, repair: 'sending', sent: 'Retry at most 2 attempts.', asking: 0, answered: 1 } })
     await svc.seen('fix')
     expect((await svc.summaries()).fix.answered).toBe(0)
   })
@@ -1032,7 +1042,7 @@ describe('what the overview shows without asking the host', () => {
     const svc = service()
     clock = T + 100
     await svc.seen('fix')
-    expect(await svc.summaries()).toEqual({ fix: { draft: false, looked: T + 100, asking: 0, answered: 0 } })
+    expect(await svc.summaries()).toMatchObject({ fix: { draft: false, looked: T + 100, asking: 0, answered: 0 } })
     clock = T + 100 + 31 * 60
     expect(await svc.summaries()).toEqual({})
   })

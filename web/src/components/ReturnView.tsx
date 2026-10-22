@@ -83,7 +83,7 @@ import { NewSession, type Place } from './NewSession'
 import { ArtifactList } from './Overview'
 import { ago } from '../time'
 import { AgentIcon, Icon, type AgentKind } from './Icon'
-import { PickUpRail, titleOf, workLabel } from './PickUp'
+import { PickUpRail, workLabel } from './PickUp'
 import { TerminalPane } from './Terminal'
 import { returnNote, type HomeItem } from './work'
 
@@ -343,7 +343,12 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
   const whyShown = why && (head.some((r) => r.sentence === why.sentence && r.reason === why.reason) || live.some((h) => h.replaced.length > 0 && h.limit.reason !== undefined && h.limit.reason === why.reason))
   const holds = (
     <>
-            {live.length === 0 && c.conflicts.length === 0 && rules.length === 0 ? <p className="lane-empty">{c.rules.length ? 'No limits found.' : 'No limits or rules found in your messages.'}</p> : null}
+            {live.length === 0 && c.conflicts.length === 0 && rules.length === 0 ? <p className="lane-empty">{c.rules.length ? 'No limits found.' : 'No limits automatically interpreted. This does not mean there are no constraints.'}</p> : null}
+            {c.references?.length ? <details className="return-preview" open={live.length === 0 && c.references.some((r) => r.session === session) || undefined}>
+              <summary>{c.references.length} source note{c.references.length === 1 ? '' : 's'} outside automatic checks</summary>
+              <p>Original messages, not a resolved set of current constraints. Related-session notes are reference only and stay out of the repair. Notes from this conversation are included verbatim; their scope and replacement order have not been interpreted.</p>
+              {c.references.map((r, i) => <blockquote key={`${r.recordId}:${i}`}><p>{r.sentence}</p><small>{by(r)}</small><button type="button" className="link" onClick={() => onOpen(r.session)}>Open source conversation</button></blockquote>)}
+            </details> : null}
             <ul className="holds-list">
               {live.map((h) => (
                 <li key={h.key} data-changed={h.replaced.length > 0 || undefined}>
@@ -457,9 +462,9 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
           ) : null}
           {whyShown ? null : (
             <>
-              <dt>Why it's this way</dt>
+              <dt>Reason before you left</dt>
               <dd>
-                {why ? why.reason ?? why.sentence : <span className="lane-empty">No reason recorded with your decisions.</span>}
+                {why ? why.reason ?? why.sentence : <span className="lane-empty">No explicit reason recovered from the available messages.</span>}
                 {why ? (
                   <details className="quiet">
                     <summary>
@@ -668,7 +673,7 @@ export function ReturnView({
   const now = Date.now()
 
   const entries = useMemo(() => (data ? entriesOf(data.sessions, session) : []), [data, session])
-  const c = useMemo(() => constraints(entries, data?.state.decisions ?? {}), [entries, data])
+  const c = useMemo(() => constraints(entries, data?.state.decisions ?? {}, session), [entries, data])
   const target = data?.sessions.find((s) => s.name === session)
   const running = conversationOf(target)
   const current = target && running ? { session, pane: target.pane, sessionId: running } : null
@@ -694,7 +699,7 @@ export function ReturnView({
     setData(result.data)
     const s = result.data.state
     const read = entriesOf(result.data.sessions, session)
-    onStateChanged?.(false, result.data.work, briefOf(read, constraints(read, s.decisions), session, s.seenAt ?? leftRef.current, actedAt(s.repairs)))
+    onStateChanged?.(false, result.data.work, briefOf(read, constraints(read, s.decisions, session), session, s.seenAt ?? leftRef.current, actedAt(s.repairs)))
     const adopted = !loaded.current || (adopt && idle && at === edits.current && !unsaved.current && !saving.current)
     if (adopted) {
       setVersion(s.draftVersion)
@@ -1147,7 +1152,6 @@ export function ReturnView({
         </p>
       )
     ) : null
-  const nextWork = works.find((w) => w.attention === 'needs' && w.session.name !== session && !w.brief?.work.members.some((m) => m.name === session))
   const held = holdingOf(brief, session, brief.failing ?? priorFailure, 'in What holds now')
   const holding = [...brief.holds.map((h) => lower(h.limit.shown)), ...held.rules.map((r) => clause(r.sentence)), ...(held.more ? [held.more] : [])]
   const tabs = [
@@ -1282,7 +1286,8 @@ export function ReturnView({
         {asking ? (
           <>
             <p className="authorization-summary">
-              Not sent yet · costs up to about $1
+              Not sent yet · {data.questionBudgetUsd === undefined ? 'budget unavailable' : `requested spending limit $${data.questionBudgetUsd}`}
+              <small>Passed to the question runner; actual usage is reported with the answer.</small>
               <small>
                 {'A read-only copy of the conversation answers here, reading files only. Session '}
                 <Name of={session} />
@@ -1298,7 +1303,7 @@ export function ReturnView({
               <pre>{questionPrompt({ id: 'q-(new)', cwd: target?.path ?? '', question: question.trim() })}</pre>
             </details>
             <div className="flow-actions">
-              <button type="button" className="primary" disabled={!canAct || !question.trim() || busy} onClick={() => void ask()}>
+              <button type="button" className="primary" disabled={!canAct || !question.trim() || busy || data.questionBudgetUsd === undefined} onClick={() => void ask()}>
                 Send only the question
               </button>
               <button type="button" className="link" disabled={!question.trim()} onClick={showRecords}>
@@ -1524,7 +1529,7 @@ export function ReturnView({
   ) : null
   return (
     <section className="return" aria-label={`Pick up ${session}`}>
-      {onSwitch ? <PickUpRail items={works.map((w) => (w.session.name === session && w.brief ? { ...w, brief: { ...w.brief, work: data.work } } : w))} current={session} others={elsewhere} open={{ title: title ?? session, members, status: here ?? (brief.failing ? 'Check failed' : status === 'waiting' ? 'Waiting on you' : 'Nothing needs you') }} onAll={onAll} onSwitch={(name) => void (name === session ? undefined : leave(() => onSwitch(name, inWork(), true), `rail:${name}`, 'Choose it again'))} /> : null}
+      {onSwitch ? <PickUpRail items={works.map((w) => (w.session.name === session && w.brief ? { ...w, brief: { ...w.brief, work: data.work } } : w))} current={session} others={elsewhere} open={{ title: title ?? session, members, status: here ?? (brief.failing ? 'Check failed' : status === 'waiting' ? 'Waiting on you' : 'Viewed · not accepted') }} onAll={onAll} onSwitch={(name) => void (name === session ? undefined : leave(() => onSwitch(name, inWork(), true), `rail:${name}`, 'Choose it again'))} /> : null}
       <div className="return-main" data-tab={tab === 'changes' ? undefined : tab === 'new' ? 'new' : 'terminal'}>
         <div className="return-top">
           <button type="button" className="link return-back" onClick={() => void close()}>
@@ -1842,7 +1847,7 @@ export function ReturnView({
                   {replied?.accepted
                     ? `You accepted it ${ago(now, replied.accepted.at)} ago. That records that you read the reply; it doesn't merge, push or close anything.`
                     : replied
-                      ? "Devbox doesn't run checks or read the reply for meaning. Each limit says whether it changed after the repair was sent. A line you asked for is flagged when the reply doesn't seem to mention it; a row without a flag is still unchecked, and yours to read."
+                      ? "This is the agent’s report, not verified test evidence. Check the reply and its sources; unchanged limits and optional wording hints are folded below."
                       : 'No repair has come back yet. You can hand back a repair or ask first; only accepting needs a full check.'}
                 </p>
                 {replied ? (
@@ -1867,6 +1872,8 @@ export function ReturnView({
                 ) : null}
                 {replied && asked ? (
                   <article className="return-evidence" data-kind="asked" aria-label="What you asked">
+                    <details className="return-preview">
+                      <summary>Compare with the request · optional wording hints</summary>
                     <p className="evidence-head">
                       <Icon name="quote" />
                       <strong>what you asked</strong> · sent <When at={replied.sentAt} now={now} /> · Devbox doesn't check that the reply did these; it flags what the reply doesn't seem to mention
@@ -1894,6 +1901,7 @@ export function ReturnView({
                         Draft a follow-up for what it may have missed
                       </button>
                     ) : null}
+                    </details>
                   </article>
                 ) : null}
                 {replied && attached.length ? (
@@ -1925,6 +1933,9 @@ export function ReturnView({
                     </ul>
                   </article>
                 ) : null}
+                {replied && differences(replied.basis, c).length ? <p className="return-notice">Changed since this request: {differences(replied.basis, c).map(changeText).join('; ')}.</p> : null}
+                <details className="return-preview">
+                  <summary>{replied && !differences(replied.basis, c).length ? 'Recorded limits unchanged · inspect basis and verification limits' : 'Inspect recorded basis and verification limits'}</summary>
                 <ul className="acceptance-list">
                   {c.holds
                     .filter((h) => !h.decided)
@@ -1953,7 +1964,14 @@ export function ReturnView({
                     <b data-state="none">{replied ? "not done by Devbox; the repair told the agent not to, and Devbox can't see whether it did" : 'Devbox never does it'}</b>
                   </li>
                 </ul>
+                </details>
                 {replied ? failureNote : null}
+                {replied && (evidence.length || files.length) ? <details className="return-preview">
+                  <summary>Open referenced files and artifacts · {evidence.length + files.length}</summary>
+                  <p className="lane-empty">Current files and links from this work, not a snapshot of this reply or proof that its checks passed.</p>
+                  {evidence.length ? <ArtifactList artifacts={evidence} now={now} /> : null}
+                  {files.length ? <FileList files={files} now={now} onPick={setPeek} /> : null}
+                </details> : null}
                 {replied && !replied.accepted
                   ? (() => {
                       const stale = differences(replied.basis, c)
@@ -1969,10 +1987,10 @@ export function ReturnView({
                           ) : (
                             <p className="lane-empty">Accepting records that you read the reply and accept this round. It doesn't merge, push or close anything.</p>
                           )}
-                          <button type="button" className={missing.length ? undefined : 'primary'} disabled={stale.length > 0 || busy} onClick={() => void accept(replied)}>
-                            {missing.length ? 'Accept anyway' : 'Accept this result'}
+                          <button type="button" className="primary" disabled={stale.length > 0 || busy} onClick={() => void accept(replied)}>
+                            Accept this result
                           </button>
-                          {missing.length ? <small className="lane-empty">{missing.length === 1 ? 'The thing it may have missed stays' : `The ${missing.length} things it may have missed stay`} listed on Now after you accept.</small> : null}
+                          {missing.length ? <small className="lane-empty">Accept only if the evidence is enough for you. Wording hints stay in the history and do not decide completion.</small> : null}
                         </div>
                       )
                     })()
@@ -1982,7 +2000,7 @@ export function ReturnView({
                 <div className="next-decision">
                   <strong>What next</strong>
                   <div className="flow-actions">
-                    <button type="button" className={replied && !replied.accepted && !missing.length ? undefined : 'primary'} disabled={!canAct} onClick={handBack}>
+                    <button type="button" className={replied && !replied.accepted ? undefined : 'primary'} disabled={!canAct} onClick={handBack}>
                       {text.trim() && !out ? 'Continue the unsent draft' : 'Hand back to the agent to repair'}
                       <Icon name="next" />
                     </button>
@@ -2181,14 +2199,8 @@ export function ReturnView({
                       <pre>{sentThis.packet}</pre>
                     </details>
                     <div className="flow-actions">
-                      {nextWork && onSwitch ? (
-                        <button type="button" className="primary" onClick={() => void leave(() => onSwitch(nextWork.session.name, inWork(), true), `rail:${nextWork.session.name}`, 'Choose it again')}>
-                          Next: {titleOf(nextWork)}
-                          <Icon name="next" />
-                        </button>
-                      ) : null}
-                      <button type="button" className={nextWork && onSwitch ? 'link' : 'primary'} onClick={() => void close()}>
-                        Back to Now
+                      <button type="button" className="primary" onClick={() => void close()}>
+                        Done for now
                       </button>
                       <button type="button" className="link" onClick={() => followUpSent(sentThis)}>
                         Write a follow-up

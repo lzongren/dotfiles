@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { describe, expect, it, vi } from 'vitest'
 import type { BriefResponse } from '../../src/api'
 import { PickUpList, PickUpRail } from '../../src/components/PickUp'
-import { homeItems } from '../../src/components/work'
+import { attentionStamp, homeItems } from '../../src/components/work'
 import type { AgentInsight, ReturnSummary, Session } from '../../src/shared/types'
 
 const NOW = 1_800_000_000_000
@@ -78,13 +78,13 @@ describe('the home list', () => {
     ])
   })
 
-  it('puts a reply under Needs you and your unsent draft or question under Not sent yet, with the action that continues it', () => {
+  it('puts a reply under New and your unsent draft or question under Not sent yet, with the action that continues it', () => {
     const list = items([session('a'), session('b')], [agent('a', { turnAt: sec(9000) }), agent('b', { turnAt: sec(9000) })], {
       a: { draft: true, asking: 0, answered: 0 },
       b: { draft: false, repair: 'replied', asking: 0, answered: 0 },
     })
     expect(list.map((i) => [i.session.name, i.attention, i.status, i.action])).toEqual([
-      ['b', 'needs', 'Repair replied, review it', 'Review the reply'],
+      ['b', 'new', 'Repair replied, review it', 'Review the reply'],
       ['a', 'unsent', 'Draft not sent', 'Continue the unsent draft'],
     ])
     const asked = items([session('c')], [agent('c', { turnAt: sec(9000) })], { c: { draft: false, question: true, asking: 0, answered: 0 } })
@@ -93,7 +93,7 @@ describe('the home list', () => {
     expect(sent.map((i) => [i.attention, i.status, i.also])).toEqual([['waiting', 'Waiting on the agent', ['Draft not sent']]])
     render(<PickUpList items={[...list, ...asked]} now={NOW} onContinue={() => undefined} onOpen={() => undefined} />)
     expect(screen.getByRole('heading', { name: /Not sent yet/ })).toHaveTextContent('Not sent yet 2')
-    expect(screen.getByText(/1 needs you · 2 not sent yet/)).toBeInTheDocument()
+    expect(screen.getByText(/1 new since you looked · 2 not sent yet/)).toBeInTheDocument()
     cleanup()
     render(<PickUpList items={asked} now={NOW} onContinue={() => undefined} onOpen={() => undefined} />)
     expect(screen.getByText(/You can leave now/)).toHaveTextContent("You can leave now: nothing needs you and nothing is new. What you haven't sent is saved.")
@@ -241,7 +241,7 @@ describe('the home list', () => {
     const accepted = items([session('a')], [agent('a', { turnAt: sec(30) })], { a: { draft: false, accepted: true, asking: 0, answered: 0 } })
     expect(accepted.map((i) => i.status)).toEqual(['Result accepted · merge is still yours'])
     const open = items([session('a')], [agent('a', { turnAt: sec(30) })], { a: { draft: false, accepted: true, open: 2, asking: 0, answered: 0 } })
-    expect(open.map((i) => i.status)).toEqual(['Accepted · 2 things it may have missed'])
+    expect(open.map((i) => i.status)).toEqual(['Result accepted · merge is still yours'])
   })
 
   it("puts an agent waiting on you ahead of your own unsent draft or answer, and keeps every other state beside the badge", () => {
@@ -271,7 +271,7 @@ describe('the home list', () => {
     expect(screen.getByRole('listitem')).toHaveTextContent('Since you left The reply says, not checked: “retry.test.ts passes.”')
     cleanup()
     const gaps = items([session('fix')], [agent('fix', { turnAt: sec(60) })], { fix: { draft: false, repair: 'replied', open: 2, asking: 0, answered: 0 } }, { fix: replied })
-    expect(gaps.map((i) => [i.attention, i.status])).toEqual([['needs', 'Repair replied · 2 things it may have missed']])
+    expect(gaps.map((i) => [i.attention, i.status])).toEqual([['new', 'Repair replied, review it']])
     render(<PickUpList items={gaps} now={NOW} onContinue={() => undefined} onOpen={() => undefined} />)
     expect(screen.getByRole('listitem')).toHaveTextContent('The reply says, not checked: “retry.test.ts passes.”')
     cleanup()
@@ -293,7 +293,7 @@ describe('the home list', () => {
     const waiting = items([session('fix')], [agent('fix', { state: 'working', since: sec(30) })], { fix: { draft: false, repair: 'working', sent: 'Cap each attempt by the time left in the budget.', asking: 0, answered: 0 } }, { fix: replied })
     render(<PickUpList items={waiting} now={NOW} onContinue={() => undefined} onOpen={() => undefined} />)
     const region = screen.getByRole('region', { name: /pick up where you left off/i })
-    expect(region).toHaveTextContent('Waiting for the reply to the repair you sent. It comes back under Needs you, so you can leave.')
+    expect(region).toHaveTextContent('Waiting for the reply to the repair you sent. It comes back under New since you looked, so you can leave.')
     expect(region).toHaveTextContent('You sent “Cap each attempt by the time left in the budget.”')
     expect(region).not.toHaveTextContent('You decided')
     expect(region).not.toHaveTextContent('Fixed the budget')
@@ -358,5 +358,32 @@ describe('the home list', () => {
     expect(open).toHaveTextContent('3 sessions · Result accepted · merge is still yours')
     expect(screen.getByRole('heading', { name: 'Open now' })).toBeInTheDocument()
     expect(screen.getByText('2 other sessions')).toBeInTheDocument()
+  })
+})
+
+
+describe('choosing when to return', () => {
+  it('keeps a deferred question quiet across visits, then brings it back on a new agent update', () => {
+    const s = session('docs')
+    const a = agent('docs', { state: 'waiting', waitingFor: 'question', turnAt: sec(60) })
+    const deferred = { docs: attentionStamp(a) }
+    const items = (seen: number, insight = a) => homeItems([s], new Map([['docs', insight]]), () => seen, NOW, {}, {}, deferred)
+    expect(items(0)[0].attention).toBe('later')
+    expect(items(NOW / 1000)[0].attention).toBe('later')
+    expect(homeItems([s], new Map([['docs', a]]), () => NOW / 1000, NOW, { docs: { draft: false, asking: 0, answered: 0, looked: NOW / 1000 } }, {}, deferred)[0].attention).toBe('later')
+    expect(items(0, { ...a, turnAt: sec(1) })[0].attention).toBe('needs')
+    expect(homeItems([s], new Map([['docs', a]]), () => 0, NOW, {}, {}, {})[0].attention).toBe('needs')
+  })
+
+  it('shows deferred items collapsed and provides an explicit way to bring them back', () => {
+    const a = agent('docs', { state: 'waiting' })
+    const rows = homeItems([session('docs')], new Map([['docs', a]]), () => 0, NOW, {}, {}, { docs: attentionStamp(a) })
+    const later = vi.fn()
+    render(<PickUpList items={rows} now={NOW} onContinue={vi.fn()} onOpen={vi.fn()} onLater={later} />)
+    const summary = screen.getByText('Later · on this browser')
+    expect(summary.closest('details')).not.toHaveAttribute('open')
+    fireEvent.click(summary)
+    fireEvent.click(screen.getByRole('button', { name: 'Bring back' }))
+    expect(later).toHaveBeenCalledWith('docs')
   })
 })

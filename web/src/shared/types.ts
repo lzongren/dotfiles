@@ -239,6 +239,7 @@ export interface ProbeSession {
 }
 
 export interface ReturnResponse {
+  questionBudgetUsd?: number
   session: string
   host: string
   fetchedAt: number
@@ -259,6 +260,7 @@ export interface Lookalike {
 }
 
 export interface ReturnSummary {
+  activity?: string
   draft: boolean
   repair?: RepairState
   sent?: string
