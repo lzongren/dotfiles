@@ -1865,7 +1865,7 @@ export function ReturnView({
                         It's word for word the reply to the previous repair, sent {ago(now, previous.sentAt)} ago. It may not be about this one.
                       </p>
                     ) : null}
-                    <button type="button" className="link" onClick={() => onOpenTerminal(replied.target.session)}>
+                    <button type="button" className="secondary" onClick={() => onOpenTerminal(replied.target.session)}>
                       Show it in the session
                     </button>
                   </article>
@@ -1987,7 +1987,7 @@ export function ReturnView({
                           ) : (
                             <p className="lane-empty">Accepting records that you read the reply and accept this round. It doesn't merge, push or close anything.</p>
                           )}
-                          <button type="button" className="primary" disabled={stale.length > 0 || busy} onClick={() => void accept(replied)}>
+                          <button type="button" className="secondary" disabled={stale.length > 0 || busy} onClick={() => void accept(replied)}>
                             Accept this result
                           </button>
                           {missing.length ? <small className="lane-empty">Accept only if the evidence is enough for you. Wording hints stay in the history and do not decide completion.</small> : null}

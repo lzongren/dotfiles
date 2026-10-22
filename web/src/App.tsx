@@ -6,7 +6,7 @@ import { usePoll } from './poll'
 import { clause, holdingOf, lower } from './shared/recover'
 import { initToken } from './token'
 import { ConnectionStatus, INSIGHTS_STALE_MS, type Cause, type Failure } from './components/ConnectionStatus'
-import { Gradient, mostSerious } from './components/Icon'
+import { mostSerious } from './components/Icon'
 import { Overview } from './components/Overview'
 import { PickUpRail, titleOf } from './components/PickUp'
 import { attentionStamp, homeItems, type HomeItem } from './components/work'
@@ -449,12 +449,6 @@ export function App() {
     <div className="app" data-focus={activeTab === null ? 'true' : undefined} style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}>
       <header className="topbar">
         <h1 className="brand">
-          <svg className="brand-mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-            <Gradient id="devbox-grad" />
-            <rect className="mark-bg" x="1.5" y="1.5" width="21" height="21" rx="6" />
-            <path className="mark-prompt" d="M7 8.5l3.5 3.5L7 15.5" />
-            <rect className="mark-cursor" x="12.5" y="14" width="5" height="2" rx="1" />
-          </svg>
           devbox <span className="host">{data.host}</span>
         </h1>
         <nav className="topnav" aria-label="Pages">

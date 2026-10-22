@@ -470,6 +470,7 @@ const BREAK = /[:;,]\s|\s—\s|\s[-–]\s(?!\d)/g
 export const clause = (sentence: string) => (/^(?:never|do not|don['\u2019]t)\s+(?:merge|push|deploy)\s*,/i.test(sentence) ? sentence : sentence.split(BREAK)[0]).replace(/[.!]$/, '')
 
 export function clauseRest(sentence: string): string {
+  if (clause(sentence) === sentence.replace(/[.!]$/, '')) return ''
   const at = [...sentence.matchAll(BREAK)][0]
   return at ? sentence.slice(at.index + at[0].length).trim().replace(/[.!]$/, '') : ''
 }

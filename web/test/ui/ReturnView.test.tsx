@@ -899,7 +899,7 @@ describe('the repair draft', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Result & acceptance' }))
     expect(screen.getByText(/the last recorded failure is “retry\.test\.ts”/i)).toHaveTextContent("before this repair. Devbox records only failures, so whether the checks pass now is the reply's word, not a check.")
     expect(screen.getByRole('button', { name: /hand back to the agent to repair/i })).not.toHaveClass('primary')
-    expect(screen.getByRole('button', { name: 'Accept this result' })).toHaveClass('primary')
+    expect(screen.getByRole('button', { name: 'Accept this result' })).toHaveClass('secondary')
   })
 
   it('keeps the last recorded failure on the changes step once a repair went out, so it does not read as fixed', async () => {
@@ -939,7 +939,7 @@ describe('the repair draft', () => {
     const evidence = screen.getByRole('article', { name: 'Evidence you attached' })
     expect(within(evidence).getByText(/^review: /).closest('li')).toHaveTextContent("review: “The 200ms backoff has no reason; budget reset needs checking.”The reply doesn't seem to mention “budget reset needs checking”.")
     expect(asked).toHaveTextContent("Devbox doesn't check that the reply did these")
-    expect(screen.getByRole('button', { name: 'Accept this result' })).toHaveClass('primary')
+    expect(screen.getByRole('button', { name: 'Accept this result' })).toHaveClass('secondary')
     expect(screen.getByRole('button', { name: 'Accept this result' }).nextSibling).toHaveTextContent('Wording hints stay in the history and do not decide completion.')
     const list = screen.getByText('Merging, pushing or deploying').closest('ul') as HTMLElement
     expect(within(list).getByText(/Never merge the PR without asking me/).closest('li')).toHaveTextContent(/^Never merge the PR without asking me\.not checked by Devbox$/)

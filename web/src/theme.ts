@@ -257,7 +257,28 @@ export const paletteFor = (look: Look, mode: 'dark' | 'light') => (mode === 'lig
 
 export function lookTokens(look: Look, mode: 'dark' | 'light', more = false): Record<string, string> {
   const p = paletteFor(look, mode)
-  return p ? uiTokens(p, more, look.gradient?.[mode], look.accent?.[mode], look.neutral?.[mode]) : {}
+  if (!p) return {}
+  const tokens = uiTokens(p, more, look.gradient?.[mode], look.accent?.[mode], look.neutral?.[mode])
+  if (look.id !== 'devbox' || mode !== 'light' || more) return tokens
+  return {
+    ...tokens,
+    '--bg': '#ffffff',
+    '--surface': '#f6f9fe',
+    '--tile': '#ffffff',
+    '--raised': '#f1f5fb',
+    '--selected': '#edf3ff',
+    '--text': '#101b38',
+    '--dim': '#5d6d88',
+    '--accent': '#0754ff',
+    '--grad-a': '#0754ff',
+    '--grad-b': '#0754ff',
+    '--grad-c': '#0754ff',
+    '--border': '#e0e7f1',
+    '--bell': '#865719',
+    '--bell-bg': '#fff4e5',
+    '--danger': '#b83232',
+    '--danger-bg': '#fff0ef',
+  }
 }
 
 export function applyLook(look: Look, prefs: Prefs = mediaPrefs()): void {

@@ -36,3 +36,9 @@ The synthetic host did not supply a real terminal or repository/test output. Rea
 ## Regression coverage
 
 Shared recovery tests cover cross-session contamination, uncertain scope, unmatched replacement amounts, standalone causal rationale, Chinese source preservation, routing-text filtering, and coordinated negation with later positive actions. Service tests cover budget parity and acceptance unaffected by linked constraints. UI tests cover missing-budget refusal, collapsed optional comparisons, neutral result state, deferred attention and explicit return. Existing send, preview, authorization and retry checks continue to run.
+
+## Visual alignment with the prototype
+
+The subsequent visual pass restores the prototype's white/navy/blue palette, bundled Inter typography, open page frame, consistent gutters and button hierarchy. Recovery context keeps one pale panel; result details use fine separators and local warning treatment. Later is a styled text action. Source inspection and acceptance use secondary buttons, without changing their handlers or acceptance checks. A narrow-screen navigation wrap found during screenshot QA was corrected.
+
+See [the visual QA and before/after screenshots](../../design-qa.md). The interaction changes and validation boundaries above remain in effect.
