@@ -76,6 +76,7 @@ export interface Constraints {
   rules: Rule[]
   reasons?: Rule[]
   references?: Rule[]
+  session?: string
 }
 
 const COUNTED: Record<string, string> = {
@@ -284,11 +285,14 @@ function reasonFor(sentences: string[], i: number): string | undefined {
   return next ? (next[1] ?? next[2]) : undefined
 }
 
+const SCOPED_RE = /^(?:for|in|on)\s+(?!(?:now|this conversation|this session)\b(?!['\u2019]s)|(?:today|the time being|the moment|total|clarity|conclusion|brief|sum|second thought|reflection|addition|general|short|fact|particular|practice|summary|other words|the other hand|the meantime|the end|any case|that case|this case|safety|the record|balance|retrospect|hindsight|my (?:opinion|view|experience))\s*[,;:])[^,;:]+[,;:]/i
+const FOREIGN_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|(?:(?!\p{Script=Latin})\p{L}){2}/u
+
 function replaces(limit: Limit, previous: Limit[]): boolean {
   if (!limit.replacing) return false
   const prior = new RegExp(`(?:instead of|from)\\s+${NUM}(?:\\s*${UNIT})?`, 'i').exec(digitized(limit.sentence))
   if (!prior) return true
-  const unit = prior[2] ?? new RegExp(`${NUM}\\s*${UNIT}`, 'i').exec(limit.shown)?.[2]
+  const unit = prior[2] ?? new RegExp(`${NUM}\\s*${UNIT}`, 'i').exec(digitized(limit.shown))?.[2]
   const scale = measure(unit, limit.sentence)?.factor
   return scale !== undefined && previous.some((p) => p.value === Number(prior[1]) * scale)
 }
@@ -312,8 +316,9 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
       if (entry.author === 'agent') found.push(...suggestedIn(sentence).filter((g) => !found.some((f) => f.index < g.end && g.index < f.end)))
       const reason = reasonFor(sentences, i)
       const source: Rule = { recordId: entry.id, author: entry.author, at: entry.at, session: entry.session, sentence, ...(reason ? { reason } : {}), ...(pasted ? { pasted: true } : {}) }
-      const scoped = /^(?:for|in|on)\s+(?!now\b|this conversation\b)[^,;:]+[,;:]/i.test(sentence)
-      const untranslated = /[\u3400-\u9fff]/.test(sentence)
+      const foreign = FOREIGN_RE.test(sentence)
+      const scoped = found.length > 0 ? foreign || SCOPED_RE.test(sentence) : /^(?:for|in|on)\s+(?!now\b|this conversation\b)[^,;:]+[,;:]/i.test(sentence) && !RULE_RE.test(sentence)
+      const untranslated = found.length === 0 && foreign && !(RULE_RE.test(sentence) && (PLAIN_RULE_RE.test(sentence) || !/[\u3400-\u9fff]/.test(sentence)))
       if (entry.session !== session || scoped || untranslated) {
         if (entry.author === 'you' && (found.length || RULE_RE.test(sentence) || reason || untranslated)) references.push(source)
         if (entry.session === session && entry.author === 'you' && reason) reasons.push(source)
@@ -385,7 +390,7 @@ export function constraints(entries: Entry[], decisions: Record<string, string> 
     }
     open.push(c)
   }
-  return { holds, conflicts: open, suggestions, rules, reasons, references }
+  return { holds, conflicts: open, suggestions, rules, reasons, references, ...(session ? { session } : {}) }
 }
 
 export interface Brief {
@@ -467,12 +472,18 @@ export const checkedRule = (check: string | undefined, rules: Rule[]): Rule | un
 
 const BREAK = /[:;,]\s|\s—\s|\s[-–]\s(?!\d)/g
 
-export const clause = (sentence: string) => (/^(?:never|do not|don['\u2019]t)\s+(?:merge|push|deploy)\s*,/i.test(sentence) ? sentence : sentence.split(BREAK)[0]).replace(/[.!]$/, '')
+const ACTION_LIST = /^(?:(?:please|and|also|so|then|but|just)[\s,]+)*(?:never|do not|don['\u2019]t)\s+(?:merge|push|deploy)(?:\s*,\s*[\w-]+)*(?:\s*,\s*|\s+)(?:or|and|nor)\s+[\w-]+(?:(?:\s*,\s*|\s+)(?:or|nor)\s+[\w-]+)*/i
+const clauseEnd = (sentence: string) => {
+  const list = ACTION_LIST.exec(sentence)?.[0].length ?? 0
+  const at = sentence.slice(list).search(BREAK)
+  return at < 0 ? sentence.length : list + at
+}
+export const clause = (sentence: string) => sentence.slice(0, clauseEnd(sentence)).replace(/[.!]$/, '')
+
+export const notesOf = (c: Pick<Constraints, 'references'>, session?: string) => uniqueRules((c.references ?? []).filter((r) => r.session === session), session ?? '')
 
 export function clauseRest(sentence: string): string {
-  if (clause(sentence) === sentence.replace(/[.!]$/, '')) return ''
-  const at = [...sentence.matchAll(BREAK)][0]
-  return at ? sentence.slice(at.index + at[0].length).trim().replace(/[.!]$/, '') : ''
+  return sentence.slice(clauseEnd(sentence)).replace(/^(?:[:;,]\s|\s—\s|\s[-–]\s)/, '').trim().replace(/[.!]$/, '')
 }
 
 export const checkName = (text: string) => clipped(firstLine(text).replace(/^(?:FAIL(?:ED)?|ERROR|[✗×])[:\s]+/i, ''), 90)
@@ -702,7 +713,7 @@ const KEEPS_OUT = /\b(?:don['\u2019]t|do not|never|not|no|without|avoid|instead 
 const keptOut = (line: string, at: number) => {
   const lead = line.slice(0, at)
   const sentence = lead.slice(lead.match(/^.*[.!?:;]\s/)?.[0].length ?? 0)
-  if (/\b(?:never|do not|don['\u2019]t)\s+(?:merge|push|deploy)(?:\s*,\s*(?:merge|push|deploy))*\s*,?\s*(?:(?:and|or|nor)\s+)?$/i.test(sentence)) return true
+  if (/\b(?:never|do not|don['\u2019]t)\s+(?:merge|push|deploy)(?:\s*,\s*(?:merge|push|deploy))*(?:(?:\s*,\s*(?:(?:or|and|nor)\s+)?|\s+(?:or|and|nor)\s+|\s*)$|(?:\s*,\s*|\s+)(?:or|and|nor)\s+(?:merge|push|deploy)(?:(?:\s*,\s*|\s+)(?:or|nor)\s+(?:merge|push|deploy))*(?:\s*,\s*|\s+)(?:or|nor)\s+$)/i.test(sentence)) return true
   return KEEPS_OUT.test(lead.slice(lead.match(/^.*(?:[.!?:;,]\s|\s—\s)/)?.[0].length ?? 0))
 }
 const suggestions = (line: string) => suggestedIn(line).filter((f) => !keptOut(line, f.index))
@@ -819,27 +830,39 @@ const RELATIVE_RE = /\b(?:once more|one more (?:time|try|attempt|retry)|another 
 export const evidenceAmounts = (...checks: Array<string | undefined>) => checks.flatMap((t) => (t ? [...amounts(t), ...amounts(measured(t) ?? '')].map((a) => a.key) : []))
 
 export const uncheckedAmounts = (text: string, c?: Constraints, known: string[] = []) => {
-  const attempts = c?.holds.some((h) => h.subject === 'attempts')
   const subjects = (t: string) => [...t.matchAll(AMOUNT_RE)].flatMap((m) => measure(m[2], t, m.index, m.index + m[0].length)?.subject ?? [])
-  const held = new Set([...(c?.holds.map((h) => h.subject) ?? []), ...(c?.rules.flatMap((r) => subjects(r.sentence)) ?? [])])
-  const replaced = new Map(c?.holds.flatMap((h) => h.replaced.map((l) => [COUNTS.has(h.subject) ? `${l.value} ${h.subject}` : ms(l.value), lower(l.shown)] as const)) ?? [])
-  const stated = new Set([...known, ...(c?.rules.flatMap((r) => amounts(r.sentence).filter((a) => !keptOut(r.sentence, a.at)).map((a) => a.key)) ?? []), ...(c?.holds.map((h) => (COUNTS.has(h.subject) ? `${h.limit.value} ${h.subject}` : ms(h.limit.value))) ?? [])])
-  const ruled = new Set(c?.rules.flatMap((r) => amounts(r.sentence).filter((a) => keptOut(r.sentence, a.at)).map((a) => a.key)) ?? [])
+  const limitKey = (f: { subject: string; value: number }) => (COUNTS.has(f.subject) ? `${f.value} ${f.subject}` : ms(f.value))
+  const noteLimits = (c ? notesOf(c, c.session) : []).flatMap((r) => limitsIn(r.sentence))
+  const ruled = new Set((c?.rules ?? []).flatMap((r) => subjects(r.sentence)))
+  const open = new Set([...noteLimits.map((f) => f.subject), ...(c?.conflicts.filter((x) => !x.decided).map((x) => x.subject) ?? [])])
+  const attempts = c?.holds.some((h) => h.subject === 'attempts') || open.has('attempts')
+  const opened = (subject: string) => open.has(subject) || (SAME_SETTING[subject] ?? []).some((s) => open.has(s)) || ((subject === 'times' || subject === 'retries') && open.has('attempts'))
+  const lone = (f: Found) => noteLimits.every((g) => g.subject !== f.subject || limitKey(g) === limitKey(f))
+  const own = new Set([...noteLimits.filter((f) => lone(f) && !c?.holds.some((h) => h.subject === f.subject) && !ruled.has(f.subject) && !c?.conflicts.some((x) => !x.decided && x.subject === f.subject)), ...(c?.holds.filter((h) => !open.has(h.subject)).map((h) => ({ subject: h.subject, value: h.limit.value })) ?? [])].map((f) => `${f.subject} ${limitKey(f)}`))
+  const held = new Set([...(c?.holds.map((h) => h.subject) ?? []), ...open, ...ruled])
+  const replaced = new Map(c?.holds.flatMap((h) => h.replaced.map((l) => [limitKey({ subject: h.subject, value: l.value }), lower(l.shown)] as const)) ?? [])
+  const stated = new Set([...known, ...(c?.rules.filter((r) => !SCOPED_RE.test(r.sentence) && !FOREIGN_RE.test(r.sentence)).flatMap((r) => amounts(r.sentence).filter((a) => !keptOut(r.sentence, a.at)).map((a) => a.key)) ?? [])])
+  const heldKeys = new Set(c?.holds.map((h) => limitKey({ subject: h.subject, value: h.limit.value })) ?? [])
+  const said = (subject: string, key: string) => own.has(`${subject} ${key}`) || known.includes(key) || (!opened(subject) && stated.has(key))
+  const kept = new Set(c?.rules.flatMap((r) => amounts(r.sentence).filter((a) => keptOut(r.sentence, a.at)).map((a) => a.key)) ?? [])
   return text.split('\n').flatMap((line, i) => {
-    const read = [...limitsIn(line), ...suggestedIn(line)]
-    const restated = (at: number, amount: string) => keptOut(line, at) && ruled.has(amounts(amount)[0]?.key ?? '')
+    const limits = limitsIn(line)
+    const read = [...limits, ...suggestedIn(line)]
+    const restated = (at: number, amount: string) => keptOut(line, at) && kept.has(amounts(amount)[0]?.key ?? '')
     const overlapsRead = (at: number, end: number) => read.some((f) => at < f.end && f.index < end)
     const placed = [...digitized(line).matchAll(AMOUNT_RE)].filter((m) => {
       const unit = measure(m[2], line, m.index, m.index + m[0].length)
-      return unit && held.has(unit.subject) && !stated.has(amounts(m[0])[0]?.key ?? '') && !overlapsRead(m.index, m.index + m[0].length) && !restated(m.index, m[0])
+      return unit && (held.has(unit.subject) || opened(unit.subject)) && !said(unit.subject, amounts(m[0])[0]?.key ?? '') && !overlapsRead(m.index, m.index + m[0].length) && !restated(m.index, m[0])
     })
     const found = [
       ...placed.map((m) => ({ at: m.index, end: m.index + m[0].length, shown: line.slice(m.index, m.index + m[0].length), was: replaced.get(amounts(m[0])[0]?.key ?? '') })),
       ...[...line.matchAll(SPELLED_RE)]
-        .filter((m) => !overlapsRead(m.index, m.index + m[0].length) && !stated.has(amounts(m[0])[0]?.key ?? '') && !restated(m.index, m[0]))
+        .filter((m) => !overlapsRead(m.index, m.index + m[0].length) && !stated.has(amounts(m[0])[0]?.key ?? '') && !heldKeys.has(amounts(m[0])[0]?.key ?? '') && !restated(m.index, m[0]))
         .filter((m) => !/(?:requests?|lines?|files?|items?)$/i.test(m[0]) && !(ORDINAL.test(m[0]) && !/\ban?\s+$/i.test(line.slice(0, m.index))))
         .map((m) => ({ at: m.index, end: m.index + m[0].length, shown: m[0] })),
-      ...(attempts ? limitsIn(line).filter((f) => (f.subject === 'times' || f.subject === 'retries') && !(c && beyondCap(f, c))).map((f) => ({ at: f.index, end: f.end, shown: f.shown, count: f.value })) : []),
+      ...read.filter((f) => opened(f.subject) && !(attempts && (f.subject === 'times' || f.subject === 'retries')) && !said(f.subject, limitKey(f))).map((f) => ({ at: f.index, end: f.end, shown: f.shown })),
+      ...loosenedIn(line).filter((f) => opened(f.subject)).map((f) => ({ at: f.index, end: f.end, shown: f.shown })),
+      ...(attempts ? read.filter((f) => (f.subject === 'times' || f.subject === 'retries') && !(c && beyondCap(f, c))).map((f) => ({ at: f.index, end: f.end, shown: f.shown, count: f.value })) : []),
       ...(attempts ? [...line.matchAll(RELATIVE_RE)].map((m) => ({ at: m.index, end: m.index + m[0].length, shown: m[0] })) : []),
     ].sort((a, b) => a.at - b.at)
     return found
@@ -1286,7 +1309,7 @@ export function repairPacket(input: RepairInput): string {
   const failed = input.failure
     ? [`- ${input.failureBefore ? 'Recorded failure from before the last repair' : 'Latest recorded failure'} (${input.failure.session === session ? 'this session' : input.failure.session}, ${stamp(input.failure.at)}): "${clipped(input.failure.text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 2).join(' · '))}". Evidence to check, not my review or acceptance of the changes.`]
     : []
-  const sourceNotes = (c.references ?? []).filter((r) => r.session === session)
+  const sourceNotes = notesOf(c, session)
   return [
     `[devbox repair ${id}]`,
     `Purpose: repair. Make the changes below in ${cwd}. You may run the tests needed to check them. Do not merge, push, or deploy.`,

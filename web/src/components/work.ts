@@ -67,7 +67,9 @@ function stateOf(insight: AgentInsight, summary: ReturnSummary | undefined, fail
   return { status, action, also }
 }
 
-export const attentionStamp = (insight: AgentInsight, summary?: ReturnSummary) => JSON.stringify([insight.turnAt, insight.summaryAt, insight.state, insight.waitingFor, summary?.activity, summary?.repair, Boolean(summary?.draft)])
+const insightStamp = (insight: AgentInsight) => [insight.turnAt, insight.summaryAt, insight.state, insight.waitingFor]
+
+export const attentionStamp = (insight: AgentInsight, summary?: ReturnSummary) => JSON.stringify([...insightStamp(insight), summary?.activity, summary?.repair, Boolean(summary?.draft)])
 
 export function homeItems(
   sessions: Session[],
@@ -77,6 +79,7 @@ export function homeItems(
   returns: Record<string, ReturnSummary>,
   briefs: Record<string, BriefResponse>,
   deferred: Record<string, string> = {},
+  summariesRead = true,
 ): HomeItem[] {
   const found: HomeItem[] = []
   const own = new Set<string>()
@@ -91,7 +94,8 @@ export function homeItems(
     const mine = lane === 'blocked' || FOR_YOU.has(summary?.repair ?? '')
     const failing = brief?.brief.failing
     const failed = lane !== 'working' && !PENDING.has(summary?.repair ?? '') && Boolean(failing) && (brief?.brief.leftAt === undefined || (failing?.at ?? 0) > brief.brief.leftAt)
-    const attention: Attention | null = deferred[session.name] === attentionStamp(insight, summary)
+    const stamp = deferred[session.name]
+    const attention: Attention | null = stamp !== undefined && (summariesRead ? stamp === attentionStamp(insight, summary) : stamp.startsWith(`${JSON.stringify(insightStamp(insight)).slice(0, -1)},`))
       ? 'later'
       : mine || failed
         ? 'needs'

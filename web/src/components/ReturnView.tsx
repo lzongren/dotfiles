@@ -45,6 +45,8 @@ import {
   keptOthers,
   measured,
   headRules,
+  uniqueRules,
+  notesOf,
   holdingOf,
   namedRule,
   othersSince,
@@ -341,13 +343,14 @@ function RecoveryBrief({ brief, c, session, now, onOpen, after = [], compact = f
   const rules = allRules ? unique : head
   const why = brief.why
   const whyShown = why && (head.some((r) => r.sentence === why.sentence && r.reason === why.reason) || live.some((h) => h.replaced.length > 0 && h.limit.reason !== undefined && h.limit.reason === why.reason))
+  const notes = [...notesOf(c, session), ...uniqueRules((c.references ?? []).filter((r) => r.session !== session), session)]
   const holds = (
     <>
             {live.length === 0 && c.conflicts.length === 0 && rules.length === 0 ? <p className="lane-empty">{c.rules.length ? 'No limits found.' : 'No limits automatically interpreted. This does not mean there are no constraints.'}</p> : null}
-            {c.references?.length ? <details className="return-preview" open={live.length === 0 && c.references.some((r) => r.session === session) || undefined}>
-              <summary>{c.references.length} source note{c.references.length === 1 ? '' : 's'} outside automatic checks</summary>
+            {notes.length ? <details className="return-preview" open={live.length === 0 && notes.some((r) => r.session === session) || undefined}>
+              <summary>{notes.length} source note{notes.length === 1 ? '' : 's'} outside automatic checks</summary>
               <p>Original messages, not a resolved set of current constraints. Related-session notes are reference only and stay out of the repair. Notes from this conversation are included verbatim; their scope and replacement order have not been interpreted.</p>
-              {c.references.map((r, i) => <blockquote key={`${r.recordId}:${i}`}><p>{r.sentence}</p><small>{by(r)}</small><button type="button" className="link" onClick={() => onOpen(r.session)}>Open source conversation</button></blockquote>)}
+              {notes.map((r, i) => <blockquote key={`${r.recordId}:${i}`}><p>{r.sentence}</p><small>{by(r)}</small><button type="button" className="link" onClick={() => onOpen(r.session)}>Open source conversation</button></blockquote>)}
             </details> : null}
             <ul className="holds-list">
               {live.map((h) => (

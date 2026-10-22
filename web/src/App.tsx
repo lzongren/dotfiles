@@ -131,6 +131,7 @@ export function App() {
     } catch { return {} }
   })
   const [returns, setReturns] = useState<Record<string, ReturnSummary>>({})
+  const [returnsRead, setReturnsRead] = useState(false)
   const [briefs, setBriefs] = useState<Record<string, { mark: number; left: number; visit: number; data?: BriefResponse; failed?: number }>>({})
   const [visits, setVisits] = useState<Record<string, number>>(() => {
     try {
@@ -215,14 +216,14 @@ export function App() {
 
   const refreshReturns = useCallback(() => {
     void getReturnSummary().then((r) => {
-      if (r.kind === 'ok') setReturns(withAsks(r.data.sessions))
+      if (r.kind !== 'ok') return
+      setReturns(withAsks(r.data.sessions))
+      setReturnsRead(true)
     })
   }, [])
 
   const refreshInsights = useCallback(async () => {
-    void getReturnSummary().then((r) => {
-      if (r.kind === 'ok') setReturns(withAsks(r.data.sessions))
-    })
+    refreshReturns()
     const result = await getInsights()
     const at = Date.now()
     if (result.kind === 'ok' && Array.isArray(result.data.agents)) {
@@ -234,7 +235,7 @@ export function App() {
       setInsightsHealth((prev) => failed(prev, result, at))
     }
     return result.kind !== 'unauthorized'
-  }, [])
+  }, [refreshReturns])
 
   const sessionsPoll = usePoll(refresh, SESSIONS_POLL_MS)
   const insightsPoll = usePoll(refreshInsights, INSIGHTS_POLL_MS)
@@ -303,7 +304,7 @@ export function App() {
   )
   const known = useMemo(() => Object.fromEntries(Object.entries(briefs).flatMap(([name, b]) => (b.data ? [[name, b.data]] : []))), [briefs])
   const deferredHere = Object.fromEntries((data?.sessions ?? []).flatMap((s) => deferred[`${host}:${s.name}`] ? [[s.name, deferred[`${host}:${s.name}`]]] : []))
-  const candidates = homeItems(data?.sessions ?? [], insights, seenAt, now, returns, known, deferredHere)
+  const candidates = homeItems(data?.sessions ?? [], insights, seenAt, now, returns, known, deferredHere, returnsRead)
   const pickups = [...candidates.filter((i) => i.attention !== 'later').slice(0, PICKUPS), ...candidates.filter((i) => i.attention === 'later')]
     .map((i) => (briefs[i.session.name] ? i : { ...i, reading: true }))
   const groups: HomeItem[] = [
@@ -531,7 +532,7 @@ export function App() {
           onClose={closeTerminal}
         />
         <div className="overview-wrap" hidden={activeTab !== null || view !== 'now' || pickup !== null}>
-          <Overview onLater={setLater} sessions={data.sessions} insights={insights} now={now} seenAt={seenAt} pickups={pickups} visited={Object.keys(visits)} covered={covered} onOpen={(name) => go(name, 'terminal')} onPickUp={(name) => (pickups.find((i) => i.session.name === name)?.action === 'Answer the question' ? go(name, 'terminal') : openPickup(name))} onAll={() => show('sessions')} host={host} connected={sessionsHealth.failure === null} returns={returns} />
+          <Overview onLater={returnsRead ? setLater : undefined} sessions={data.sessions} insights={insights} now={now} seenAt={seenAt} pickups={pickups} visited={Object.keys(visits)} covered={covered} onOpen={(name) => go(name, 'terminal')} onPickUp={(name) => (pickups.find((i) => i.session.name === name)?.action === 'Answer the question' ? go(name, 'terminal') : openPickup(name))} onAll={() => show('sessions')} host={host} connected={sessionsHealth.failure === null} returns={returns} />
         </div>
         {view === 'sessions' ? (
           <div className="overview-wrap" hidden={activeTab !== null}>

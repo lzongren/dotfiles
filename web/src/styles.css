@@ -4595,6 +4595,7 @@ code.session-chip {
   .pickup-actions {
     flex-direction: row;
     flex-wrap: wrap;
+    align-items: center;
     gap: 16px;
   }
 

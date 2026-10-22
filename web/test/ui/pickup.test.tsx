@@ -373,6 +373,13 @@ describe('choosing when to return', () => {
     expect(homeItems([s], new Map([['docs', a]]), () => NOW / 1000, NOW, { docs: { draft: false, asking: 0, answered: 0, looked: NOW / 1000 } }, {}, deferred)[0].attention).toBe('later')
     expect(items(0, { ...a, turnAt: sec(1) })[0].attention).toBe('needs')
     expect(homeItems([s], new Map([['docs', a]]), () => 0, NOW, {}, {}, {})[0].attention).toBe('needs')
+    const sent = { docs: attentionStamp(a, { draft: false, repair: 'replied', asking: 0, answered: 0 }) }
+    expect(homeItems([s], new Map([['docs', a]]), () => 0, NOW, {}, {}, sent, false)[0].attention).toBe('later')
+    expect(homeItems([s], new Map([['docs', { ...a, turnAt: sec(1) }]]), () => 0, NOW, {}, {}, sent, false)[0].attention).toBe('needs')
+    const held = { docs: { draft: false, repair: 'held' as const, asking: 0, answered: 0 } }
+    expect(homeItems([s], new Map([['docs', a]]), () => 0, NOW, held, {}, { docs: attentionStamp(a) })[0].attention).toBe('needs')
+    expect(homeItems([s], new Map([['docs', a]]), () => 0, NOW, held, {}, { docs: attentionStamp(a) }, false)[0].attention).toBe('later')
+    expect(homeItems([s], new Map([['docs', a]]), () => 0, NOW, {}, {}, sent)[0].attention).toBe('needs')
   })
 
   it('shows deferred items collapsed and provides an explicit way to bring them back', () => {
