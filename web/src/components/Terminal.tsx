@@ -72,6 +72,7 @@ export function TerminalPane({
   reconnectSignal = 0,
   tools,
   side,
+  note,
   onSide,
   ref,
 }: {
@@ -82,6 +83,7 @@ export function TerminalPane({
   reconnectSignal?: number
   tools?: ReactNode
   side?: ReactNode
+  note?: ReactNode
   onSide?: () => void
   ref?: Ref<TerminalHandle>
 }) {
@@ -442,6 +444,7 @@ export function TerminalPane({
         ) : null}
         {tools}
       </div>
+      {note}
       <div className="terminal-body">
         <div ref={containerRef} className="terminal-screen" />
         {side}

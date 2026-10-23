@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FilePreview, indentJson, parseDelimited } from '../../src/components/FilePreview'
-import { Overview } from '../../src/components/Overview'
+import { ArtifactsPage } from '../../src/components/ArtifactsPage'
+import { FileList, FilePreview, indentJson, parseDelimited } from '../../src/components/FilePreview'
 import type { AgentInsight, FileTouch, FileView, Session } from '../../src/shared/types'
 
 const NOW = 1_800_000_000_000
@@ -69,37 +69,32 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderOverview() {
-  return render(
-    <Overview sessions={[session('api'), session('web')]} insights={INSIGHTS} now={NOW} seenAt={() => sec(1000)} onOpen={vi.fn()} onSeen={vi.fn()} />,
-  )
+function renderArtifacts() {
+  return render(<ArtifactsPage sessions={[session('api'), session('web')]} insights={INSIGHTS} now={NOW} works={[]} onOpen={vi.fn()} onBack={vi.fn()} />)
 }
 
+const preview = (name: string) => fireEvent.click(screen.getByRole('button', { name: `Preview ${name}` }))
+
 describe('agent files', () => {
-  it('lists recent live files across sessions, and counts the files of a session in its details', () => {
-    renderOverview()
-    const panel = within(screen.getByRole('complementary', { name: 'session details' }))
-    expect(panel.getAllByRole('button').map((b) => b.textContent)).toEqual(['shot.png', 'plan.md', 'x.ts'])
-    fireEvent.click(screen.getByRole('button', { name: 'Ship the API' }))
-    expect(within(screen.getByRole('article', { name: 'api details' })).getByRole('heading', { name: 'Files 3' })).toBeInTheDocument()
+  it('lists live files across sessions, newest first', () => {
+    renderArtifacts()
+    expect(screen.getAllByRole('button', { name: /^Preview / }).map((b) => b.getAttribute('aria-label'))).toEqual(['Preview shot.png', 'Preview plan.md', 'Preview x.ts'])
   })
 
-  it('lists the selected session files relative to its folder and leaves gone ones unclickable', () => {
-    renderOverview()
-    fireEvent.click(screen.getByRole('button', { name: 'Ship the API' }))
-    const details = within(screen.getByRole('article', { name: 'api details' }))
+  it('lists a session\'s files relative to its folder and leaves gone ones unclickable', () => {
+    render(<FileList files={(INSIGHTS.get('api')?.files ?? []).map((f) => ({ ...f, session: 'api', cwd: '/home/me/work/api' }))} now={NOW} onPick={vi.fn()} />)
+    const details = screen
     expect(details.getByRole('button', { name: 'plan.md' }).nextSibling).toHaveTextContent('docs')
     expect(details.queryByRole('button', { name: 'old.py' })).toBeNull()
-    expect(details.getByRole('button', { name: 'x.ts' }).nextSibling).toHaveTextContent(/^…\/deep\/er$/)
+    expect(details.getByRole('button', { name: 'x.ts' }).nextSibling).toHaveTextContent(/^in …\/deep\/er\/$/)
     expect(details.getByText('old.py').closest('li')).toHaveTextContent('gone')
   })
 
   it('previews a text file with its path, opens the laptop copy, and copies the text or the path', async () => {
     const writeText = vi.fn(async () => undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
-    renderOverview()
-    fireEvent.click(screen.getByRole('button', { name: 'Ship the API' }))
-    fireEvent.click(within(screen.getByRole('article', { name: 'api details' })).getByRole('button', { name: 'plan.md' }))
+    renderArtifacts()
+    preview('plan.md')
     const dialog = within(screen.getByRole('dialog', { name: 'plan.md' }))
     expect(await dialog.findByRole('heading', { name: 'The plan' })).toBeInTheDocument()
     expect(calls[0].url).toBe('/api/file?session=api&path=%2Fhome%2Fme%2Fwork%2Fapi%2Fdocs%2Fplan.md')
@@ -198,8 +193,8 @@ describe('agent files', () => {
   })
 
   it('shows images inline, and no laptop button for a file read from the host', async () => {
-    renderOverview()
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'shot.png' }))
+    renderArtifacts()
+    preview('shot.png')
     const dialog = within(screen.getByRole('dialog', { name: 'shot.png' }))
     expect(await dialog.findByRole('img', { name: 'shot.png' })).toHaveAttribute('src', 'data:image/png;base64,AAAA')
     expect(dialog.getByText(/read from host/)).toBeInTheDocument()
@@ -209,8 +204,8 @@ describe('agent files', () => {
 
   it('says why a file cannot be shown', async () => {
     delete views['/tmp/shot.png']
-    renderOverview()
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'shot.png' }))
+    renderArtifacts()
+    preview('shot.png')
     expect(await screen.findByRole('alert')).toHaveTextContent('No such file or directory')
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
@@ -220,8 +215,8 @@ describe('agent files', () => {
     vi.mocked(fetch).mockImplementation(async () =>
       down ? Response.json({ error: 'remote_unreachable', message: 'host unreachable' }, { status: 502 }) : Response.json(views['/tmp/shot.png']),
     )
-    renderOverview()
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'shot.png' }))
+    renderArtifacts()
+    preview('shot.png')
     const dialog = within(screen.getByRole('dialog', { name: 'shot.png' }))
     expect(await dialog.findByRole('alert')).toHaveTextContent("Can't reach the host to read this file. Check your VPN or proxy sign-in, then try again.")
     down = false
@@ -230,22 +225,12 @@ describe('agent files', () => {
     expect(dialog.queryByRole('alert')).toBeNull()
   })
 
-  it('keeps overview keys from acting behind the open preview', async () => {
-    renderOverview()
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'shot.png' }))
-    const dialog = screen.getByRole('dialog', { name: 'shot.png' })
-    await within(dialog).findByRole('img', { name: 'shot.png' })
-    fireEvent.keyDown(within(dialog).getByRole('img', { name: 'shot.png' }), { key: 'j' })
-    fireEvent.keyDown(document.body, { key: 'j' })
-    expect(screen.queryByRole('article')).toBeNull()
-  })
-
   it('says when a file that could run is only shown in its folder', async () => {
     vi.mocked(fetch).mockImplementation(async (url) =>
       String(url).startsWith('/api/file/open') ? Response.json({ opened: '/Users/me/x.command', revealed: true }) : Response.json(views['/home/me/work/api/docs/plan.md']),
     )
-    renderOverview()
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
+    renderArtifacts()
+    preview('plan.md')
     fireEvent.click(await screen.findByRole('button', { name: 'Open on laptop' }))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('shown in its folder'))
   })
@@ -386,14 +371,14 @@ describe('a quick look that keeps up with the agent', () => {
     const onDock = vi.fn()
     const overview = (attachable: boolean) =>
       render(
-        <Overview sessions={[{ ...session('api'), attachable }]} insights={INSIGHTS} now={NOW} seenAt={() => sec(1000)} onOpen={vi.fn()} onSeen={vi.fn()} onDock={onDock} />,
+        <ArtifactsPage sessions={[{ ...session('api'), attachable }]} insights={INSIGHTS} now={NOW} works={[]} onOpen={vi.fn()} onBack={vi.fn()} onDock={onDock} />,
       )
     overview(false)
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
+    preview('plan.md')
     expect(within(screen.getByRole('dialog', { name: 'plan.md' })).queryByRole('button', { name: 'Open beside terminal' })).toBeNull()
     cleanup()
     overview(true)
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'session details' })).getByRole('button', { name: 'plan.md' }))
+    preview('plan.md')
     const dialog = within(screen.getByRole('dialog', { name: 'plan.md' }))
     await dialog.findByRole('heading', { name: 'The plan' })
     fireEvent.click(dialog.getByRole('button', { name: 'Open beside terminal' }))

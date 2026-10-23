@@ -35,6 +35,12 @@ case "${1:-} ${2:-}" in
       crash)
         kill -SEGV $$
         ;;
+      beside)
+        cat "$(dirname "$0")/../fixtures/status-raw.txt"
+        echo 'proj-a|0|1791741000|0|claude||/home/me/dotfiles/existing-proj'
+        echo 'at-root|0|1791741000|0|zsh||/home/me/dotfiles'
+        echo 'escapes|0|1791741000|0|zsh||/home/me/dotfiles/../../etc'
+        ;;
       *)
         cat "$(dirname "$0")/../fixtures/status-raw.txt"
         ;;

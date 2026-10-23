@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "now": 1760259600,
+  "sessions": [
+    {
+      "name": "cc-demo",
+      "pane": "%1",
+      "cmd": "claude",
+      "agent": "claude",
+      "path": "/home/me/work/demo",
+      "repo": "/home/me/work/demo",
+      "branch": "fix/retry",
+      "registry": { "sessionId": "s1", "status": "idle" },
+      "transcript": { "ino": 11, "size": 900, "last": "a1" },
+      "records": [
+        { "id": "u1", "kind": "decision", "at": 1760000000, "text": "At most 2 attempts, because upstream is rate limiting.", "turn": 1 },
+        { "id": "a1", "kind": "agent", "at": 1760000060, "text": "Budget done. CI fails.", "turn": 1, "final": true }
+      ],
+      "turnEnds": [1760000070],
+      "partial": false
+    }
+  ]
+}

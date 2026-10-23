@@ -126,7 +126,7 @@ describe('artifacts in a session tab', () => {
     const insights = new Map([['api', { session: 'api', agent: 'claude' as const, state: 'ready' as const, commits: 0, artifacts: [], files }]])
     render(<TerminalTabs tabs={['api']} active="api" sessions={[]} insights={insights} now={NOW} onSelect={vi.fn()} onClose={vi.fn()} />)
     fireEvent.click(within(screen.getByTestId('pane-api')).getByRole('button', { name: /Artifacts/ }))
-    expect(screen.getByRole('button', { name: 'notes.md' }).nextSibling).toHaveTextContent(/^\/tmp$/)
+    expect(screen.getByRole('button', { name: 'notes.md' }).nextSibling).toHaveTextContent(/^in \/tmp\/$/)
   })
 
   it('says when there is nothing yet, and has no toggle for a plain shell', () => {

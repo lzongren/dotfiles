@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { headline, SessionList, sessionSummary } from '../../src/components/SessionList'
 import type { AgentInsight, Session } from '../../src/shared/types'
@@ -164,9 +164,19 @@ describe('SessionList', () => {
     expect(idle.getByRole('button', { name: /^old/ })).toHaveAttribute('title', expect.stringContaining('attached in 2 terminals'))
   })
 
-  it('says so when nothing needs you', () => {
+  it('puts a session the Now page says needs you under Needs you, with its reason', () => {
+    render(<SessionList sessions={[session({ name: 'fix' }), session({ name: 'other' })]} now={NOW * 1000} active={null} onAttach={vi.fn()} needs={new Map([['fix', 'Repair replied, review it']])} />)
+    const needs = within(screen.getByRole('group', { name: /Needs you/ }))
+    expect(needs.getByRole('button', { name: /^fix/ })).toHaveTextContent('Repair replied, review it')
+    expect(needs.queryByRole('button', { name: /^other/ })).toBeNull()
+  })
+
+  it('says so when nothing needs you, unless it lists only the sessions outside the works beside it', () => {
     renderList()
     expect(screen.getAllByRole('heading')[0]).toHaveTextContent('Nothing needs you')
+    cleanup()
+    render(<SessionList sessions={ROWS} now={NOW * 1000} active={null} onAttach={vi.fn()} others />)
+    expect(screen.queryByText('Nothing needs you')).toBeNull()
   })
 
   it('attaches on click, but not for a name the web cannot use', () => {

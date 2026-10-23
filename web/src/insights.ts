@@ -75,12 +75,6 @@ export function markSeen(names: string[], mark: (name: string) => number, nowMs:
   write(stored)
 }
 
-export function projectOf(path: string): string {
-  const home = /^(?:\/local)?\/home\/[^/]+|^\/Users\/[^/]+/.exec(path)
-  if (!home) return `/${path.split('/').filter(Boolean)[0] ?? ''}`
-  return path.slice(home[0].length).split('/').filter(Boolean)[0] ?? '~'
-}
-
 export function artifactName(artifact: Pick<Artifact, 'label' | 'url'>): string {
   const pull = /\/pull\/(\d+)/.exec(artifact.url)
   if (pull) return `PR #${pull[1]}`
@@ -145,15 +139,12 @@ export function ledger(
 export function plain(text: string): string {
   const bare = /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+$/gm
   const table = /\|\s*:?-{3,}:?\s*\|/.test(text) || /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+$/m.test(text)
-  const flat = table ? text.replace(bare, ' ').replace(/(\|\s*:?-{3,}:?\s*)+\|?/g, ' ').replace(/\s*\|\s*/g, ' ') : text
+  const untagged = text.replace(/^\s*\[devbox result [^\]]*\]\s*/, '')
+  const flat = table ? untagged.replace(bare, ' ').replace(/(\|\s*:?-{3,}:?\s*)+\|?/g, ' ').replace(/\s*\|\s*/g, ' ') : untagged
   return flat
     .split(/(`[^`]+`)/)
     .map((part, i) => (i % 2 ? part.slice(1, -1) : part.replace(/\*\*(.+?)\*\*/g, '$1')))
     .join('')
     .replace(/\s{2,}/g, ' ')
     .trim()
-}
-
-export function modelName(model: string): string {
-  return model.replace(/^claude-/, '').replace(/-\d{8}$/, '')
 }

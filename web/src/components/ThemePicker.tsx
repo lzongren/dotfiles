@@ -3,12 +3,12 @@ import { getTheme } from '../api'
 import { useDismiss } from '../dismiss'
 import type { Palette } from '../shared/types'
 import { Icon } from './Icon'
-import { applyLook, DEVBOX, ghosttyLook, MEDIA, mediaPrefs, PRESETS, savedLook, saveLook, uiTokens, type Look } from '../theme'
+import { applyOrFallback, ghosttyLook, lookTokens, MEDIA, mediaPrefs, mediaQuery, onMedia, paletteFor, PRESETS, savedLook, saveLook, type Look } from '../theme'
 
 function previews(look: Look, more: boolean) {
   return (['dark', 'light'] as const).flatMap((mode) => {
-    const p = mode === 'light' ? look.lightPalette : look.palette
-    return p ? [{ mode, p, tokens: uiTokens(p, more, look.gradient?.[mode], look.accent?.[mode]) }] : []
+    const p = paletteFor(look, mode)
+    return p ? [{ mode, p, tokens: lookTokens(look, mode, more) }] : []
   })
 }
 
@@ -37,7 +37,7 @@ export function ThemePicker() {
   const [prefs, setPrefs] = useState(mediaPrefs)
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1)
   const [open, setOpen] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const [outcome, setOutcome] = useState<ReturnType<typeof applyOrFallback>>('applied')
   const gallery = useId()
   const dismiss = useDismiss(open, () => setOpen(false), '.theme-picker')
 
@@ -56,7 +56,7 @@ export function ThemePicker() {
       }
       const fresh = ghosttyLook(result.data.ghostty)
       setGhostty(fresh)
-      if (saved === null || saved.id === 'ghostty') {
+      if (saved?.id === 'ghostty') {
         saveLook(fresh)
         setSelected(fresh)
       }
@@ -67,35 +67,21 @@ export function ThemePicker() {
   }, [])
 
   useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    const queries = MEDIA.map((q) => window.matchMedia(q))
     const update = () => setPrefs(mediaPrefs())
-    for (const query of queries) query.addEventListener('change', update)
-    return () => {
-      for (const query of queries) query.removeEventListener('change', update)
-    }
+    const stops = MEDIA.flatMap((q) => {
+      const query = mediaQuery(q)
+      return query ? [onMedia(query, update)] : []
+    })
+    return () => stops.forEach((stop) => stop())
   }, [])
 
   useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    const query = window.matchMedia(`(resolution: ${dpr}dppx)`)
-    const update = () => setDpr(window.devicePixelRatio || 1)
-    query.addEventListener('change', update)
-    return () => query.removeEventListener('change', update)
+    const query = mediaQuery(`(resolution: ${dpr}dppx)`)
+    return query ? onMedia(query, () => setDpr(window.devicePixelRatio || 1)) : undefined
   }, [dpr])
 
   useEffect(() => {
-    try {
-      applyLook(selected, prefs)
-      setFailed(false)
-    } catch {
-      setFailed(true)
-      try {
-        applyLook(DEVBOX, prefs)
-      } catch {
-        void 0
-      }
-    }
+    setOutcome(applyOrFallback(selected, prefs))
   }, [selected, prefs, selected.cellHeight?.unit === 'px' ? dpr : 0])
 
   const looks = useMemo(() => (ghostty ? [ghostty, ...PRESETS] : PRESETS), [ghostty])
@@ -106,7 +92,7 @@ export function ThemePicker() {
       <button
         type="button"
         className="theme-toggle"
-        title={`Theme: ${selected.label}${failed ? " (couldn't apply)" : ''}`}
+        title={`Theme: ${selected.label}${outcome !== 'applied' ? " (couldn't apply)" : ''}`}
         aria-expanded={open}
         aria-controls={open ? gallery : undefined}
         onClick={() => setOpen(!open)}
@@ -146,9 +132,9 @@ export function ThemePicker() {
               )
             })}
           </div>
-          {failed ? (
+          {outcome !== 'applied' ? (
             <p className="theme-note" role="status">
-              {current} couldn't be applied here, so the default colors are showing.
+              {current} couldn't be applied here{outcome === 'fallback' ? ', so the default colors are showing' : ''}.
             </p>
           ) : null}
           <p className="theme-note">Light or dark follows your system.</p>

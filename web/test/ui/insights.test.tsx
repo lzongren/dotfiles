@@ -9,9 +9,7 @@ import {
   ledger,
   loadSeen,
   markSeen,
-  modelName,
   plain,
-  projectOf,
   rankArtifacts,
 } from '../../src/insights'
 
@@ -134,14 +132,6 @@ describe('seen store', () => {
 })
 
 describe('labels', () => {
-  it('groups by the first folder under home, or home itself', () => {
-    expect(projectOf('/local/home/me/work/1010_Release')).toBe('work')
-    expect(projectOf('/home/me/visa/NIW')).toBe('visa')
-    expect(projectOf('/Users/me/code/app')).toBe('code')
-    expect(projectOf('/home/me')).toBe('~')
-    expect(projectOf('/srv/data/x')).toBe('/srv')
-  })
-
   it('names artifacts by what they are', () => {
     expect(artifactName({ label: 'PR', url: 'https://github.com/o/r/pull/31' })).toBe('PR #31')
     expect(artifactName({ label: 'CR', url: 'https://code.example.com/reviews/CR-42' })).toBe('CR-42')
@@ -201,11 +191,7 @@ describe('labels', () => {
     expect(plain('Runs: | Stage | Run |\n|---|---|\n| Gamma | **3/3** |, see `CR-9`')).toBe('Runs: Stage Run Gamma 3/3 , see CR-9')
     expect(plain('edited `__init__.py`; guard with a || b')).toBe('edited __init__.py; guard with a || b')
     expect(plain('use `x**2` and `y**3`')).toBe('use x**2 and y**3')
+    expect(plain('[devbox result r-1] Fixed it.')).toBe('Fixed it.')
     expect(plain('a | b\n--- | ---\n1 | 2')).toBe('a b 1 2')
-  })
-
-  it('shortens model ids', () => {
-    expect(modelName('claude-opus-4-1-20250805')).toBe('opus-4-1')
-    expect(modelName('gpt-codex-x')).toBe('gpt-codex-x')
   })
 })

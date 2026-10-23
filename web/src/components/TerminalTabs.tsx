@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type DragEvent } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
 import { explain, uploadFile } from '../api'
 import { useDismiss } from '../dismiss'
 import { heardAt, isFresh, openableCount, plain, shownArtifacts } from '../insights'
@@ -6,7 +6,7 @@ import type { AgentInsight, Session } from '../shared/types'
 import { UPLOAD_MAX, UPLOAD_TOO_LARGE } from '../shared/validate'
 import { ago } from '../time'
 import { FileList, FilePreview, type FileRef } from './FilePreview'
-import { Icon, StateIcon, toneOf, type Tone } from './Icon'
+import { Icon, StateIcon, toneOf, type NeedTone, type Tone } from './Icon'
 import { ArtifactList } from './Overview'
 import { headline, sessionSummary } from './SessionList'
 import { TerminalPane, type TerminalHandle } from './Terminal'
@@ -27,6 +27,7 @@ export interface TabCounts {
   needs: number
   working: number
   fresh: number
+  tone?: NeedTone
 }
 
 const undated = (name: string) => name.replace(/^\d{3,4}_(?=.)/, '')
@@ -165,8 +166,10 @@ export function TerminalTabs({
   insights,
   now,
   counts = { needs: 0, working: 0, fresh: 0 },
+  home = 'Overview',
   seenAt = () => Infinity,
   dock = null,
+  banner,
   onSelect,
   onClose,
 }: {
@@ -178,8 +181,10 @@ export function TerminalTabs({
   insights: Map<string, AgentInsight>
   now: number
   counts?: TabCounts
+  home?: string
   seenAt?: (name: string) => number
   dock?: FileRef | null
+  banner?: (name: string) => ReactNode
   onSelect: (name: string | null) => void
   onClose: (name: string) => void
 }) {
@@ -319,7 +324,7 @@ export function TerminalTabs({
 
   if (tabs.length === 0) return null
   const sums = [
-    { tone: 'waiting' as const, n: counts.needs, say: `${counts.needs} need${counts.needs === 1 ? 's' : ''} you` },
+    { tone: counts.tone ?? 'bell', n: counts.needs, say: `${counts.needs} need${counts.needs === 1 ? 's' : ''} you` },
     { tone: 'working' as const, n: counts.working, say: `${counts.working} working` },
     { tone: 'fresh' as const, n: counts.fresh, say: `${counts.fresh} new` },
   ].filter((c) => c.n > 0)
@@ -335,9 +340,9 @@ export function TerminalTabs({
             onClick={() => onSelect(null)}
           >
             <Icon name="overview" />
-            Overview
+            {home}
             {sums.map((c) => (
-              <span key={c.tone} className="tab-sum" data-tone={c.tone} aria-hidden="true">
+              <span key={c.tone} className="tab-sum" data-tone={c.tone} aria-hidden="true" title={c.say}>
                 <StateIcon tone={c.tone} />
                 {c.n}
               </span>
@@ -414,6 +419,7 @@ export function TerminalTabs({
               ref={tab === active ? term : undefined}
               name={tab}
               active={tab === active}
+              note={banner?.(tab)}
               onSide={preview ? () => document.getElementById(`${id}-pane-${index}`)?.querySelector<HTMLElement>('.file-body')?.focus() : undefined}
               side={
                 preview ? (

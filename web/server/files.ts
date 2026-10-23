@@ -42,7 +42,7 @@ export function localMirror(remote: string, home: string | undefined, syncs: Syn
   const roots = syncs
     .map((sync) => ({ sync, root: sync.remotePath.startsWith('/') ? sync.remotePath : home ? path.posix.join(home, sync.remotePath) : null }))
     .map(({ sync, root }) => ({ sync, root: root?.replace(/\/+$/, '') ?? null }))
-    .filter((r): r is { sync: SyncEntry; root: string } => r.root !== null && remote.startsWith(`${r.root}/`))
+    .filter((r): r is { sync: SyncEntry; root: string } => r.root !== null && (remote === r.root || remote.startsWith(`${r.root}/`)))
     .sort((a, b) => b.root.length - a.root.length)
   const best = roots[0]
   return best ? { file: path.join(best.sync.localPath, remote.slice(best.root.length)), root: best.sync.localPath } : null
@@ -62,6 +62,15 @@ export async function resolveMirror(mirror: { file: string; root: string }): Pro
   try {
     const [real, root] = await Promise.all([realpath(mirror.file), realpath(mirror.root)])
     return real.startsWith(`${root}${path.sep}`) && (await stat(real)).isFile() ? real : null
+  } catch {
+    return null
+  }
+}
+
+export async function mirrorFolder(mirror: { file: string; root: string }): Promise<string | null> {
+  try {
+    const [real, root] = await Promise.all([realpath(mirror.file), realpath(mirror.root)])
+    return (real === root || real.startsWith(`${root}${path.sep}`)) && (await stat(real)).isDirectory() ? mirror.file : null
   } catch {
     return null
   }

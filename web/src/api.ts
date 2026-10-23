@@ -2,15 +2,19 @@ import type {
   ApiError,
   CreateSessionRequest,
   CreateSessionResponse,
+  DraftState,
   FileView,
   InsightsResponse,
   NoteDaysResponse,
   NoteResponse,
+  ReturnResponse,
+  ReturnSummary,
   SessionsResponse,
   ThemeResponse,
   WorkspacesResponse,
 } from './shared/types'
 import { getToken } from './token'
+import type { Brief, Work } from './shared/recover'
 
 export type ApiResult<T> =
   | { kind: 'ok'; data: T }
@@ -100,4 +104,35 @@ export async function uploadFile(session: string, file: File): Promise<ApiResult
   if (result.kind !== 'ok') return result
   const { path } = result.data
   return typeof path === 'string' && path.startsWith('/') ? { kind: 'ok', data: { path } } : { kind: 'error', message: 'unexpected reply' }
+}
+
+export function getReturn(session: string): Promise<ApiResult<ReturnResponse>> {
+  return fetchJson<ReturnResponse>(`/api/return?${new URLSearchParams({ session }).toString()}`)
+}
+
+export function putReturnDraft(session: string, draft: DraftState, base: string): Promise<ApiResult<{ version: string }>> {
+  return fetchJson<{ version: string }>('/api/return/draft', { method: 'PUT', body: { session, draft, base } })
+}
+
+export function postReturn<T = Record<string, unknown>>(route: 'repair' | 'accept' | 'ask' | 'seen' | 'decide' | 'separate', body: Record<string, unknown>): Promise<ApiResult<T>> {
+  return fetchJson<T>(`/api/return/${route}`, { method: 'POST', body })
+}
+
+export interface BriefResponse {
+  session: string
+  work: Work
+  agents: Record<string, 'claude' | 'codex' | 'shell'>
+  brief: Brief
+}
+
+export async function getBrief(session: string, left?: number): Promise<ApiResult<BriefResponse>> {
+  const q = new URLSearchParams({ session, ...(left === undefined ? {} : { left: String(Math.floor(left)) }) })
+  const result = await fetchJson<BriefResponse>(`/api/return/brief?${q.toString()}`)
+  if (result.kind !== 'ok') return result
+  const { work, brief } = result.data
+  return Array.isArray(work?.members) && Array.isArray(brief?.suggestions) ? result : { kind: 'error', message: 'unexpected reply' }
+}
+
+export function getReturnSummary(): Promise<ApiResult<{ sessions: Record<string, ReturnSummary> }>> {
+  return fetchJson<{ sessions: Record<string, ReturnSummary> }>('/api/return/summary')
 }

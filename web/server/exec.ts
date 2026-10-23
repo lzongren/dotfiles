@@ -46,9 +46,11 @@ export function detach(
   agent: AgentChoice,
   name: string,
   cwd: string,
+  here = false,
   timeoutMs = 30000,
 ): Promise<RunResult> {
-  const args = agent === 'shell' ? ['--detach', name] : ['--detach', `--${agent}`, name]
+  const at = here ? [name, cwd] : [name]
+  const args = agent === 'shell' ? ['--detach', ...at] : ['--detach', ...(here ? ['--fresh'] : []), `--${agent}`, ...at]
   return run(bin, args, timeoutMs, cwd)
 }
 

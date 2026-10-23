@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createSession, explain, getWorkspaces } from '../api'
-import type { AgentChoice, Session, Workspace } from '../shared/types'
+import type { Session, Workspace } from '../shared/types'
 import { isValidSessionName } from '../shared/validate'
 import { ago } from '../time'
 import { Icon } from './Icon'
@@ -11,21 +11,17 @@ interface Item {
   name: string
   root: string | null
   ts: number
+  title?: string
 }
 
 const MAX_ITEMS = 15
-
-const AGENTS: Array<{ value: AgentChoice; label: string }> = [
-  { value: 'cc', label: 'claude' },
-  { value: 'codex', label: 'codex' },
-  { value: 'shell', label: 'shell' },
-]
 
 export function buildItems(
   query: string,
   sessions: Session[],
   workspaces: Workspace[],
   createRoot: string | null,
+  titles: Record<string, string> = {},
 ): Item[] {
   const q = query.trim().toLowerCase()
   const live = new Map(sessions.filter((s) => s.attachable).map((s) => [s.name, s]))
@@ -45,8 +41,9 @@ export function buildItems(
   for (const s of live.values()) {
     if (!seen.has(s.name)) items.push({ key: `s:${s.name}`, kind: 'live', name: s.name, root: null, ts: s.activityEpoch })
   }
+  for (const item of items) if (item.kind === 'live' && titles[item.name]) item.title = titles[item.name]
   const matched = items
-    .filter((item) => item.name.toLowerCase().includes(q))
+    .filter((item) => item.name.toLowerCase().includes(q) || Boolean(item.title?.toLowerCase().includes(q)))
     .sort((a, b) => b.ts - a.ts || a.name.localeCompare(b.name))
     .slice(0, MAX_ITEMS)
   const typed = query.trim().toLowerCase()
@@ -59,19 +56,21 @@ export function buildItems(
 
 export function WorkspacePalette({
   sessions,
+  titles,
   now,
   onOpen,
+  onNew,
   onSessionsChanged,
 }: {
   sessions: Session[]
+  titles?: Record<string, string>
   now: number
   onOpen: (name: string) => void
+  onNew: () => void
   onSessionsChanged?: () => void
 }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const [roots, setRoots] = useState<string[]>([])
   const [root, setRoot] = useState<string | null>(null)
-  const [agent, setAgent] = useState<AgentChoice>('cc')
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -85,7 +84,6 @@ export function WorkspacePalette({
     if (result.kind !== 'ok') return
     setWorkspaces(result.data.workspaces)
     const names = result.data.roots.map((r) => r.name)
-    setRoots(names)
     setRoot((prev) => (prev !== null && names.includes(prev) ? prev : (names[0] ?? null)))
   }, [])
 
@@ -110,7 +108,7 @@ export function WorkspacePalette({
     return () => document.removeEventListener('keydown', onKey)
   }, [])
 
-  const items = useMemo(() => buildItems(query, sessions, workspaces, root), [query, sessions, workspaces, root])
+  const items = useMemo(() => buildItems(query, sessions, workspaces, root, titles), [query, sessions, workspaces, root, titles])
   const found = items.findIndex((item) => item.key === selectedKey)
   const index = found === -1 ? 0 : found
   const current = items[index]
@@ -134,7 +132,7 @@ export function WorkspacePalette({
       return
     }
     setBusy(item.name)
-    const result = await createSession({ name: item.name, root: target, agent })
+    const result = await createSession({ name: item.name, root: target, agent: 'cc' })
     setBusy(null)
     if (result.kind === 'ok') {
       setQuery('')
@@ -187,8 +185,8 @@ export function WorkspacePalette({
             aria-expanded={open && items.length > 0}
             aria-controls={listId}
             aria-activedescendant={open && current ? `${listId}-${current.key}` : undefined}
-            aria-label="search or create a workspace"
-            placeholder="Search or create a workspace"
+            aria-label="search sessions or start one"
+            placeholder="Search sessions, or start one in a folder"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
@@ -200,34 +198,10 @@ export function WorkspacePalette({
           />
           <kbd aria-hidden="true">/</kbd>
         </span>
-        <div
-          role="radiogroup"
-          aria-label="agent"
-          className="palette-agents"
-          onMouseDown={(event) => event.preventDefault()}
-        >
-          {AGENTS.map((a) => (
-            <label key={a.value} className="palette-agent" data-checked={agent === a.value}>
-              <input
-                type="radio"
-                name="agent"
-                value={a.value}
-                checked={agent === a.value}
-                onChange={() => setAgent(a.value)}
-              />
-              {a.label}
-            </label>
-          ))}
-        </div>
-        {roots.length > 1 ? (
-          <select aria-label="sync root" value={root ?? ''} onChange={(event) => setRoot(event.target.value)}>
-            {roots.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        ) : null}
+        <button type="button" className="palette-new" onClick={onNew}>
+          <Icon name="plus" size={14} />
+          New session
+        </button>
       </div>
       <div className="palette-pop" hidden={!open || (items.length === 0 && error === null)}>
       {error !== null ? (
@@ -261,10 +235,10 @@ export function WorkspacePalette({
             <span className="palette-name">
               {item.kind === 'create' ? `create ${item.name}` : item.name}
             </span>
-            <span className="palette-root">{item.root ?? ''}</span>
+            <span className="palette-root">{item.title ?? item.root ?? ''}</span>
             <span className="palette-age">{item.kind === 'create' ? '' : ago(now, item.ts)}</span>
             <span className="palette-hint">
-              {busy === item.name ? 'starting…' : item.kind === 'live' ? 'attach' : `start ${agent === 'cc' ? 'claude' : agent}`}
+              {busy === item.name ? 'starting…' : item.kind === 'live' ? 'attach' : 'start claude'}
             </span>
           </li>
         ))}
