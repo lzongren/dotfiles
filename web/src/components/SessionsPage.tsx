@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { AgentInsight, ReturnSummary, Session } from '../shared/types'
 import { displayTitle, isFresh, laneOf, type Lane } from '../insights'
 import { AgentIcon, agentOf, Icon, toneOf } from './Icon'
-import { titleOf } from './PickUp'
+import { breakable, titleOf } from './PickUp'
 import { headline } from './SessionList'
 import { returnNote, returnNotes, type HomeItem } from './work'
 
@@ -119,7 +119,7 @@ export function SessionsPage({
             <button type="button" className="page-row" data-row data-session={r.session.name} disabled={!r.session.attachable} onClick={() => onOpen(r.session.name)}>
               <AgentIcon agent={agentOf(r.session, r.insight)} />
               <span className="page-row-main">
-                <strong>{r.title}</strong>
+                <strong>{breakable(r.title)}</strong>
                 <small>{[r.title === r.session.name ? '' : r.session.name, host, r.session.path, r.insight?.agent === 'codex' ? 'Codex: no brief or repair yet' : ''].filter(Boolean).join(' · ')}</small>
                 {returns[r.session.name]?.goal ? <small>Your goal: {returns[r.session.name]?.goal}</small> : null}
               </span>

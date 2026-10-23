@@ -10,6 +10,8 @@ const clip = (text: string, n = 180) => (text.length > n ? `${text.slice(0, n - 
 
 export const titleOf = (item: HomeItem) => displayTitle(headline(item.session), item.insight) || item.session.name
 
+export const breakable = (text: string) => text.split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[_/.-])(?=\w)/).flatMap((part, i) => (i ? [<wbr key={i} />, part] : [part]))
+
 export function workLabel(key: string): string {
   if (key.startsWith('pr:')) return `PR #${/\/pull\/(\d+)/.exec(key)?.[1] ?? key.slice(3)}`
   if (key.startsWith('branch:')) return `branch ${key.slice(key.lastIndexOf('@') + 1)}`
@@ -63,7 +65,7 @@ function Row({ item, now, primary, onContinue, onOpen, onLater }: { item: HomeIt
       <div className="pickup-copy">
         <p className="pickup-heading">
           <button type="button" className="pickup-title" onClick={() => onContinue(name)}>
-            {titleOf(item)}
+            {breakable(titleOf(item))}
           </button>
           <span className="pickup-badge" data-tone={item.tone}>
             {item.status}
@@ -270,7 +272,7 @@ export function PickUpRail({
                 <button key={item.session.name} type="button" className="rail-item" aria-current={here ? 'page' : undefined} onClick={() => onSwitch(item.session.name)}>
                   <Tone item={item} />
                   <span>
-                    <strong>{titleOf(item)}</strong>
+                    <strong>{breakable(titleOf(item))}</strong>
                     <small>
                       {n ? `${n} session${n === 1 ? '' : 's'} · ` : ''}
                       {here && open ? open.status : item.status}

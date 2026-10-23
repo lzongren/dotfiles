@@ -85,7 +85,7 @@ import { NewSession, type Place } from './NewSession'
 import { ArtifactList } from './Overview'
 import { ago } from '../time'
 import { AgentIcon, Icon, type AgentKind } from './Icon'
-import { PickUpRail, workLabel } from './PickUp'
+import { breakable, PickUpRail, workLabel } from './PickUp'
 import { TerminalPane } from './Terminal'
 import { returnNote, type HomeItem } from './work'
 
@@ -1540,7 +1540,7 @@ export function ReturnView({
             Back to {back}
           </button>
         </div>
-        <h2 className="return-name">{tab === 'new' ? `Add a session to ${title ?? session}` : (title ?? session)}</h2>
+        <h2 className="return-name" title={tab === 'changes' || tab === 'new' ? undefined : (title ?? session)}>{breakable(tab === 'new' ? `Add a session to ${title ?? session}` : (title ?? session))}</h2>
         <p className="return-sub">
           {tab === 'new' ? `${session} keeps running while you add a session.` : [label, members === 1 ? '1 session' : `${members} sessions grouped automatically`, data.separated.length ? `${data.separated.length} you showed separately` : ''].filter(Boolean).join(' · ')}{' '}
           <button

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { BriefResponse } from '../../src/api'
-import { PickUpList, PickUpRail } from '../../src/components/PickUp'
+import { breakable, PickUpList, PickUpRail } from '../../src/components/PickUp'
 import { attentionStamp, homeItems } from '../../src/components/work'
 import type { AgentInsight, ReturnSummary, Session } from '../../src/shared/types'
 
@@ -393,4 +393,11 @@ describe('choosing when to return', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Bring back' }))
     expect(later).toHaveBeenCalledWith('docs')
   })
+})
+
+it('offers line breaks inside long identifiers without changing the text', () => {
+  const { container } = render(<p>{breakable('Move ElasticGumbyInvocationService to 0908_SkillHarness/api')}</p>)
+  expect(container.textContent).toBe('Move ElasticGumbyInvocationService to 0908_SkillHarness/api')
+  expect(container.querySelectorAll('wbr')).toHaveLength(6)
+  cleanup()
 })
