@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # setup-remote.sh — provision an Amazon Linux 2 dev host for remote development:
-# builds mosh + a modern tmux from source (the packaged versions are
-# broken/ancient on AL2) and deploys the tmux config.
+# builds mosh, a modern tmux, and hstr from source (the packaged versions are
+# broken, ancient, or missing on AL2), installs lazygit + yazi for `dev`, and
+# deploys the tmux and zsh config.
 #
 # Run FROM your laptop:  ./remote-dev/setup-remote.sh [ssh-host]
 # Host resolves from the arg, else ~/.config/devbox/config (DEVBOX_HOST).
@@ -28,6 +29,9 @@ HOST="${1:-$DEVBOX_HOST}"
 
 MOSH_VERSION="1.4.0"
 TMUX_VERSION="3.5a"
+HSTR_VERSION="3.2"
+LAZYGIT_VERSION="0.66.0"
+YAZI_VERSION="26.9.1"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -47,13 +51,17 @@ ssh "$HOST" 'true' || die "Cannot SSH to $HOST (set DEVBOX_HOST in ~/.config/dev
 # ---------------------------------------------------------------------------
 # Remote build. Heredoc runs on the dev host. Encodes the AL2 gotchas:
 #   - EPEL mosh links against protobuf 3.x but AL2 ships 2.5 → build from src
-#   - AL2 has openssl11 (not openssl-devel); mosh's configure wants openssl.pc
+#   - AL2 has openssl11-devel (not openssl-devel), not installed by default;
+#     mosh's configure wants openssl.pc
 #     → symlink-shim openssl11.pc → openssl.pc in a private pkgconfig dir
 #   - system tmux is 1.8 (no `new-session -A`); build 3.5a to ~/.local
 #   - put ~/.local/bin on PATH via .zshenv (sourced by mosh's non-login shell)
+#   - zsh saves no history unless .zshrc sets it (SAVEHIST=0), so hstr finds nothing
 # ---------------------------------------------------------------------------
-log "Provisioning remote (build deps, mosh, tmux)…"
-ssh "$HOST" MOSH_VERSION="$MOSH_VERSION" TMUX_VERSION="$TMUX_VERSION" 'bash -s' <<'REMOTE'
+log "Provisioning remote (build deps, mosh, tmux, hstr, lazygit, yazi)…"
+ssh "$HOST" MOSH_VERSION="$MOSH_VERSION" TMUX_VERSION="$TMUX_VERSION" \
+  HSTR_VERSION="$HSTR_VERSION" LAZYGIT_VERSION="$LAZYGIT_VERSION" \
+  YAZI_VERSION="$YAZI_VERSION" 'bash -s' <<'REMOTE'
 set -euo pipefail
 GREEN='\033[0;32m'; BLUE='\033[0;34m'; RESET='\033[0m'
 rlog() { echo -e "${BLUE}  ·${RESET} $*"; }
@@ -79,10 +87,11 @@ else
   rok ".zshenv LANG already set"
 fi
 
-# --- build dependencies (protobuf 2.5 + libevent; openssl11 already present) ---
+# --- build dependencies (protobuf 2.5, libevent, openssl11, readline) ---
 NEED=()
 for p in gcc-c++ protobuf-devel protobuf-compiler ncurses-devel zlib-devel \
-         automake autoconf libtool pkgconfig bison libevent-devel; do
+         automake autoconf libtool pkgconfig bison libevent-devel \
+         openssl11-devel readline-devel; do
   rpm -q "$p" >/dev/null 2>&1 || NEED+=("$p")
 done
 if (( ${#NEED[@]} )); then
@@ -134,6 +143,54 @@ else
   /usr/bin/tmux kill-server 2>/dev/null || true
   rm -f "/tmp/tmux-$(id -u)/default" 2>/dev/null || true
   rok "tmux built → ~/.local/bin/tmux ($("$HOME/.local/bin/tmux" -V))"
+fi
+
+if "$HOME/.local/bin/hstr" --version 2>/dev/null | grep -q "\"${HSTR_VERSION}"; then
+  rok "hstr ${HSTR_VERSION} already built"
+else
+  rlog "building hstr ${HSTR_VERSION}…"
+  tmp="$(mktemp -d)"; cd "$tmp"
+  curl -fsSL "https://github.com/dvorka/hstr/releases/download/v${HSTR_VERSION}/hstr-${HSTR_VERSION}.0-tarball.tgz" | tar xz
+  cd hstr
+  ./configure --prefix="$HOME/.local" >/tmp/hstr-cfg.log 2>&1
+  make -j4 >/tmp/hstr-make.log 2>&1
+  make install >/tmp/hstr-install.log 2>&1
+  cd; rm -rf "$tmp"
+  rok "hstr built → ~/.local/bin/hstr"
+fi
+
+arch="$(uname -m)"
+if "$HOME/.local/bin/lazygit" --version 2>/dev/null | grep -q "version=${LAZYGIT_VERSION},"; then
+  rok "lazygit ${LAZYGIT_VERSION} present"
+else
+  curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_linux_${arch/aarch64/arm64}.tar.gz" |
+    tar xz -C "$HOME/.local/bin" lazygit
+  rok "lazygit ${LAZYGIT_VERSION} → ~/.local/bin/lazygit"
+fi
+
+if "$HOME/.local/bin/yazi" --version 2>/dev/null | grep -q "Version: ${YAZI_VERSION} "; then
+  rok "yazi ${YAZI_VERSION} present"
+else
+  tmp="$(mktemp -d)"
+  curl -fsSLo "$tmp/yazi.zip" "https://github.com/sxyazi/yazi/releases/download/v${YAZI_VERSION}/yazi-${arch}-unknown-linux-musl.zip"
+  unzip -qjo "$tmp/yazi.zip" '*/yazi' '*/ya' -d "$HOME/.local/bin"
+  rm -rf "$tmp"
+  rok "yazi ${YAZI_VERSION} → ~/.local/bin/yazi, ya"
+fi
+
+if grep -q hstr "$HOME/.zshrc" 2>/dev/null; then
+  rok ".zshrc hstr already set"
+else
+  cp "$HOME/.zshrc" "$HOME/.zshrc.bak" 2>/dev/null || true
+  {
+    printf '\nHISTFILE=~/.zsh_history HISTSIZE=10000000 SAVEHIST=10000000\n'
+    printf 'setopt appendhistory incappendhistory\n'
+    printf "alias ll='ls -lh' ta='tmux a -t' tl='tmux ls'\n"
+    # Without a tty, hstr prints its TIOCSTI probe error on stdout, then emits
+    # the TIOCSTI-free widget (works even where the kernel disables TIOCSTI).
+    "$HOME/.local/bin/hstr" --show-zsh-configuration 2>/dev/null | grep -v '^Error:'
+  } >>"$HOME/.zshrc"
+  rok ".zshrc: history, hstr on Ctrl-R, ll/ta/tl aliases"
 fi
 
 # --- tmux plugins: resurrect + continuum (session persistence across reboots) ---
